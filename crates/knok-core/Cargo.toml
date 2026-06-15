@@ -12,3 +12,5 @@ proc-macro2.workspace = true
 syn.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+quote.workspace = true

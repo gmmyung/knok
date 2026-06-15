@@ -595,3 +595,121 @@ fn expect_arity(op: &CallOp, args: &[Expr], expected: usize) -> syn::Result<()> 
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+    use syn::parse_quote;
+
+    fn tensor(shape: &[usize]) -> TensorType {
+        TensorType {
+            elem: ElementType::F32,
+            shape: shape.to_vec(),
+        }
+    }
+
+    fn parse(item: ItemFn) -> syn::Result<TypedGraph> {
+        parse_graph(quote!(backend = "llvm-cpu"), item)
+    }
+
+    #[test]
+    fn parses_and_types_elementwise_graph() {
+        let graph = parse(parse_quote! {
+            fn add(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                x + y
+            }
+        })
+        .unwrap();
+
+        assert_eq!(graph.name, "add");
+        assert_eq!(graph.backend, "llvm-cpu");
+        assert_eq!(graph.inputs.len(), 2);
+        assert_eq!(graph.output, tensor(&[4]));
+        assert_eq!(graph.body.ty, tensor(&[4]));
+    }
+
+    #[test]
+    fn infers_matmul_shape() {
+        let graph = parse(parse_quote! {
+            fn mm(x: Tensor2<f32, 2, 3>, y: Tensor2<f32, 3, 4>) -> Tensor2<f32, 2, 4> {
+                matmul(x, y)
+            }
+        })
+        .unwrap();
+
+        assert_eq!(graph.output, tensor(&[2, 4]));
+        assert_eq!(graph.body.ty, tensor(&[2, 4]));
+    }
+
+    #[test]
+    fn accepts_calls_to_earlier_graph_signatures() {
+        let signatures = [(
+            "layer".to_string(),
+            GraphSignature {
+                inputs: vec![tensor(&[4])],
+                output: tensor(&[4]),
+            },
+        )];
+
+        let graph = parse_graph_with_signatures(
+            quote!(backend = "llvm-cpu"),
+            parse_quote! {
+                fn outer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    layer(x)
+                }
+            },
+            &signatures,
+        )
+        .unwrap();
+
+        assert_eq!(graph.body.ty, tensor(&[4]));
+    }
+
+    #[test]
+    fn rejects_elementwise_shape_mismatch() {
+        let error = parse(parse_quote! {
+            fn add(x: Tensor1<f32, 4>, y: Tensor1<f32, 5>) -> Tensor1<f32, 4> {
+                x + y
+            }
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("same shape"));
+    }
+
+    #[test]
+    fn rejects_unknown_graph_calls() {
+        let error = parse(parse_quote! {
+            fn outer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                missing(x)
+            }
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown graph call `missing`"));
+    }
+
+    #[test]
+    fn rejects_direct_recursion() {
+        let signatures = [(
+            "outer".to_string(),
+            GraphSignature {
+                inputs: vec![tensor(&[4])],
+                output: tensor(&[4]),
+            },
+        )];
+        let error = parse_graph_with_signatures(
+            quote!(backend = "llvm-cpu"),
+            parse_quote! {
+                fn outer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    outer(x)
+                }
+            },
+            &signatures,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("recursive graph call `outer`"));
+    }
+}

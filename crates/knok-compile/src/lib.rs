@@ -14,8 +14,11 @@ use melior::{dialect::DialectRegistry, ir::operation::OperationLike, ir::Module,
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
+    bracketed,
     parse::{Parse, ParseStream},
-    parse2, FnArg, Ident, ItemFn, LitStr, ReturnType, Token,
+    parse2,
+    punctuated::Punctuated,
+    FnArg, Ident, ItemFn, LitStr, ReturnType, Token, Type,
 };
 
 pub fn expand_graph(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -162,18 +165,46 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
     let backend = model.backend.value();
     let function_name = model.function.value();
     let vmfb_bytes = vmfb.iter().copied();
+    let input_types = model.inputs.unwrap_or_default();
+    let output_shape = model
+        .output
+        .as_ref()
+        .map(|ty| quote!(<#ty>::SHAPE))
+        .unwrap_or_else(|| quote!(&[]));
+    let typed_scope_import = model.output.as_ref().map(|_| {
+        quote!(
+            use super::*;
+        )
+    });
+    let typed_invoke = if let Some(output_ty) = model.output {
+        let input_names = (0..input_types.len())
+            .map(|index| format_ident!("input{index}"))
+            .collect::<Vec<_>>();
+        Some(quote! {
+            pub fn invoke(#(#input_names: #input_types),*) -> ::knok::Result<#output_ty> {
+                let output = invoke_f32(&[
+                    #((<#input_types>::SHAPE, #input_names.as_slice())),*
+                ])?;
+                <#output_ty>::from_vec(output)
+            }
+        })
+    } else {
+        None
+    };
 
     Ok(quote! {
         pub mod #module_name {
+            #typed_scope_import
+
             pub fn artifact() -> ::knok::GraphArtifact {
                 static VMFB: &[u8] = &[#(#vmfb_bytes),*];
-                static INPUT_SHAPES: &[&[usize]] = &[];
+                static INPUT_SHAPES: &[&[usize]] = &[#(<#input_types>::SHAPE),*];
                 ::knok::GraphArtifact {
                     vmfb: VMFB,
                     function_name: #function_name,
                     backend: #backend,
                     input_shapes: INPUT_SHAPES,
-                    output_shape: &[],
+                    output_shape: #output_shape,
                 }
             }
 
@@ -188,6 +219,8 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                     inputs,
                 )
             }
+
+            #typed_invoke
         }
     })
 }
@@ -197,6 +230,8 @@ struct MlirModel {
     path: LitStr,
     backend: LitStr,
     function: LitStr,
+    inputs: Option<Vec<Type>>,
+    output: Option<Type>,
 }
 
 impl Parse for MlirModel {
@@ -205,6 +240,8 @@ impl Parse for MlirModel {
         let mut path = None;
         let mut backend = None;
         let mut function = None;
+        let mut inputs = None;
+        let mut output = None;
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             input.parse::<Token![:]>()?;
@@ -213,6 +250,16 @@ impl Parse for MlirModel {
                 "path" => path = Some(input.parse()?),
                 "backend" => backend = Some(input.parse()?),
                 "function" => function = Some(input.parse()?),
+                "inputs" => {
+                    let content;
+                    bracketed!(content in input);
+                    inputs = Some(
+                        Punctuated::<Type, Token![,]>::parse_terminated(&content)?
+                            .into_iter()
+                            .collect(),
+                    );
+                }
+                "output" => output = Some(input.parse()?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -224,11 +271,16 @@ impl Parse for MlirModel {
                 input.parse::<Token![,]>()?;
             }
         }
+        if inputs.is_some() != output.is_some() {
+            return Err(input.error("inputs and output must be provided together"));
+        }
         Ok(Self {
             name: name.ok_or_else(|| input.error("missing name: <ident>"))?,
             path: path.ok_or_else(|| input.error("missing path: \"...\""))?,
             backend: backend.ok_or_else(|| input.error("missing backend: \"...\""))?,
             function: function.ok_or_else(|| input.error("missing function: \"...\""))?,
+            inputs,
+            output,
         })
     }
 }
@@ -301,7 +353,9 @@ fn verify_with_melior(mlir: &str) -> anyhow::Result<()> {
 fn compile_with_iree(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
-    let key = cache_key(backend, mlir);
+    let iree_compile = iree_compile_command();
+    let flags = backend_flags(backend);
+    let key = cache_key(backend, mlir, &iree_compile, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     let mlir_path = cache_dir.join(format!("{key}.mlir"));
     if vmfb_path.exists() {
@@ -309,16 +363,12 @@ fn compile_with_iree(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
     }
 
     fs::write(&mlir_path, mlir)?;
-    let mut command =
-        Command::new(env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string()));
+    let mut command = Command::new(&iree_compile);
     command
         .arg(&mlir_path)
-        .arg(format!("--iree-hal-target-backends={backend}"))
+        .args(&flags)
         .arg("-o")
         .arg(&vmfb_path);
-    if backend == "metal-spirv" {
-        command.arg("--iree-metal-compile-to-metallib=false");
-    }
     let output = command.output()?;
     if !output.status.success() {
         anyhow::bail!(
@@ -331,6 +381,18 @@ fn compile_with_iree(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
     Ok(fs::read(vmfb_path)?)
 }
 
+fn iree_compile_command() -> String {
+    env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string())
+}
+
+fn backend_flags(backend: &str) -> Vec<String> {
+    let mut flags = vec![format!("--iree-hal-target-backends={backend}")];
+    if backend == "metal-spirv" {
+        flags.push("--iree-metal-compile-to-metallib=false".to_string());
+    }
+    flags
+}
+
 fn cache_dir() -> anyhow::Result<PathBuf> {
     if let Ok(path) = env::var("KNOK_CACHE_DIR") {
         return Ok(PathBuf::from(path));
@@ -339,12 +401,42 @@ fn cache_dir() -> anyhow::Result<PathBuf> {
     Ok(Path::new(&manifest_dir).join("target/knok-cache"))
 }
 
-fn cache_key(backend: &str, mlir: &str) -> String {
+fn cache_key(backend: &str, mlir: &str, iree_compile: &str, flags: &[String]) -> String {
     let mut hasher = blake3::Hasher::new();
+    hasher.update(b"knok-cache-v2");
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(backend.as_bytes());
+    hasher.update(iree_compile.as_bytes());
+    hasher.update(iree_compile_version(iree_compile).as_bytes());
+    for flag in flags {
+        hasher.update(flag.as_bytes());
+    }
+    for var in [
+        "CARGO_CFG_TARGET_ARCH",
+        "CARGO_CFG_TARGET_ENV",
+        "CARGO_CFG_TARGET_OS",
+        "CARGO_CFG_TARGET_VENDOR",
+    ] {
+        if let Ok(value) = env::var(var) {
+            hasher.update(var.as_bytes());
+            hasher.update(value.as_bytes());
+        }
+    }
     hasher.update(mlir.as_bytes());
     hasher.finalize().to_hex().to_string()
+}
+
+fn iree_compile_version(iree_compile: &str) -> String {
+    match Command::new(iree_compile).arg("--version").output() {
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout).into(),
+        Ok(output) => format!(
+            "unavailable:{}:{}:{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(error) => format!("unavailable:{error}"),
+    }
 }
 
 struct Lowerer<'a> {
