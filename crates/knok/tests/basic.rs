@@ -1,4 +1,5 @@
 use knok::prelude::*;
+use knok::{Engine, Error, RuntimeConfig};
 
 #[knok::graph(backend = "llvm-cpu")]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
@@ -84,6 +85,49 @@ fn add_graph_runs() {
     let y = Tensor1::from_array([10.0, 20.0, 30.0, 40.0]);
     let output = add4(x, y).unwrap();
     assert_eq!(output.into_vec(), vec![11.0, 22.0, 33.0, 44.0]);
+}
+
+#[test]
+fn reusable_engine_runs_graph_repeatedly() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+
+    let first = add4_run(
+        &engine,
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    let second = add4_run(
+        &engine,
+        Tensor1::from_array([5.0, 6.0, 7.0, 8.0]),
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+    )
+    .unwrap();
+
+    assert_eq!(engine.driver_name(), "local-task");
+    assert_eq!(first.into_vec(), vec![11.0, 22.0, 33.0, 44.0]);
+    assert_eq!(second.into_vec(), vec![6.0, 8.0, 10.0, 12.0]);
+}
+
+#[test]
+fn engine_rejects_mismatched_backend_driver() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let mut artifact = add4_artifact();
+    artifact.backend = "metal-spirv";
+    let x = [1.0, 2.0, 3.0, 4.0];
+    let y = [10.0, 20.0, 30.0, 40.0];
+    let error = engine
+        .invoke_f32(artifact, &[(&[4], &x), (&[4], &y)])
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::RuntimeDriverMismatch {
+            backend: "metal-spirv",
+            expected_driver: "metal",
+            ..
+        }
+    ));
 }
 
 #[test]

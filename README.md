@@ -27,6 +27,17 @@ fn main() -> knok::Result<()> {
 }
 ```
 
+For repeated inference, create a reusable runtime engine and call the generated
+`*_run` wrapper. This reuses the IREE instance, driver, device, loaded module,
+and resolved function instead of rebuilding runtime state on every call:
+
+```rust
+use knok::{Engine, RuntimeConfig};
+
+let engine = Engine::new(RuntimeConfig::auto())?;
+let output = forward_run(&engine, x, y)?;
+```
+
 Local MLIR files can also be compiled into embedded artifacts:
 
 ```rust
@@ -66,7 +77,7 @@ support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 - `default-features = false` builds `knok` as `no_std + alloc`.
 - Proc macros, `melior`, and `iree-compile` still run on the compile host.
 - In no-default-features mode, generated graph functions compile and expose
-  `<name>_artifact()`, but the convenience invocation function returns
+  `<name>_artifact()`, but runtime execution functions return
   `Error::HostedRuntimeDisabled`.
 
 ## MVP limits
@@ -75,7 +86,8 @@ support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 - Static rank-1 and rank-2 shapes only.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`.
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, `relu`, `matmul`,
-  and rank-2 `transpose`.
+  rank-2 `transpose`, rank-1/rank-2 `reshape`, scalar-like `broadcast`, and
+  full-tensor `sum`.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same

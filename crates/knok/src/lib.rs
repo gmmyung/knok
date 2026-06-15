@@ -10,7 +10,6 @@ pub mod __private {
     pub use crate::private::*;
 }
 pub mod private;
-#[cfg(feature = "host-runtime")]
 pub mod runtime;
 pub mod tensor;
 
@@ -20,6 +19,7 @@ pub mod prelude {
 }
 
 pub use artifact::GraphArtifact;
+pub use runtime::{Engine, RuntimeConfig};
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -32,6 +32,12 @@ pub enum Error {
         actual: alloc::vec::Vec<usize>,
     },
     UnsupportedBackend(&'static str),
+    RuntimeDriverMismatch {
+        backend: &'static str,
+        expected_driver: &'static str,
+        actual_driver: alloc::string::String,
+    },
+    EngineLockPoisoned,
     MissingOutput,
     HostedRuntimeDisabled,
 }
@@ -57,6 +63,17 @@ impl core::fmt::Display for Error {
             Self::UnsupportedBackend(backend) => {
                 write!(formatter, "unsupported backend: {backend}")
             }
+            Self::RuntimeDriverMismatch {
+                backend,
+                expected_driver,
+                actual_driver,
+            } => {
+                write!(
+                    formatter,
+                    "runtime driver mismatch for backend {backend}: expected {expected_driver}, got {actual_driver}"
+                )
+            }
+            Self::EngineLockPoisoned => formatter.write_str("runtime engine cache lock poisoned"),
             Self::MissingOutput => formatter.write_str("missing runtime output"),
             Self::HostedRuntimeDisabled => formatter.write_str("host runtime feature is disabled"),
         }

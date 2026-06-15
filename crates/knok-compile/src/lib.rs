@@ -101,6 +101,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     let backend = graph.backend;
     let function_name = format!("knok.{}", graph.name);
     let artifact_name = format_ident!("{}_artifact", name);
+    let run_name = format_ident!("{}_run", name);
     let output_dims = graph.output.shape.iter().copied();
     let artifact_input_shapes = graph.inputs.iter().map(|input| {
         let dims = input.ty.shape.iter().copied();
@@ -120,15 +121,21 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
             }
         }
 
-        #visibility fn #name(#(#inputs),*) -> ::knok::Result<#output_ty> {
+        #visibility fn #run_name(engine: &::knok::Engine, #(#inputs),*) -> ::knok::Result<#output_ty> {
             let artifact = #artifact_name();
-            let output = ::knok::__private::invoke_f32(
+            let output = ::knok::__private::invoke_f32_with_engine(
+                engine,
                 artifact.vmfb,
                 artifact.function_name,
                 artifact.backend,
                 &[#((#input_shapes, #arg_names.as_slice())),*],
             )?;
             <#output_ty>::from_vec(output)
+        }
+
+        #visibility fn #name(#(#inputs),*) -> ::knok::Result<#output_ty> {
+            let engine = ::knok::Engine::for_backend(#artifact_name().backend)?;
+            #run_name(&engine, #(#arg_names),*)
         }
     })
 }
