@@ -62,6 +62,9 @@ pub enum BinaryOp {
 pub enum CallOp {
     Matmul,
     Relu,
+    Reshape(TensorType),
+    Broadcast(TensorType),
+    Sum,
     Transpose,
     Graph(String),
 }
@@ -222,7 +225,7 @@ fn parse_input(input: &FnArg) -> syn::Result<Input> {
     })
 }
 
-fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
+pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(
             ty.span(),
@@ -376,10 +379,23 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
             let SynExpr::Path(path) = call.func.as_ref() else {
                 return Err(syn::Error::new(call.func.span(), "expected graph op name"));
             };
-            let op_name = path.path.require_ident()?.to_string();
+            let (op_name, target_ty) = parse_call_path(&path.path)?;
             let op = match op_name.as_str() {
                 "matmul" => CallOp::Matmul,
                 "relu" => CallOp::Relu,
+                "reshape" => CallOp::Reshape(expect_target_type(target_ty, &path.path, "reshape")?),
+                "broadcast" => {
+                    CallOp::Broadcast(expect_target_type(target_ty, &path.path, "broadcast")?)
+                }
+                "sum" => {
+                    if target_ty.is_some() {
+                        return Err(syn::Error::new(
+                            path.path.span(),
+                            "sum does not accept a target tensor type",
+                        ));
+                    }
+                    CallOp::Sum
+                }
                 "transpose" => CallOp::Transpose,
                 _ => CallOp::Graph(op_name),
             };
@@ -395,6 +411,57 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
             "unsupported graph expression syntax",
         )),
     }
+}
+
+fn parse_call_path(path: &syn::Path) -> syn::Result<(String, Option<TensorType>)> {
+    let Some(segment) = path.segments.last() else {
+        return Err(syn::Error::new(path.span(), "expected graph op name"));
+    };
+    if path.segments.len() != 1 {
+        return Err(syn::Error::new(
+            path.span(),
+            "graph op names must be unqualified identifiers",
+        ));
+    }
+    let target_ty = match &segment.arguments {
+        syn::PathArguments::None => None,
+        syn::PathArguments::AngleBracketed(args) => {
+            let mut args = args.args.iter();
+            let Some(GenericArgument::Type(ty)) = args.next() else {
+                return Err(syn::Error::new(
+                    segment.arguments.span(),
+                    "target tensor type must be a type argument",
+                ));
+            };
+            if args.next().is_some() {
+                return Err(syn::Error::new(
+                    segment.arguments.span(),
+                    "graph ops accept at most one target tensor type",
+                ));
+            }
+            Some(parse_tensor_type(ty)?)
+        }
+        syn::PathArguments::Parenthesized(_) => {
+            return Err(syn::Error::new(
+                segment.arguments.span(),
+                "parenthesized graph op arguments are not supported",
+            ));
+        }
+    };
+    Ok((segment.ident.to_string(), target_ty))
+}
+
+fn expect_target_type(
+    target_ty: Option<TensorType>,
+    path: &syn::Path,
+    op_name: &str,
+) -> syn::Result<TensorType> {
+    target_ty.ok_or_else(|| {
+        syn::Error::new(
+            path.span(),
+            format!("{op_name} requires a target tensor type, for example {op_name}::<Tensor1<f32, 4>>(x)"),
+        )
+    })
 }
 
 fn parse_binary_op(op: &BinOp) -> syn::Result<BinaryOp> {
@@ -516,6 +583,61 @@ fn call_result_type(
             ty.shape.swap(0, 1);
             Ok(ty)
         }
+        CallOp::Reshape(target) => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            if input.elem != target.elem {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "reshape input and output element types must match",
+                ));
+            }
+            if element_count(&input) != element_count(target) {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "reshape element counts must match, got {} and {}",
+                        element_count(&input),
+                        element_count(target)
+                    ),
+                ));
+            }
+            Ok(target.clone())
+        }
+        CallOp::Broadcast(target) => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            if input.elem != target.elem {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "broadcast input and output element types must match",
+                ));
+            }
+            if element_count(&input) != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "broadcast currently expects a scalar-like input with one element, got shape {:?}",
+                        input.shape
+                    ),
+                ));
+            }
+            Ok(target.clone())
+        }
+        CallOp::Sum => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            if input.rank() == 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "sum expects a tensor input",
+                ));
+            }
+            Ok(TensorType {
+                elem: input.elem,
+                shape: vec![1],
+            })
+        }
         CallOp::Matmul => {
             expect_arity(op, args, 2)?;
             let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
@@ -585,6 +707,10 @@ fn call_result_type(
     }
 }
 
+fn element_count(ty: &TensorType) -> usize {
+    ty.shape.iter().product()
+}
+
 fn expect_arity(op: &CallOp, args: &[Expr], expected: usize) -> syn::Result<()> {
     if args.len() == expected {
         Ok(())
@@ -643,6 +769,33 @@ mod tests {
     }
 
     #[test]
+    fn infers_reshape_broadcast_and_sum_shapes() {
+        let reshape = parse(parse_quote! {
+            fn reshape4(x: Tensor1<f32, 4>) -> Tensor2<f32, 2, 2> {
+                reshape::<Tensor2<f32, 2, 2>>(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(reshape.body.ty, tensor(&[2, 2]));
+
+        let broadcast = parse(parse_quote! {
+            fn broadcast4(x: Tensor1<f32, 1>) -> Tensor1<f32, 4> {
+                broadcast::<Tensor1<f32, 4>>(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(broadcast.body.ty, tensor(&[4]));
+
+        let sum = parse(parse_quote! {
+            fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+                sum(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(sum.body.ty, tensor(&[1]));
+    }
+
+    #[test]
     fn accepts_calls_to_earlier_graph_signatures() {
         let signatures = [(
             "layer".to_string(),
@@ -676,6 +829,25 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("same shape"));
+    }
+
+    #[test]
+    fn rejects_invalid_reshape_and_broadcast_shapes() {
+        let reshape = parse(parse_quote! {
+            fn bad_reshape(x: Tensor1<f32, 4>) -> Tensor2<f32, 3, 2> {
+                reshape::<Tensor2<f32, 3, 2>>(x)
+            }
+        })
+        .unwrap_err();
+        assert!(reshape.to_string().contains("element counts must match"));
+
+        let broadcast = parse(parse_quote! {
+            fn bad_broadcast(x: Tensor1<f32, 2>) -> Tensor1<f32, 4> {
+                broadcast::<Tensor1<f32, 4>>(x)
+            }
+        })
+        .unwrap_err();
+        assert!(broadcast.to_string().contains("scalar-like input"));
     }
 
     #[test]

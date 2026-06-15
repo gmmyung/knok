@@ -7,8 +7,8 @@ use std::{
 };
 
 use knok_core::{
-    parse_graph_with_signatures, BinaryOp, CallOp, ElementType, Expr, GraphSignature, TensorType,
-    TypedGraph, UnaryOp,
+    parse_graph_with_signatures, parse_tensor_type, BinaryOp, CallOp, ElementType, Expr,
+    GraphSignature, TensorType, TypedGraph, UnaryOp,
 };
 use melior::{dialect::DialectRegistry, ir::operation::OperationLike, ir::Module, Context};
 use proc_macro2::TokenStream;
@@ -155,6 +155,19 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             format!("failed to read MLIR file `{}`: {error}", path.display()),
         )
     })?;
+    if let (Some(inputs), Some(output)) = (&model.inputs, &model.output) {
+        let expected_inputs = inputs
+            .iter()
+            .map(parse_tensor_type)
+            .collect::<syn::Result<Vec<_>>>()?;
+        let expected_output = parse_tensor_type(output)?;
+        validate_mlir_model_signature(
+            &mlir,
+            &model.function.value(),
+            &expected_inputs,
+            &expected_output,
+        )?;
+    }
     let vmfb = compile_mlir_source(&model.backend.value(), &mlir).map_err(|error| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -223,6 +236,134 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             #typed_invoke
         }
     })
+}
+
+fn validate_mlir_model_signature(
+    mlir: &str,
+    function_name: &str,
+    expected_inputs: &[TensorType],
+    expected_output: &TensorType,
+) -> syn::Result<()> {
+    let symbol_name = function_name.rsplit('.').next().unwrap_or(function_name);
+    let signature = find_mlir_function_signature(mlir, symbol_name).ok_or_else(|| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("failed to find MLIR function symbol `@{symbol_name}`"),
+        )
+    })?;
+    if signature.inputs != expected_inputs {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!(
+                "mlir_model inputs do not match MLIR function `{function_name}`: declared {:?}, MLIR has {:?}",
+                expected_inputs, signature.inputs
+            ),
+        ));
+    }
+    if &signature.output != expected_output {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!(
+                "mlir_model output does not match MLIR function `{function_name}`: declared {:?}, MLIR has {:?}",
+                expected_output, signature.output
+            ),
+        ));
+    }
+    Ok(())
+}
+
+struct MlirSignature {
+    inputs: Vec<TensorType>,
+    output: TensorType,
+}
+
+fn find_mlir_function_signature(mlir: &str, symbol_name: &str) -> Option<MlirSignature> {
+    let needle = format!("func.func @{symbol_name}");
+    let start = mlir.find(&needle)? + needle.len();
+    let rest = &mlir[start..];
+    let args_start = rest.find('(')? + 1;
+    let args_end = args_start + rest[args_start..].find(')')?;
+    let args = &rest[args_start..args_end];
+    let after_args = &rest[args_end + 1..];
+    let arrow = after_args.find("->")? + 2;
+    let output = after_args[arrow..]
+        .trim_start()
+        .split_whitespace()
+        .next()?
+        .trim_end_matches('{');
+
+    let inputs = if args.trim().is_empty() {
+        Vec::new()
+    } else {
+        split_top_level(args, ',')
+            .into_iter()
+            .map(|arg| {
+                let ty = arg.rsplit_once(':')?.1.trim();
+                parse_mlir_tensor_type(ty)
+            })
+            .collect::<Option<Vec<_>>>()?
+    };
+    Some(MlirSignature {
+        inputs,
+        output: parse_mlir_tensor_type(output)?,
+    })
+}
+
+fn split_top_level(input: &str, separator: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in input.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            _ if ch == separator && depth == 0 => {
+                parts.push(input[start..index].trim());
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(input[start..].trim());
+    parts
+}
+
+fn parse_mlir_tensor_type(ty: &str) -> Option<TensorType> {
+    let body = ty.strip_prefix("tensor<")?.strip_suffix('>')?;
+    if body == "f32" {
+        return Some(TensorType {
+            elem: ElementType::F32,
+            shape: Vec::new(),
+        });
+    }
+    let (dims, elem) = body.rsplit_once('x')?;
+    if elem != "f32" {
+        return None;
+    }
+    let shape = dims
+        .split('x')
+        .map(str::parse)
+        .collect::<Result<Vec<usize>, _>>()
+        .ok()?;
+    Some(TensorType {
+        elem: ElementType::F32,
+        shape,
+    })
+}
+
+fn element_count(ty: &TensorType) -> usize {
+    ty.shape.iter().product()
+}
+
+fn format_shape_list(shape: &[usize]) -> String {
+    format!(
+        "[{}]",
+        shape
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 struct MlirModel {
@@ -547,6 +688,18 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.transpose(input)
                 }
+                CallOp::Reshape(ty) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.reshape(input, ty)
+                }
+                CallOp::Broadcast(ty) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.broadcast(input, ty)
+                }
+                CallOp::Sum => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.sum(input)
+                }
                 CallOp::Graph(name) => {
                     let args = args
                         .iter()
@@ -667,10 +820,15 @@ impl<'a> Lowerer<'a> {
     }
 
     fn splat(&mut self, scalar: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let name = self.fresh();
         self.lines.push(format!(
-            "    {name} = tensor.splat {} : {}",
+            "    {name} = linalg.fill ins({} : {}) outs({empty} : {}) -> {}",
             scalar.name,
+            scalar.ty.elem.mlir_type(),
+            ty.mlir_type(),
             ty.mlir_type()
         ));
         Ok(Value {
@@ -727,6 +885,149 @@ impl<'a> Lowerer<'a> {
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
+        Ok(Value { name, ty })
+    }
+
+    fn reshape(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        if input.ty == *ty {
+            return Ok(input);
+        }
+        match (input.ty.rank(), ty.rank()) {
+            (1, 2) => self.expand_rank1_to_rank2(input, ty),
+            (2, 1) => self.collapse_rank2_to_rank1(input, ty),
+            (2, 2) => {
+                let flat_ty = TensorType {
+                    elem: input.ty.elem,
+                    shape: vec![element_count(&input.ty)],
+                };
+                let flat = self.collapse_rank2_to_rank1(input, &flat_ty)?;
+                self.expand_rank1_to_rank2(flat, ty)
+            }
+            _ => anyhow::bail!(
+                "reshape lowering currently supports rank 1/2 tensors, got rank {} to rank {}",
+                input.ty.rank(),
+                ty.rank()
+            ),
+        }
+    }
+
+    fn expand_rank1_to_rank2(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        let output_shape = format_shape_list(&ty.shape);
+        self.lines.push(format!(
+            "    {name} = tensor.expand_shape {} [[0, 1]] output_shape {output_shape} : {} into {}",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn collapse_rank2_to_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.collapse_shape {} [[0, 1]] : {} into {}",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn broadcast(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        if input.ty == *ty {
+            return Ok(input);
+        }
+        let scalar = if input.ty.rank() == 0 {
+            input
+        } else {
+            let name = self.fresh();
+            let zero = self.fresh();
+            self.lines
+                .push(format!("    {zero} = arith.constant 0 : index"));
+            let indices = vec![zero; input.ty.rank()].join(", ");
+            self.lines.push(format!(
+                "    {name} = tensor.extract {}[{}] : {}",
+                input.name,
+                indices,
+                input.ty.mlir_type()
+            ));
+            Value {
+                name,
+                ty: TensorType {
+                    elem: input.ty.elem,
+                    shape: Vec::new(),
+                },
+            }
+        };
+        self.splat(scalar, ty)
+    }
+
+    fn sum(&mut self, input: Value) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: input.ty.elem,
+            shape: vec![1],
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant 0.0 : {}",
+            ty.elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
+            ty.elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+
+        let rank = input.ty.rank();
+        let dims = (0..rank)
+            .map(|index| format!("d{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let input_map = format!("({dims})");
+        let iterator_types = (0..rank)
+            .map(|_| "\"reduction\"")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let add = self.fresh();
+        let name = self.fresh();
+        self.lines.push(format!("    {name} = linalg.generic {{"));
+        self.lines.push(format!(
+            "      indexing_maps = [affine_map<({dims}) -> {input_map}>, affine_map<({dims}) -> (0)>],"
+        ));
+        self.lines
+            .push(format!("      iterator_types = [{iterator_types}]"));
+        self.lines.push(format!(
+            "    }} ins({} : {}) outs({init} : {}) {{",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "    ^bb0(%value: {}, %acc: {}):",
+            ty.elem.mlir_type(),
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      {add} = arith.addf %acc, %value : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      linalg.yield {add} : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
         Ok(Value { name, ty })
     }
 

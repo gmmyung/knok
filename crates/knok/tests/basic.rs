@@ -38,6 +38,31 @@ fn transpose2x3(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 3, 2> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn reshape2x2(x: Tensor1<f32, 4>) -> Tensor2<f32, 2, 2> {
+    reshape::<Tensor2<f32, 2, 2>>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn flatten2x2(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 4> {
+    reshape::<Tensor1<f32, 4>>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn broadcast1to4(x: Tensor1<f32, 1>) -> Tensor1<f32, 4> {
+    broadcast::<Tensor1<f32, 4>>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+    sum(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum2x2(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 1> {
+    sum(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn layer4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x)
 }
@@ -104,6 +129,41 @@ fn transpose_graph_runs() {
     let x = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
     let output = transpose2x3(x).unwrap();
     assert_eq!(output.into_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+}
+
+#[test]
+fn reshape_graph_runs() {
+    let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
+    let output = reshape2x2(x).unwrap();
+    assert_eq!(output.into_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn flatten_graph_runs() {
+    let x = Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]]);
+    let output = flatten2x2(x).unwrap();
+    assert_eq!(output.into_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn broadcast_graph_runs() {
+    let x = Tensor1::from_array([7.0]);
+    let output = broadcast1to4(x).unwrap();
+    assert_eq!(output.into_vec(), vec![7.0, 7.0, 7.0, 7.0]);
+}
+
+#[test]
+fn sum_graph_runs() {
+    let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
+    let output = sum4(x).unwrap();
+    assert_eq!(output.into_vec(), vec![10.0]);
+}
+
+#[test]
+fn rank2_sum_graph_runs() {
+    let x = Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]]);
+    let output = sum2x2(x).unwrap();
+    assert_eq!(output.into_vec(), vec![10.0]);
 }
 
 #[test]
