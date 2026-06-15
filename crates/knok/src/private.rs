@@ -16,7 +16,8 @@ pub fn invoke_f32_with_engine(
     vmfb: &[u8],
     function_name: &'static str,
     backend: &'static str,
+    driver: &'static str,
     inputs: &[(&[usize], &[f32])],
 ) -> crate::Result<OutputF32> {
-    engine.invoke_raw_f32(vmfb, function_name, backend, inputs)
+    engine.invoke_raw_f32(vmfb, function_name, backend, driver, inputs)
 }

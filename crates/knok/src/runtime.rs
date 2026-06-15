@@ -62,7 +62,7 @@ mod hosted {
     use eerie::runtime::{hal, vm};
 
     use super::{driver_for_backend, RuntimeConfig};
-    use crate::GraphArtifact;
+    use crate::{GraphArtifact, GraphArtifactVariant};
 
     pub struct Engine {
         driver_name: String,
@@ -103,6 +103,20 @@ mod hosted {
             Self::new(RuntimeConfig::driver(driver_for_backend(backend)?))
         }
 
+        pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
+            Self::new(RuntimeConfig::driver(variant.driver))
+        }
+
+        pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
+            let variant =
+                artifact
+                    .first_variant()
+                    .ok_or(crate::Error::MissingDefaultArtifactVariant {
+                        function_name: artifact.function_name,
+                    })?;
+            Self::for_variant(variant)
+        }
+
         pub fn driver_name(&self) -> &str {
             &self.driver_name
         }
@@ -112,10 +126,17 @@ mod hosted {
             artifact: GraphArtifact,
             inputs: &[(&[usize], &[f32])],
         ) -> crate::Result<Vec<f32>> {
+            let variant = artifact
+                .variant_for_driver(&self.driver_name)
+                .ok_or_else(|| crate::Error::MissingArtifactVariant {
+                    function_name: artifact.function_name,
+                    driver: self.driver_name.clone(),
+                })?;
             self.invoke_raw_f32(
-                artifact.vmfb,
+                variant.vmfb,
                 artifact.function_name,
-                artifact.backend,
+                variant.backend,
+                variant.driver,
                 inputs,
             )
         }
@@ -125,13 +146,13 @@ mod hosted {
             vmfb: &[u8],
             function_name: &'static str,
             backend: &'static str,
+            driver: &'static str,
             inputs: &[(&[usize], &[f32])],
         ) -> crate::Result<Vec<f32>> {
-            let expected_driver = driver_for_backend(backend)?;
-            if self.driver_name != expected_driver {
+            if self.driver_name != driver {
                 return Err(crate::Error::RuntimeDriverMismatch {
                     backend,
-                    expected_driver,
+                    expected_driver: driver,
                     actual_driver: self.driver_name.clone(),
                 });
             }
@@ -188,8 +209,9 @@ mod hosted {
         backend: &'static str,
         inputs: &[(&[usize], &[f32])],
     ) -> crate::Result<Vec<f32>> {
-        let engine = Engine::for_backend(backend)?;
-        engine.invoke_raw_f32(vmfb, function_name, backend, inputs)
+        let driver = driver_for_backend(backend)?;
+        let engine = Engine::new(RuntimeConfig::driver(driver))?;
+        engine.invoke_raw_f32(vmfb, function_name, backend, driver, inputs)
     }
 }
 
@@ -211,6 +233,14 @@ mod hosted {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
+        pub fn for_variant(_variant: crate::GraphArtifactVariant) -> crate::Result<Self> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+
+        pub fn for_artifact(_artifact: GraphArtifact) -> crate::Result<Self> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+
         pub fn driver_name(&self) -> &str {
             ""
         }
@@ -228,6 +258,7 @@ mod hosted {
             _vmfb: &[u8],
             _function_name: &'static str,
             _backend: &'static str,
+            _driver: &'static str,
             _inputs: &[(&[usize], &[f32])],
         ) -> crate::Result<Vec<f32>> {
             Err(crate::Error::HostedRuntimeDisabled)

@@ -38,6 +38,19 @@ let engine = Engine::new(RuntimeConfig::auto())?;
 let output = forward_run(&engine, x, y)?;
 ```
 
+Graphs can also embed multiple IREE backend variants. The runtime selects the
+variant whose driver matches the engine:
+
+```rust
+#[knok::graph(backends = [
+    backend("llvm-cpu", driver = "local-task"),
+    backend("metal-spirv", driver = "metal"),
+])]
+fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    relu(x + y)
+}
+```
+
 Local MLIR files can also be compiled into embedded artifacts:
 
 ```rust
@@ -50,6 +63,9 @@ knok::mlir_model! {
 
 let output = imported_add4::invoke_f32(&[(&[4], &x), (&[4], &y)])?;
 ```
+
+Typed MLIR imports also expose `invoke_run(&engine, ...)` and
+`invoke_f32_run(&engine, ...)` for reusable execution.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
@@ -77,14 +93,15 @@ support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 - `default-features = false` builds `knok` as `no_std + alloc`.
 - Proc macros, `melior`, and `iree-compile` still run on the compile host.
 - In no-default-features mode, generated graph functions compile and expose
-  `<name>_artifact()`, but runtime execution functions return
-  `Error::HostedRuntimeDisabled`.
+  `<name>_artifact()` with backend variant metadata. Runtime execution functions
+  return `Error::HostedRuntimeDisabled`.
 
 ## MVP limits
 
 - `f32` tensors only.
 - Static rank-1 and rank-2 shapes only.
-- Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`.
+- Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
+  `backends = [backend("...", driver = "...")]`.
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, `relu`, `matmul`,
   rank-2 `transpose`, rank-1/rank-2 `reshape`, scalar-like `broadcast`, and
   full-tensor `sum`.

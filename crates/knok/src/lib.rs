@@ -18,7 +18,7 @@ pub mod prelude {
     pub use crate::{graph, mlir_model};
 }
 
-pub use artifact::GraphArtifact;
+pub use artifact::{GraphArtifact, GraphArtifactVariant};
 pub use runtime::{Engine, RuntimeConfig};
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -32,6 +32,13 @@ pub enum Error {
         actual: alloc::vec::Vec<usize>,
     },
     UnsupportedBackend(&'static str),
+    MissingArtifactVariant {
+        function_name: &'static str,
+        driver: alloc::string::String,
+    },
+    MissingDefaultArtifactVariant {
+        function_name: &'static str,
+    },
     RuntimeDriverMismatch {
         backend: &'static str,
         expected_driver: &'static str,
@@ -62,6 +69,21 @@ impl core::fmt::Display for Error {
             }
             Self::UnsupportedBackend(backend) => {
                 write!(formatter, "unsupported backend: {backend}")
+            }
+            Self::MissingArtifactVariant {
+                function_name,
+                driver,
+            } => {
+                write!(
+                    formatter,
+                    "no artifact variant for function {function_name} and runtime driver {driver}"
+                )
+            }
+            Self::MissingDefaultArtifactVariant { function_name } => {
+                write!(
+                    formatter,
+                    "artifact for function {function_name} has no compiled variants"
+                )
             }
             Self::RuntimeDriverMismatch {
                 backend,

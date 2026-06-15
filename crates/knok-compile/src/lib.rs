@@ -15,10 +15,11 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     bracketed,
-    parse::{Parse, ParseStream},
+    parse::{Parse, ParseStream, Parser},
     parse2,
     punctuated::Punctuated,
-    FnArg, Ident, ItemFn, LitStr, ReturnType, Token, Type,
+    spanned::Spanned,
+    FnArg, Ident, ItemFn, Lit, LitStr, MetaNameValue, ReturnType, Token, Type,
 };
 
 pub fn expand_graph(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -63,7 +64,208 @@ fn register_graph(graph: TypedGraph) {
         .insert(graph.name.clone(), graph);
 }
 
+#[derive(Clone, Debug)]
+struct BackendSpec {
+    backend: String,
+    driver: String,
+    extra_flags: Vec<String>,
+}
+
+impl BackendSpec {
+    fn new(backend: String, driver: Option<String>, extra_flags: Vec<String>) -> Self {
+        let driver = driver.unwrap_or_else(|| default_driver_for_backend(&backend).to_string());
+        Self {
+            backend,
+            driver,
+            extra_flags,
+        }
+    }
+}
+
+fn parse_backend_specs(attr: TokenStream) -> syn::Result<Vec<BackendSpec>> {
+    let args = Punctuated::<MetaNameValue, Token![,]>::parse_terminated.parse2(attr)?;
+    let mut backend = None;
+    let mut backends = None;
+    for arg in args {
+        if arg.path.is_ident("backend") {
+            if backend.is_some() || backends.is_some() {
+                return Err(syn::Error::new(
+                    arg.span(),
+                    "backend and backends are mutually exclusive",
+                ));
+            }
+            let syn::Expr::Lit(expr_lit) = &arg.value else {
+                return Err(syn::Error::new(
+                    arg.value.span(),
+                    "backend must be a string literal",
+                ));
+            };
+            let Lit::Str(lit) = &expr_lit.lit else {
+                return Err(syn::Error::new(
+                    expr_lit.span(),
+                    "backend must be a string literal",
+                ));
+            };
+            backend = Some(vec![BackendSpec::new(lit.value(), None, Vec::new())]);
+        } else if arg.path.is_ident("backends") {
+            if backend.is_some() || backends.is_some() {
+                return Err(syn::Error::new(
+                    arg.span(),
+                    "backend and backends are mutually exclusive",
+                ));
+            }
+            backends = Some(parse_backend_array(&arg.value)?);
+        } else {
+            return Err(syn::Error::new(
+                arg.path.span(),
+                "unknown graph attribute argument",
+            ));
+        }
+    }
+    let specs = backend.or(backends).ok_or_else(|| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "missing required backend = \"...\" argument",
+        )
+    })?;
+    reject_duplicate_drivers(&specs)?;
+    Ok(specs)
+}
+
+fn parse_backend_array(value: &syn::Expr) -> syn::Result<Vec<BackendSpec>> {
+    let syn::Expr::Array(array) = value else {
+        return Err(syn::Error::new(
+            value.span(),
+            "backends must be an array of backend(...) declarations",
+        ));
+    };
+    if array.elems.is_empty() {
+        return Err(syn::Error::new(
+            array.span(),
+            "backends must contain at least one backend(...) declaration",
+        ));
+    }
+    array.elems.iter().map(parse_backend_call).collect()
+}
+
+fn parse_backend_call(expr: &syn::Expr) -> syn::Result<BackendSpec> {
+    let syn::Expr::Call(call) = expr else {
+        return Err(syn::Error::new(expr.span(), "expected backend(...)"));
+    };
+    let syn::Expr::Path(path) = call.func.as_ref() else {
+        return Err(syn::Error::new(call.func.span(), "expected backend(...)"));
+    };
+    if !path.path.is_ident("backend") {
+        return Err(syn::Error::new(call.func.span(), "expected backend(...)"));
+    }
+    let Some(first) = call.args.first() else {
+        return Err(syn::Error::new(call.span(), "backend name is required"));
+    };
+    let syn::Expr::Lit(expr_lit) = first else {
+        return Err(syn::Error::new(
+            first.span(),
+            "backend name must be a string literal",
+        ));
+    };
+    let Lit::Str(backend_lit) = &expr_lit.lit else {
+        return Err(syn::Error::new(
+            expr_lit.span(),
+            "backend name must be a string literal",
+        ));
+    };
+
+    let mut driver = None;
+    let mut extra_flags = Vec::new();
+    for arg in call.args.iter().skip(1) {
+        let syn::Expr::Assign(assign) = arg else {
+            return Err(syn::Error::new(
+                arg.span(),
+                "backend options must be assignments such as driver = \"...\"",
+            ));
+        };
+        let syn::Expr::Path(key_path) = assign.left.as_ref() else {
+            return Err(syn::Error::new(assign.left.span(), "expected option name"));
+        };
+        let key = key_path.path.require_ident()?.to_string();
+        match key.as_str() {
+            "driver" => {
+                if driver.is_some() {
+                    return Err(syn::Error::new(assign.span(), "duplicate driver option"));
+                }
+                let syn::Expr::Lit(expr_lit) = assign.right.as_ref() else {
+                    return Err(syn::Error::new(
+                        assign.right.span(),
+                        "driver must be a string literal",
+                    ));
+                };
+                let Lit::Str(lit) = &expr_lit.lit else {
+                    return Err(syn::Error::new(
+                        expr_lit.span(),
+                        "driver must be a string literal",
+                    ));
+                };
+                driver = Some(lit.value());
+            }
+            "flags" => {
+                let syn::Expr::Array(array) = assign.right.as_ref() else {
+                    return Err(syn::Error::new(
+                        assign.right.span(),
+                        "flags must be an array of string literals",
+                    ));
+                };
+                for flag in &array.elems {
+                    let syn::Expr::Lit(expr_lit) = flag else {
+                        return Err(syn::Error::new(
+                            flag.span(),
+                            "flags must be string literals",
+                        ));
+                    };
+                    let Lit::Str(lit) = &expr_lit.lit else {
+                        return Err(syn::Error::new(
+                            expr_lit.span(),
+                            "flags must be string literals",
+                        ));
+                    };
+                    extra_flags.push(lit.value());
+                }
+            }
+            _ => {
+                return Err(syn::Error::new(
+                    key_path.path.span(),
+                    format!("unknown backend option `{key}`"),
+                ));
+            }
+        }
+    }
+    Ok(BackendSpec::new(backend_lit.value(), driver, extra_flags))
+}
+
+fn reject_duplicate_drivers(specs: &[BackendSpec]) -> syn::Result<()> {
+    let mut drivers = BTreeMap::<&str, &str>::new();
+    for spec in specs {
+        if let Some(existing_backend) = drivers.insert(&spec.driver, &spec.backend) {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "duplicate runtime driver `{}` for backends `{}` and `{}`",
+                    spec.driver, existing_backend, spec.backend
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn default_driver_for_backend(backend: &str) -> &str {
+    match backend {
+        "llvm-cpu" => "local-task",
+        "metal-spirv" => "metal",
+        other => other,
+    }
+}
+
 fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
+    let backend_specs = parse_backend_specs(attr.clone())?;
     let item_fn: ItemFn = parse2(item)?;
     let visibility = item_fn.vis.clone();
     let signature = item_fn.sig.clone();
@@ -78,12 +280,13 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     };
     let graph = parse_graph_with_signatures(attr, item_fn, &registered_signatures())?;
     let graphs = registered_graphs();
-    let compiled = compile_graph_with_registry(&graph, &graphs).map_err(|error| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            format!("failed to compile knok graph `{}`: {error}", graph.name),
-        )
-    })?;
+    let compiled =
+        compile_graph_variants_with_registry(&graph, &graphs, &backend_specs).map_err(|error| {
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!("failed to compile knok graph `{}`: {error}", graph.name),
+            )
+        })?;
     register_graph(graph.clone());
 
     let name = &signature.ident;
@@ -97,8 +300,6 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         let dims = input.ty.shape.iter().copied();
         quote!(&[#(#dims),*])
     });
-    let vmfb_bytes = compiled.vmfb.iter().copied();
-    let backend = graph.backend;
     let function_name = format!("knok.{}", graph.name);
     let artifact_name = format_ident!("{}_artifact", name);
     let run_name = format_ident!("{}_run", name);
@@ -107,34 +308,56 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         let dims = input.ty.shape.iter().copied();
         quote!(&[#(#dims),*])
     });
+    let variant_statics = compiled.iter().enumerate().map(|(index, variant)| {
+        let vmfb_name = format_ident!("VMFB_{index}");
+        let flags_name = format_ident!("COMPILE_FLAGS_{index}");
+        let vmfb_bytes = variant.vmfb.iter().copied();
+        let flags = &variant.compile_flags;
+        quote! {
+            static #vmfb_name: &[u8] = &[#(#vmfb_bytes),*];
+            static #flags_name: &[&str] = &[#(#flags),*];
+        }
+    });
+    let variants = compiled.iter().enumerate().map(|(index, variant)| {
+        let vmfb_name = format_ident!("VMFB_{index}");
+        let flags_name = format_ident!("COMPILE_FLAGS_{index}");
+        let backend = &variant.backend;
+        let driver = &variant.driver;
+        quote! {
+            ::knok::GraphArtifactVariant {
+                vmfb: #vmfb_name,
+                backend: #backend,
+                driver: #driver,
+                compile_flags: #flags_name,
+            }
+        }
+    });
 
     Ok(quote! {
         #visibility fn #artifact_name() -> ::knok::GraphArtifact {
-            static VMFB: &[u8] = &[#(#vmfb_bytes),*];
+            #(#variant_statics)*
+            static VARIANTS: &[::knok::GraphArtifactVariant] = &[#(#variants),*];
             static INPUT_SHAPES: &[&[usize]] = &[#(#artifact_input_shapes),*];
             ::knok::GraphArtifact {
-                vmfb: VMFB,
                 function_name: #function_name,
-                backend: #backend,
                 input_shapes: INPUT_SHAPES,
                 output_shape: &[#(#output_dims),*],
+                variants: VARIANTS,
             }
         }
 
         #visibility fn #run_name(engine: &::knok::Engine, #(#inputs),*) -> ::knok::Result<#output_ty> {
             let artifact = #artifact_name();
-            let output = ::knok::__private::invoke_f32_with_engine(
-                engine,
-                artifact.vmfb,
-                artifact.function_name,
-                artifact.backend,
+            let output = engine.invoke_f32(
+                artifact,
                 &[#((#input_shapes, #arg_names.as_slice())),*],
             )?;
             <#output_ty>::from_vec(output)
         }
 
         #visibility fn #name(#(#inputs),*) -> ::knok::Result<#output_ty> {
-            let engine = ::knok::Engine::for_backend(#artifact_name().backend)?;
+            let artifact = #artifact_name();
+            let engine = ::knok::Engine::for_artifact(artifact)?;
             #run_name(&engine, #(#arg_names),*)
         }
     })
@@ -175,16 +398,14 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             &expected_output,
         )?;
     }
-    let vmfb = compile_mlir_source(&model.backend.value(), &mlir).map_err(|error| {
+    let compiled = compile_mlir_variants(&model.backend_specs, &mlir).map_err(|error| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
             format!("failed to compile MLIR file `{}`: {error}", path.display()),
         )
     })?;
     let module_name = model.name;
-    let backend = model.backend.value();
     let function_name = model.function.value();
-    let vmfb_bytes = vmfb.iter().copied();
     let input_types = model.inputs.unwrap_or_default();
     let output_shape = model
         .output
@@ -201,43 +422,79 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             .map(|index| format_ident!("input{index}"))
             .collect::<Vec<_>>();
         Some(quote! {
-            pub fn invoke(#(#input_names: #input_types),*) -> ::knok::Result<#output_ty> {
-                let output = invoke_f32(&[
+            pub fn invoke_run(
+                engine: &::knok::Engine,
+                #(#input_names: #input_types),*
+            ) -> ::knok::Result<#output_ty> {
+                let output = invoke_f32_run(engine, &[
                     #((<#input_types>::SHAPE, #input_names.as_slice())),*
                 ])?;
                 <#output_ty>::from_vec(output)
+            }
+
+            pub fn invoke(#(#input_names: #input_types),*) -> ::knok::Result<#output_ty> {
+                let artifact = artifact();
+                let engine = ::knok::Engine::for_artifact(artifact)?;
+                invoke_run(&engine, #(#input_names),*)
             }
         })
     } else {
         None
     };
+    let variant_statics = compiled.iter().enumerate().map(|(index, variant)| {
+        let vmfb_name = format_ident!("VMFB_{index}");
+        let flags_name = format_ident!("COMPILE_FLAGS_{index}");
+        let vmfb_bytes = variant.vmfb.iter().copied();
+        let flags = &variant.compile_flags;
+        quote! {
+            static #vmfb_name: &[u8] = &[#(#vmfb_bytes),*];
+            static #flags_name: &[&str] = &[#(#flags),*];
+        }
+    });
+    let variants = compiled.iter().enumerate().map(|(index, variant)| {
+        let vmfb_name = format_ident!("VMFB_{index}");
+        let flags_name = format_ident!("COMPILE_FLAGS_{index}");
+        let backend = &variant.backend;
+        let driver = &variant.driver;
+        quote! {
+            ::knok::GraphArtifactVariant {
+                vmfb: #vmfb_name,
+                backend: #backend,
+                driver: #driver,
+                compile_flags: #flags_name,
+            }
+        }
+    });
 
     Ok(quote! {
         pub mod #module_name {
             #typed_scope_import
 
             pub fn artifact() -> ::knok::GraphArtifact {
-                static VMFB: &[u8] = &[#(#vmfb_bytes),*];
+                #(#variant_statics)*
+                static VARIANTS: &[::knok::GraphArtifactVariant] = &[#(#variants),*];
                 static INPUT_SHAPES: &[&[usize]] = &[#(<#input_types>::SHAPE),*];
                 ::knok::GraphArtifact {
-                    vmfb: VMFB,
                     function_name: #function_name,
-                    backend: #backend,
                     input_shapes: INPUT_SHAPES,
                     output_shape: #output_shape,
+                    variants: VARIANTS,
                 }
+            }
+
+            pub fn invoke_f32_run(
+                engine: &::knok::Engine,
+                inputs: &[(&[usize], &[f32])],
+            ) -> ::knok::Result<::knok::__private::OutputF32> {
+                engine.invoke_f32(artifact(), inputs)
             }
 
             pub fn invoke_f32(
                 inputs: &[(&[usize], &[f32])],
             ) -> ::knok::Result<::knok::__private::OutputF32> {
                 let artifact = artifact();
-                ::knok::__private::invoke_f32(
-                    artifact.vmfb,
-                    artifact.function_name,
-                    artifact.backend,
-                    inputs,
-                )
+                let engine = ::knok::Engine::for_artifact(artifact)?;
+                invoke_f32_run(&engine, inputs)
             }
 
             #typed_invoke
@@ -376,7 +633,7 @@ fn format_shape_list(shape: &[usize]) -> String {
 struct MlirModel {
     name: Ident,
     path: LitStr,
-    backend: LitStr,
+    backend_specs: Vec<BackendSpec>,
     function: LitStr,
     inputs: Option<Vec<Type>>,
     output: Option<Type>,
@@ -386,7 +643,7 @@ impl Parse for MlirModel {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut name = None;
         let mut path = None;
-        let mut backend = None;
+        let mut backend_specs = None;
         let mut function = None;
         let mut inputs = None;
         let mut output = None;
@@ -396,7 +653,26 @@ impl Parse for MlirModel {
             match key.to_string().as_str() {
                 "name" => name = Some(input.parse()?),
                 "path" => path = Some(input.parse()?),
-                "backend" => backend = Some(input.parse()?),
+                "backend" => {
+                    if backend_specs.is_some() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "backend and backends are mutually exclusive",
+                        ));
+                    }
+                    let lit: LitStr = input.parse()?;
+                    backend_specs = Some(vec![BackendSpec::new(lit.value(), None, Vec::new())]);
+                }
+                "backends" => {
+                    if backend_specs.is_some() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "backend and backends are mutually exclusive",
+                        ));
+                    }
+                    let value: syn::Expr = input.parse()?;
+                    backend_specs = Some(parse_backend_array(&value)?);
+                }
                 "function" => function = Some(input.parse()?),
                 "inputs" => {
                     let content;
@@ -425,7 +701,11 @@ impl Parse for MlirModel {
         Ok(Self {
             name: name.ok_or_else(|| input.error("missing name: <ident>"))?,
             path: path.ok_or_else(|| input.error("missing path: \"...\""))?,
-            backend: backend.ok_or_else(|| input.error("missing backend: \"...\""))?,
+            backend_specs: {
+                let specs = backend_specs.ok_or_else(|| input.error("missing backend: \"...\""))?;
+                reject_duplicate_drivers(&specs)?;
+                specs
+            },
             function: function.ok_or_else(|| input.error("missing function: \"...\""))?,
             inputs,
             output,
@@ -454,6 +734,13 @@ pub struct CompiledGraph {
     pub vmfb: Vec<u8>,
 }
 
+struct CompiledVariant {
+    backend: String,
+    driver: String,
+    compile_flags: Vec<String>,
+    vmfb: Vec<u8>,
+}
+
 pub fn compile_graph(graph: &TypedGraph) -> anyhow::Result<CompiledGraph> {
     compile_graph_with_registry(graph, &BTreeMap::new())
 }
@@ -468,8 +755,50 @@ pub fn compile_graph_with_registry(
     Ok(CompiledGraph { mlir, vmfb })
 }
 
+fn compile_graph_variants_with_registry(
+    graph: &TypedGraph,
+    graphs: &BTreeMap<String, TypedGraph>,
+    specs: &[BackendSpec],
+) -> anyhow::Result<Vec<CompiledVariant>> {
+    let mlir = lower_to_mlir_with_registry(graph, graphs)?;
+    verify_with_melior(&mlir)?;
+    specs
+        .iter()
+        .map(|spec| {
+            let compile_flags = backend_flags(&spec.backend, &spec.extra_flags);
+            let vmfb = compile_with_iree(&spec.backend, &spec.extra_flags, &mlir)?;
+            Ok(CompiledVariant {
+                backend: spec.backend.clone(),
+                driver: spec.driver.clone(),
+                compile_flags,
+                vmfb,
+            })
+        })
+        .collect()
+}
+
+fn compile_mlir_variants(
+    specs: &[BackendSpec],
+    mlir: &str,
+) -> anyhow::Result<Vec<CompiledVariant>> {
+    verify_with_melior(mlir)?;
+    specs
+        .iter()
+        .map(|spec| {
+            let compile_flags = backend_flags(&spec.backend, &spec.extra_flags);
+            let vmfb = compile_with_iree(&spec.backend, &spec.extra_flags, mlir)?;
+            Ok(CompiledVariant {
+                backend: spec.backend.clone(),
+                driver: spec.driver.clone(),
+                compile_flags,
+                vmfb,
+            })
+        })
+        .collect()
+}
+
 pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
-    compile_with_iree(backend, mlir)
+    compile_with_iree(backend, &[], mlir)
 }
 
 pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
@@ -498,11 +827,11 @@ fn verify_with_melior(mlir: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn compile_with_iree(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
+fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyhow::Result<Vec<u8>> {
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
     let iree_compile = iree_compile_command();
-    let flags = backend_flags(backend);
+    let flags = backend_flags(backend, extra_flags);
     let key = cache_key(backend, mlir, &iree_compile, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     let mlir_path = cache_dir.join(format!("{key}.mlir"));
@@ -533,11 +862,12 @@ fn iree_compile_command() -> String {
     env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string())
 }
 
-fn backend_flags(backend: &str) -> Vec<String> {
+fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
     let mut flags = vec![format!("--iree-hal-target-backends={backend}")];
     if backend == "metal-spirv" {
         flags.push("--iree-metal-compile-to-metallib=false".to_string());
     }
+    flags.extend(extra_flags.iter().cloned());
     flags
 }
 

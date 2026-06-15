@@ -1,8 +1,13 @@
 use knok::prelude::*;
-use knok::{Engine, Error, RuntimeConfig};
+use knok::{Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig};
 
 #[knok::graph(backend = "llvm-cpu")]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    x + y
+}
+
+#[knok::graph(backends = [backend("llvm-cpu", driver = "local-task")])]
+fn add4_bundle(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
 }
 
@@ -88,6 +93,33 @@ fn add_graph_runs() {
 }
 
 #[test]
+fn artifact_records_backend_variant() {
+    let artifact = add4_artifact();
+    assert_eq!(artifact.function_name, "knok.add4");
+    assert_eq!(artifact.variants.len(), 1);
+    let variant = artifact.first_variant().unwrap();
+    assert_eq!(variant.backend, "llvm-cpu");
+    assert_eq!(variant.driver, "local-task");
+    assert!(variant
+        .compile_flags
+        .contains(&"--iree-hal-target-backends=llvm-cpu"));
+}
+
+#[test]
+fn explicit_backend_bundle_syntax_runs() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let output = add4_bundle_run(
+        &engine,
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+
+    assert_eq!(add4_bundle_artifact().variants.len(), 1);
+    assert_eq!(output.into_vec(), vec![11.0, 22.0, 33.0, 44.0]);
+}
+
+#[test]
 fn reusable_engine_runs_graph_repeatedly() {
     let engine = Engine::new(RuntimeConfig::auto()).unwrap();
 
@@ -110,10 +142,19 @@ fn reusable_engine_runs_graph_repeatedly() {
 }
 
 #[test]
-fn engine_rejects_mismatched_backend_driver() {
+fn engine_reports_missing_artifact_variant_for_driver() {
     let engine = Engine::new(RuntimeConfig::auto()).unwrap();
-    let mut artifact = add4_artifact();
-    artifact.backend = "metal-spirv";
+    let artifact = add4_artifact();
+    let variant = artifact.first_variant().unwrap();
+    let variants = Box::leak(Box::new([GraphArtifactVariant {
+        backend: "metal-spirv",
+        driver: "metal",
+        ..variant
+    }]));
+    let artifact = GraphArtifact {
+        variants,
+        ..artifact
+    };
     let x = [1.0, 2.0, 3.0, 4.0];
     let y = [10.0, 20.0, 30.0, 40.0];
     let error = engine
@@ -122,9 +163,8 @@ fn engine_rejects_mismatched_backend_driver() {
 
     assert!(matches!(
         error,
-        Error::RuntimeDriverMismatch {
-            backend: "metal-spirv",
-            expected_driver: "metal",
+        Error::MissingArtifactVariant {
+            function_name: "knok.add4",
             ..
         }
     ));

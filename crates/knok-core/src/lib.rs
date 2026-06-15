@@ -161,11 +161,45 @@ fn parse_backend(attr: proc_macro2::TokenStream) -> syn::Result<String> {
                 "backend must be a string literal",
             ));
         }
+        if arg.path.is_ident("backends") {
+            return parse_first_backend_from_array(&arg.value);
+        }
     }
     Err(syn::Error::new(
         Span::call_site(),
         "missing required backend = \"...\" argument",
     ))
+}
+
+fn parse_first_backend_from_array(value: &SynExpr) -> syn::Result<String> {
+    let SynExpr::Array(array) = value else {
+        return Err(syn::Error::new(
+            value.span(),
+            "backends must be an array of backend(...) declarations",
+        ));
+    };
+    let Some(SynExpr::Call(call)) = array.elems.first() else {
+        return Err(syn::Error::new(
+            array.span(),
+            "backends must contain at least one backend(...) declaration",
+        ));
+    };
+    let SynExpr::Path(path) = call.func.as_ref() else {
+        return Err(syn::Error::new(call.func.span(), "expected backend(...)"));
+    };
+    if !path.path.is_ident("backend") {
+        return Err(syn::Error::new(call.func.span(), "expected backend(...)"));
+    }
+    let Some(SynExpr::Lit(expr_lit)) = call.args.first() else {
+        return Err(syn::Error::new(call.span(), "backend name is required"));
+    };
+    let Lit::Str(lit) = &expr_lit.lit else {
+        return Err(syn::Error::new(
+            expr_lit.span(),
+            "backend name must be a string literal",
+        ));
+    };
+    Ok(lit.value())
 }
 
 fn parse_item_fn(item: ItemFn, backend: String) -> syn::Result<Graph> {
