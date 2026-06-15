@@ -1,0 +1,646 @@
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{Mutex, OnceLock},
+};
+
+use knok_core::{
+    parse_graph_with_signatures, BinaryOp, CallOp, ElementType, Expr, GraphSignature, TensorType,
+    TypedGraph, UnaryOp,
+};
+use melior::{dialect::DialectRegistry, ir::operation::OperationLike, ir::Module, Context};
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote};
+use syn::{
+    parse::{Parse, ParseStream},
+    parse2, FnArg, Ident, ItemFn, LitStr, ReturnType, Token,
+};
+
+pub fn expand_graph(attr: TokenStream, item: TokenStream) -> TokenStream {
+    match expand_graph_result(attr, item) {
+        Ok(tokens) => tokens,
+        Err(error) => error.to_compile_error(),
+    }
+}
+
+static GRAPH_REGISTRY: OnceLock<Mutex<BTreeMap<String, TypedGraph>>> = OnceLock::new();
+
+fn graph_registry() -> &'static Mutex<BTreeMap<String, TypedGraph>> {
+    GRAPH_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn registered_graphs() -> BTreeMap<String, TypedGraph> {
+    graph_registry()
+        .lock()
+        .expect("knok graph registry lock poisoned")
+        .clone()
+}
+
+fn registered_signatures() -> Vec<(String, GraphSignature)> {
+    registered_graphs()
+        .into_iter()
+        .map(|(name, graph)| {
+            (
+                name,
+                GraphSignature {
+                    inputs: graph.inputs.into_iter().map(|input| input.ty).collect(),
+                    output: graph.output,
+                },
+            )
+        })
+        .collect()
+}
+
+fn register_graph(graph: TypedGraph) {
+    graph_registry()
+        .lock()
+        .expect("knok graph registry lock poisoned")
+        .insert(graph.name.clone(), graph);
+}
+
+fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
+    let item_fn: ItemFn = parse2(item)?;
+    let visibility = item_fn.vis.clone();
+    let signature = item_fn.sig.clone();
+    let output_ty = match &signature.output {
+        ReturnType::Type(_, ty) => ty.clone(),
+        ReturnType::Default => {
+            return Err(syn::Error::new_spanned(
+                &signature.ident,
+                "graph functions must return a Tensor type",
+            ));
+        }
+    };
+    let graph = parse_graph_with_signatures(attr, item_fn, &registered_signatures())?;
+    let graphs = registered_graphs();
+    let compiled = compile_graph_with_registry(&graph, &graphs).map_err(|error| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("failed to compile knok graph `{}`: {error}", graph.name),
+        )
+    })?;
+    register_graph(graph.clone());
+
+    let name = &signature.ident;
+    let inputs = signature.inputs.iter().collect::<Vec<_>>();
+    let arg_names = signature
+        .inputs
+        .iter()
+        .map(input_name)
+        .collect::<syn::Result<Vec<_>>>()?;
+    let input_shapes = graph.inputs.iter().map(|input| {
+        let dims = input.ty.shape.iter().copied();
+        quote!(&[#(#dims),*])
+    });
+    let vmfb_bytes = compiled.vmfb.iter().copied();
+    let backend = graph.backend;
+    let function_name = format!("knok.{}", graph.name);
+    let artifact_name = format_ident!("{}_artifact", name);
+    let output_dims = graph.output.shape.iter().copied();
+    let artifact_input_shapes = graph.inputs.iter().map(|input| {
+        let dims = input.ty.shape.iter().copied();
+        quote!(&[#(#dims),*])
+    });
+
+    Ok(quote! {
+        #visibility fn #artifact_name() -> ::knok::GraphArtifact {
+            static VMFB: &[u8] = &[#(#vmfb_bytes),*];
+            static INPUT_SHAPES: &[&[usize]] = &[#(#artifact_input_shapes),*];
+            ::knok::GraphArtifact {
+                vmfb: VMFB,
+                function_name: #function_name,
+                backend: #backend,
+                input_shapes: INPUT_SHAPES,
+                output_shape: &[#(#output_dims),*],
+            }
+        }
+
+        #visibility fn #name(#(#inputs),*) -> ::knok::Result<#output_ty> {
+            let artifact = #artifact_name();
+            let output = ::knok::__private::invoke_f32(
+                artifact.vmfb,
+                artifact.function_name,
+                artifact.backend,
+                &[#((#input_shapes, #arg_names.as_slice())),*],
+            )?;
+            <#output_ty>::from_vec(output)
+        }
+    })
+}
+
+pub fn expand_mlir_model(input: TokenStream) -> TokenStream {
+    match expand_mlir_model_result(input) {
+        Ok(tokens) => tokens,
+        Err(error) => error.to_compile_error(),
+    }
+}
+
+fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
+    let model: MlirModel = parse2(input)?;
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").map_err(|error| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("CARGO_MANIFEST_DIR is not set: {error}"),
+        )
+    })?;
+    let path = Path::new(&manifest_dir).join(model.path.value());
+    let mlir = fs::read_to_string(&path).map_err(|error| {
+        syn::Error::new(
+            model.path.span(),
+            format!("failed to read MLIR file `{}`: {error}", path.display()),
+        )
+    })?;
+    let vmfb = compile_mlir_source(&model.backend.value(), &mlir).map_err(|error| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("failed to compile MLIR file `{}`: {error}", path.display()),
+        )
+    })?;
+    let module_name = model.name;
+    let backend = model.backend.value();
+    let function_name = model.function.value();
+    let vmfb_bytes = vmfb.iter().copied();
+
+    Ok(quote! {
+        pub mod #module_name {
+            pub fn artifact() -> ::knok::GraphArtifact {
+                static VMFB: &[u8] = &[#(#vmfb_bytes),*];
+                static INPUT_SHAPES: &[&[usize]] = &[];
+                ::knok::GraphArtifact {
+                    vmfb: VMFB,
+                    function_name: #function_name,
+                    backend: #backend,
+                    input_shapes: INPUT_SHAPES,
+                    output_shape: &[],
+                }
+            }
+
+            pub fn invoke_f32(
+                inputs: &[(&[usize], &[f32])],
+            ) -> ::knok::Result<::knok::__private::OutputF32> {
+                let artifact = artifact();
+                ::knok::__private::invoke_f32(
+                    artifact.vmfb,
+                    artifact.function_name,
+                    artifact.backend,
+                    inputs,
+                )
+            }
+        }
+    })
+}
+
+struct MlirModel {
+    name: Ident,
+    path: LitStr,
+    backend: LitStr,
+    function: LitStr,
+}
+
+impl Parse for MlirModel {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut name = None;
+        let mut path = None;
+        let mut backend = None;
+        let mut function = None;
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![:]>()?;
+            match key.to_string().as_str() {
+                "name" => name = Some(input.parse()?),
+                "path" => path = Some(input.parse()?),
+                "backend" => backend = Some(input.parse()?),
+                "function" => function = Some(input.parse()?),
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!("unknown mlir_model key `{other}`"),
+                    ));
+                }
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(Self {
+            name: name.ok_or_else(|| input.error("missing name: <ident>"))?,
+            path: path.ok_or_else(|| input.error("missing path: \"...\""))?,
+            backend: backend.ok_or_else(|| input.error("missing backend: \"...\""))?,
+            function: function.ok_or_else(|| input.error("missing function: \"...\""))?,
+        })
+    }
+}
+
+fn input_name(input: &FnArg) -> syn::Result<proc_macro2::Ident> {
+    let FnArg::Typed(pat_ty) = input else {
+        return Err(syn::Error::new_spanned(
+            input,
+            "graph methods with self receivers are not supported",
+        ));
+    };
+    let syn::Pat::Ident(ident) = pat_ty.pat.as_ref() else {
+        return Err(syn::Error::new_spanned(
+            &pat_ty.pat,
+            "graph argument patterns must be simple identifiers",
+        ));
+    };
+    Ok(ident.ident.clone())
+}
+
+pub struct CompiledGraph {
+    pub mlir: String,
+    pub vmfb: Vec<u8>,
+}
+
+pub fn compile_graph(graph: &TypedGraph) -> anyhow::Result<CompiledGraph> {
+    compile_graph_with_registry(graph, &BTreeMap::new())
+}
+
+pub fn compile_graph_with_registry(
+    graph: &TypedGraph,
+    graphs: &BTreeMap<String, TypedGraph>,
+) -> anyhow::Result<CompiledGraph> {
+    let mlir = lower_to_mlir_with_registry(graph, graphs)?;
+    verify_with_melior(&mlir)?;
+    let vmfb = compile_mlir_source(&graph.backend, &mlir)?;
+    Ok(CompiledGraph { mlir, vmfb })
+}
+
+pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
+    compile_with_iree(backend, mlir)
+}
+
+pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
+    lower_to_mlir_with_registry(graph, &BTreeMap::new())
+}
+
+pub fn lower_to_mlir_with_registry(
+    graph: &TypedGraph,
+    graphs: &BTreeMap<String, TypedGraph>,
+) -> anyhow::Result<String> {
+    let mut lowerer = Lowerer::new(graph, graphs);
+    lowerer.lower()
+}
+
+fn verify_with_melior(mlir: &str) -> anyhow::Result<()> {
+    let registry = DialectRegistry::new();
+    melior::utility::register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    context.load_all_available_dialects();
+    let module = Module::parse(&context, mlir)
+        .ok_or_else(|| anyhow::anyhow!("melior failed to parse generated MLIR"))?;
+    if !module.as_operation().verify() {
+        anyhow::bail!("melior rejected generated MLIR");
+    }
+    Ok(())
+}
+
+fn compile_with_iree(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
+    let cache_dir = cache_dir()?;
+    fs::create_dir_all(&cache_dir)?;
+    let key = cache_key(backend, mlir);
+    let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
+    let mlir_path = cache_dir.join(format!("{key}.mlir"));
+    if vmfb_path.exists() {
+        return Ok(fs::read(vmfb_path)?);
+    }
+
+    fs::write(&mlir_path, mlir)?;
+    let mut command =
+        Command::new(env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string()));
+    command
+        .arg(&mlir_path)
+        .arg(format!("--iree-hal-target-backends={backend}"))
+        .arg("-o")
+        .arg(&vmfb_path);
+    if backend == "metal-spirv" {
+        command.arg("--iree-metal-compile-to-metallib=false");
+    }
+    let output = command.output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "iree-compile failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(fs::read(vmfb_path)?)
+}
+
+fn cache_dir() -> anyhow::Result<PathBuf> {
+    if let Ok(path) = env::var("KNOK_CACHE_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
+    Ok(Path::new(&manifest_dir).join("target/knok-cache"))
+}
+
+fn cache_key(backend: &str, mlir: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(backend.as_bytes());
+    hasher.update(mlir.as_bytes());
+    hasher.finalize().to_hex().to_string()
+}
+
+struct Lowerer<'a> {
+    graph: &'a TypedGraph,
+    graphs: &'a BTreeMap<String, TypedGraph>,
+    call_stack: Vec<String>,
+    next_value: usize,
+    lines: Vec<String>,
+    values: BTreeMap<String, Value>,
+}
+
+#[derive(Clone)]
+struct Value {
+    name: String,
+    ty: TensorType,
+}
+
+impl<'a> Lowerer<'a> {
+    fn new(graph: &'a TypedGraph, graphs: &'a BTreeMap<String, TypedGraph>) -> Self {
+        Self {
+            graph,
+            graphs,
+            call_stack: vec![graph.name.clone()],
+            next_value: 0,
+            lines: Vec::new(),
+            values: BTreeMap::new(),
+        }
+    }
+
+    fn lower(&mut self) -> anyhow::Result<String> {
+        let arg_list = self
+            .graph
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(index, input)| {
+                self.values.insert(
+                    input.name.clone(),
+                    Value {
+                        name: format!("%arg{index}"),
+                        ty: input.ty.clone(),
+                    },
+                );
+                format!("%arg{index}: {}", input.ty.mlir_type())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        for binding in &self.graph.lets {
+            let value = self.lower_expr(&binding.value.kind)?;
+            self.values.insert(binding.name.clone(), value);
+        }
+        let body = self.lower_expr(&self.graph.body.kind)?;
+        self.lines.push(format!(
+            "    return {} : {}",
+            body.name,
+            body.ty.mlir_type()
+        ));
+
+        let mut mlir = String::new();
+        mlir.push_str("module @knok {\n");
+        mlir.push_str(&format!(
+            "  func.func @{}({}) -> {} {{\n",
+            self.graph.name,
+            arg_list,
+            self.graph.output.mlir_type()
+        ));
+        for line in &self.lines {
+            mlir.push_str(line);
+            mlir.push('\n');
+        }
+        mlir.push_str("  }\n");
+        mlir.push_str("}\n");
+        Ok(mlir)
+    }
+
+    fn lower_expr(&mut self, expr: &Expr) -> anyhow::Result<Value> {
+        match expr {
+            Expr::Var(name) => self
+                .values
+                .get(name)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("unknown value `{name}` during lowering")),
+            Expr::ConstF32(value) => self.constant_f32(value),
+            Expr::Unary { op, value } => match op {
+                UnaryOp::Neg => {
+                    let value = self.lower_expr(value)?;
+                    let zero = self.zero_like(&value.ty)?;
+                    self.binary_value(BinaryOp::Sub, zero, value)
+                }
+            },
+            Expr::Binary { op, lhs, rhs } => {
+                let lhs = self.lower_expr(lhs)?;
+                let rhs = self.lower_expr(rhs)?;
+                self.binary_value(*op, lhs, rhs)
+            }
+            Expr::Call { op, args } => match op {
+                CallOp::Relu => {
+                    let value = self.lower_expr(&args[0])?;
+                    let zero = self.zero_like(&value.ty)?;
+                    self.emit_binary("arith.maximumf", zero, value)
+                }
+                CallOp::Matmul => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.matmul(lhs, rhs)
+                }
+                CallOp::Transpose => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.transpose(input)
+                }
+                CallOp::Graph(name) => {
+                    let args = args
+                        .iter()
+                        .map(|arg| self.lower_expr(arg))
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    self.inline_graph(name, args)
+                }
+            },
+        }
+    }
+
+    fn inline_graph(&mut self, name: &str, args: Vec<Value>) -> anyhow::Result<Value> {
+        if self.call_stack.iter().any(|candidate| candidate == name) {
+            anyhow::bail!("recursive graph call `{name}` is not supported");
+        }
+        let graph = self
+            .graphs
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown graph `{name}` during lowering"))?;
+        if graph.inputs.len() != args.len() {
+            anyhow::bail!(
+                "graph `{name}` expects {} arguments, got {}",
+                graph.inputs.len(),
+                args.len()
+            );
+        }
+
+        self.call_stack.push(name.to_string());
+        let mut overwritten = Vec::new();
+        for (input, value) in graph.inputs.iter().zip(args) {
+            overwritten.push((
+                input.name.clone(),
+                self.values.insert(input.name.clone(), value),
+            ));
+        }
+
+        let result = (|| {
+            for binding in &graph.lets {
+                let value = self.lower_expr(&binding.value.kind)?;
+                overwritten.push((
+                    binding.name.clone(),
+                    self.values.insert(binding.name.clone(), value),
+                ));
+            }
+            self.lower_expr(&graph.body.kind)
+        })();
+
+        for (name, old_value) in overwritten.into_iter().rev() {
+            if let Some(old_value) = old_value {
+                self.values.insert(name, old_value);
+            } else {
+                self.values.remove(&name);
+            }
+        }
+        self.call_stack.pop();
+        result
+    }
+
+    fn constant_f32(&mut self, value: &str) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        self.lines
+            .push(format!("    {name} = arith.constant {value} : f32"));
+        Ok(Value {
+            name,
+            ty: TensorType {
+                elem: ElementType::F32,
+                shape: vec![],
+            },
+        })
+    }
+
+    fn zero_like(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
+        if ty.rank() == 0 {
+            return self.constant_f32("0.0");
+        }
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = arith.constant dense<0.000000e+00> : {}",
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn binary_value(&mut self, op: BinaryOp, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let op_name = match op {
+            BinaryOp::Add => "arith.addf",
+            BinaryOp::Sub => "arith.subf",
+            BinaryOp::Mul => "arith.mulf",
+            BinaryOp::Div => "arith.divf",
+        };
+        self.emit_binary(op_name, lhs, rhs)
+    }
+
+    fn emit_binary(&mut self, op_name: &str, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let (lhs, rhs, ty) = if lhs.ty == rhs.ty {
+            let ty = lhs.ty.clone();
+            (lhs, rhs, ty)
+        } else if lhs.ty.rank() == 0 {
+            let rhs_ty = rhs.ty.clone();
+            (self.splat(lhs, &rhs_ty)?, rhs, rhs_ty)
+        } else if rhs.ty.rank() == 0 {
+            let lhs_ty = lhs.ty.clone();
+            (lhs, self.splat(rhs, &lhs_ty)?, lhs_ty)
+        } else {
+            anyhow::bail!("incompatible binary operand types during lowering");
+        };
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = {op_name} {}, {} : {}",
+            lhs.name,
+            rhs.name,
+            ty.mlir_type()
+        ));
+        Ok(Value { name, ty })
+    }
+
+    fn splat(&mut self, scalar: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.splat {} : {}",
+            scalar.name,
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn matmul(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: lhs.ty.elem,
+            shape: vec![lhs.ty.shape[0], rhs.ty.shape[1]],
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant 0.0 : {}",
+            ty.elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
+            ty.elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = linalg.matmul ins({}, {} : {}, {}) outs({init} : {}) -> {}",
+            lhs.name,
+            rhs.name,
+            lhs.ty.mlir_type(),
+            rhs.ty.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value { name, ty })
+    }
+
+    fn transpose(&mut self, input: Value) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: input.ty.elem,
+            shape: vec![input.ty.shape[1], input.ty.shape[0]],
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = linalg.transpose ins({} : {}) outs({empty} : {}) permutation = [1, 0]",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value { name, ty })
+    }
+
+    fn fresh(&mut self) -> String {
+        let name = format!("%{}", self.next_value);
+        self.next_value += 1;
+        name
+    }
+}

@@ -1,0 +1,30 @@
+[workspace]
+members = [
+    "crates/knok",
+    "crates/knok-core",
+    "crates/knok-compile",
+    "crates/knok-macros",
+    "crates/knok/tests/no-std-smoke",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/gmmyung/knok"
+authors = ["Gyungmin Myung"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+blake3 = "1.8"
+eerie = { path = "../eerie", version = "0.3.3", default-features = false }
+knok-core = { path = "crates/knok-core", version = "0.1.0" }
+knok-compile = { path = "crates/knok-compile", version = "0.1.0" }
+knok-macros = { path = "crates/knok-macros", version = "0.1.0" }
+melior = "0.27"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+tempfile = "3.23"
+thiserror = "2.0"
+trybuild = "1.0"

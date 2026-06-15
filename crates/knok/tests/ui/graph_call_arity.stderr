@@ -1,0 +1,7 @@
+error: graph `layer` expects 1 arguments, got 2
+ --> tests/ui/graph_call_arity.rs:8:1
+  |
+8 | #[knok::graph(backend = "llvm-cpu")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `knok::graph` (in Nightly builds, run with -Z macro-backtrace for more info)
