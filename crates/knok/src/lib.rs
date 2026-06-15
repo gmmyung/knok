@@ -14,7 +14,7 @@ pub mod runtime;
 pub mod tensor;
 
 pub mod prelude {
-    pub use crate::tensor::{Tensor1, Tensor2};
+    pub use crate::tensor::{Tensor1, Tensor2, Tensor3, Tensor4};
     pub use crate::{graph, mlir_model};
 }
 

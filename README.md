@@ -84,8 +84,27 @@ fn model(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 
 Recursive graph calls are rejected.
 
-`Tensor1<T, D0>` and `Tensor2<T, D0, D1>` are used because stable Rust does not
-support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
+`Tensor1<T, D0>` through `Tensor4<T, D0, ...>` are used because stable Rust does
+not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
+
+## Examples
+
+The examples are assertion-backed and can be run directly:
+
+```sh
+cargo run -p knok --example mlp
+cargo run -p knok --example classifier
+cargo run -p knok --example imported_mlir
+cargo run -p knok --example multi_backend
+```
+
+They cover the recommended hosted workflow:
+
+- define or import a static graph at compile time
+- construct one reusable `Engine`
+- call generated `*_run` or `invoke_run` wrappers for repeated inference
+- select CPU or Metal by choosing an engine driver when the artifact contains
+  matching backend variants
 
 ## Feature Modes
 
@@ -99,16 +118,20 @@ support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 ## MVP limits
 
 - `f32` tensors only.
-- Static rank-1 and rank-2 shapes only.
+- Static rank-1 through rank-4 shapes only.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, `relu`, `matmul`,
-  rank-2 `transpose`, rank-1/rank-2 `reshape`, scalar-like `broadcast`, and
-  full-tensor `sum`.
+  batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2 `transpose`, reshape
+  across ranks 1-4, scalar-like `broadcast`, full-tensor `sum`, full-tensor
+  `mean`, full-tensor `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`,
+  and `sigmoid`.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
   macro expansion process.
+- `softmax` normalizes over the whole tensor. `argmax` currently returns the
+  rank-1 index as `Tensor1<f32, 1>` because public tensors are still `f32` only.
 
 ## Development
 

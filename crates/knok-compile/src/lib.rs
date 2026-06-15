@@ -630,6 +630,14 @@ fn format_shape_list(shape: &[usize]) -> String {
     )
 }
 
+fn reassociation_for_rank(rank: usize) -> String {
+    let dims = (0..rank)
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[[{dims}]]")
+}
+
 struct MlirModel {
     name: Ident,
     path: LitStr,
@@ -1011,15 +1019,52 @@ impl<'a> Lowerer<'a> {
                 self.binary_value(*op, lhs, rhs)
             }
             Expr::Call { op, args } => match op {
+                CallOp::Argmax => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.argmax(input)
+                }
+                CallOp::Conv2d => {
+                    let input = self.lower_expr(&args[0])?;
+                    let kernel = self.lower_expr(&args[1])?;
+                    self.conv2d(input, kernel)
+                }
+                CallOp::Exp => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.emit_unary("math.exp", value)
+                }
+                CallOp::Log => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.emit_unary("math.log", value)
+                }
                 CallOp::Relu => {
                     let value = self.lower_expr(&args[0])?;
                     let zero = self.zero_like(&value.ty)?;
                     self.emit_binary("arith.maximumf", zero, value)
                 }
+                CallOp::Mean => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.mean(input)
+                }
                 CallOp::Matmul => {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.matmul(lhs, rhs)
+                }
+                CallOp::Sigmoid => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.sigmoid(value)
+                }
+                CallOp::Softmax => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.softmax(value)
+                }
+                CallOp::Sqrt => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.emit_unary("math.sqrt", value)
+                }
+                CallOp::Tanh => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.emit_unary("math.tanh", value)
                 }
                 CallOp::Transpose => {
                     let input = self.lower_expr(&args[0])?;
@@ -1133,6 +1178,16 @@ impl<'a> Lowerer<'a> {
         self.emit_binary(op_name, lhs, rhs)
     }
 
+    fn emit_unary(&mut self, op_name: &str, value: Value) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = {op_name} {} : {}",
+            value.name,
+            value.ty.mlir_type()
+        ));
+        Ok(Value { name, ty: value.ty })
+    }
+
     fn emit_binary(&mut self, op_name: &str, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
         let (lhs, rhs, ty) = if lhs.ty == rhs.ty {
             let ty = lhs.ty.clone();
@@ -1175,6 +1230,9 @@ impl<'a> Lowerer<'a> {
     }
 
     fn matmul(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        if lhs.ty.rank() == 3 {
+            return self.batch_matmul(lhs, rhs);
+        }
         let ty = TensorType {
             elem: lhs.ty.elem,
             shape: vec![lhs.ty.shape[0], rhs.ty.shape[1]],
@@ -1207,6 +1265,77 @@ impl<'a> Lowerer<'a> {
         Ok(Value { name, ty })
     }
 
+    fn batch_matmul(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: lhs.ty.elem,
+            shape: vec![lhs.ty.shape[0], lhs.ty.shape[1], rhs.ty.shape[2]],
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant 0.0 : {}",
+            ty.elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
+            ty.elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = linalg.batch_matmul ins({}, {} : {}, {}) outs({init} : {}) -> {}",
+            lhs.name,
+            rhs.name,
+            lhs.ty.mlir_type(),
+            rhs.ty.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value { name, ty })
+    }
+
+    fn conv2d(&mut self, input: Value, kernel: Value) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: input.ty.elem,
+            shape: vec![
+                input.ty.shape[0],
+                input.ty.shape[1] - kernel.ty.shape[0] + 1,
+                input.ty.shape[2] - kernel.ty.shape[1] + 1,
+                kernel.ty.shape[3],
+            ],
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant 0.0 : {}",
+            ty.elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
+            ty.elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = linalg.conv_2d_nhwc_hwcf ins({}, {} : {}, {}) outs({init} : {}) -> {}",
+            input.name,
+            kernel.name,
+            input.ty.mlir_type(),
+            kernel.ty.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value { name, ty })
+    }
+
     fn transpose(&mut self, input: Value) -> anyhow::Result<Value> {
         let ty = TensorType {
             elem: input.ty.elem,
@@ -1229,30 +1358,28 @@ impl<'a> Lowerer<'a> {
         if input.ty == *ty {
             return Ok(input);
         }
-        match (input.ty.rank(), ty.rank()) {
-            (1, 2) => self.expand_rank1_to_rank2(input, ty),
-            (2, 1) => self.collapse_rank2_to_rank1(input, ty),
-            (2, 2) => {
-                let flat_ty = TensorType {
-                    elem: input.ty.elem,
-                    shape: vec![element_count(&input.ty)],
-                };
-                let flat = self.collapse_rank2_to_rank1(input, &flat_ty)?;
-                self.expand_rank1_to_rank2(flat, ty)
-            }
-            _ => anyhow::bail!(
-                "reshape lowering currently supports rank 1/2 tensors, got rank {} to rank {}",
-                input.ty.rank(),
-                ty.rank()
-            ),
+        let flat = if input.ty.rank() == 1 {
+            input
+        } else {
+            let flat_ty = TensorType {
+                elem: input.ty.elem,
+                shape: vec![element_count(&input.ty)],
+            };
+            self.collapse_to_rank1(input, &flat_ty)?
+        };
+        if ty.rank() == 1 {
+            Ok(flat)
+        } else {
+            self.expand_rank1(flat, ty)
         }
     }
 
-    fn expand_rank1_to_rank2(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
+    fn expand_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
         let name = self.fresh();
         let output_shape = format_shape_list(&ty.shape);
+        let reassociation = reassociation_for_rank(ty.rank());
         self.lines.push(format!(
-            "    {name} = tensor.expand_shape {} [[0, 1]] output_shape {output_shape} : {} into {}",
+            "    {name} = tensor.expand_shape {} {reassociation} output_shape {output_shape} : {} into {}",
             input.name,
             input.ty.mlir_type(),
             ty.mlir_type()
@@ -1263,10 +1390,11 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    fn collapse_rank2_to_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
+    fn collapse_to_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
         let name = self.fresh();
+        let reassociation = reassociation_for_rank(input.ty.rank());
         self.lines.push(format!(
-            "    {name} = tensor.collapse_shape {} [[0, 1]] : {} into {}",
+            "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
             input.name,
             input.ty.mlir_type(),
             ty.mlir_type()
@@ -1304,6 +1432,106 @@ impl<'a> Lowerer<'a> {
             }
         };
         self.splat(scalar, ty)
+    }
+
+    fn mean(&mut self, input: Value) -> anyhow::Result<Value> {
+        let count = element_count(&input.ty);
+        let sum = self.sum(input)?;
+        let scale = self.constant_f32(&format!("{count}.0"))?;
+        self.emit_binary("arith.divf", sum, scale)
+    }
+
+    fn softmax(&mut self, input: Value) -> anyhow::Result<Value> {
+        let exp = self.emit_unary("math.exp", input)?;
+        let denominator = self.sum(exp.clone())?;
+        let denominator = self.broadcast(denominator, &exp.ty)?;
+        self.emit_binary("arith.divf", exp, denominator)
+    }
+
+    fn sigmoid(&mut self, input: Value) -> anyhow::Result<Value> {
+        let one = self.constant_f32("1.0")?;
+        let zero = self.zero_like(&input.ty)?;
+        let neg = self.emit_binary("arith.subf", zero, input)?;
+        let exp = self.emit_unary("math.exp", neg)?;
+        let denominator = self.emit_binary("arith.addf", one.clone(), exp)?;
+        self.emit_binary("arith.divf", one, denominator)
+    }
+
+    fn argmax(&mut self, input: Value) -> anyhow::Result<Value> {
+        if input.ty.rank() != 1 {
+            anyhow::bail!("argmax lowering currently supports rank-1 tensors only");
+        }
+        let len = input.ty.shape[0];
+        if len == 0 {
+            anyhow::bail!("argmax lowering expects a non-empty tensor");
+        }
+        let ty = TensorType {
+            elem: input.ty.elem,
+            shape: vec![1],
+        };
+        let zero = self.fresh();
+        self.lines
+            .push(format!("    {zero} = arith.constant 0 : index"));
+        let one = self.fresh();
+        self.lines
+            .push(format!("    {one} = arith.constant 1 : index"));
+        let upper = self.fresh();
+        self.lines
+            .push(format!("    {upper} = arith.constant {len} : index"));
+        let first = self.fresh();
+        self.lines.push(format!(
+            "    {first} = tensor.extract {}[{zero}] : {}",
+            input.name,
+            input.ty.mlir_type()
+        ));
+        let best_index = self.fresh();
+        let best_value = self.fresh();
+        let next_value = self.fresh();
+        let better = self.fresh();
+        let selected_index = self.fresh();
+        let selected_value = self.fresh();
+        self.lines.push(format!(
+            "    {best_index}, {best_value} = scf.for %i = {one} to {upper} step {one} iter_args(%best_i = {zero}, %best_v = {first}) -> (index, {}) {{",
+            input.ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      {next_value} = tensor.extract {}[%i] : {}",
+            input.name,
+            input.ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      {better} = arith.cmpf ogt, {next_value}, %best_v : {}",
+            input.ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      {selected_index} = arith.select {better}, %i, %best_i : index"
+        ));
+        self.lines.push(format!(
+            "      {selected_value} = arith.select {better}, {next_value}, %best_v : {}",
+            input.ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      scf.yield {selected_index}, {selected_value} : index, {}",
+            input.ty.elem.mlir_type()
+        ));
+        self.lines.push("    }".to_string());
+        let index_i64 = self.fresh();
+        self.lines.push(format!(
+            "    {index_i64} = arith.index_cast {best_index} : index to i64"
+        ));
+        let index_f32 = self.fresh();
+        self.lines.push(format!(
+            "    {index_f32} = arith.uitofp {index_i64} : i64 to f32"
+        ));
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.insert {index_f32} into {empty}[{zero}] : {}",
+            ty.mlir_type()
+        ));
+        Ok(Value { name, ty })
     }
 
     fn sum(&mut self, input: Value) -> anyhow::Result<Value> {

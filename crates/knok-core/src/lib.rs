@@ -60,11 +60,20 @@ pub enum BinaryOp {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallOp {
+    Argmax,
+    Conv2d,
+    Exp,
+    Log,
     Matmul,
+    Mean,
     Relu,
     Reshape(TensorType),
     Broadcast(TensorType),
+    Sigmoid,
+    Softmax,
+    Sqrt,
     Sum,
+    Tanh,
     Transpose,
     Graph(String),
 }
@@ -263,20 +272,24 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(
             ty.span(),
-            "expected Tensor1 or Tensor2 type",
+            "expected Tensor1, Tensor2, Tensor3, or Tensor4 type",
         ));
     };
-    let segment = path
-        .segments
-        .last()
-        .ok_or_else(|| syn::Error::new(path.span(), "expected Tensor1 or Tensor2 type"))?;
+    let segment = path.segments.last().ok_or_else(|| {
+        syn::Error::new(
+            path.span(),
+            "expected Tensor1, Tensor2, Tensor3, or Tensor4 type",
+        )
+    })?;
     let rank = match segment.ident.to_string().as_str() {
         "Tensor1" => 1,
         "Tensor2" => 2,
+        "Tensor3" => 3,
+        "Tensor4" => 4,
         _ => {
             return Err(syn::Error::new(
                 segment.ident.span(),
-                "expected Tensor1<T, D0> or Tensor2<T, D0, D1>",
+                "expected Tensor1<T, D0>, Tensor2<T, D0, D1>, Tensor3<T, D0, D1, D2>, or Tensor4<T, D0, D1, D2, D3>",
             ));
         }
     };
@@ -415,12 +428,20 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
             };
             let (op_name, target_ty) = parse_call_path(&path.path)?;
             let op = match op_name.as_str() {
+                "argmax" => CallOp::Argmax,
+                "conv2d" => CallOp::Conv2d,
+                "exp" => CallOp::Exp,
+                "log" => CallOp::Log,
                 "matmul" => CallOp::Matmul,
+                "mean" => CallOp::Mean,
                 "relu" => CallOp::Relu,
                 "reshape" => CallOp::Reshape(expect_target_type(target_ty, &path.path, "reshape")?),
                 "broadcast" => {
                     CallOp::Broadcast(expect_target_type(target_ty, &path.path, "broadcast")?)
                 }
+                "sigmoid" => CallOp::Sigmoid,
+                "softmax" => CallOp::Softmax,
+                "sqrt" => CallOp::Sqrt,
                 "sum" => {
                     if target_ty.is_some() {
                         return Err(syn::Error::new(
@@ -430,6 +451,7 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     }
                     CallOp::Sum
                 }
+                "tanh" => CallOp::Tanh,
                 "transpose" => CallOp::Transpose,
                 _ => CallOp::Graph(op_name),
             };
@@ -601,7 +623,27 @@ fn call_result_type(
     current_graph: &str,
 ) -> syn::Result<TensorType> {
     match op {
-        CallOp::Relu => {
+        CallOp::Argmax => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            if input.rank() != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "argmax currently supports rank-1 tensors only",
+                ));
+            }
+            Ok(TensorType {
+                elem: input.elem,
+                shape: vec![1],
+            })
+        }
+        CallOp::Exp
+        | CallOp::Log
+        | CallOp::Relu
+        | CallOp::Sigmoid
+        | CallOp::Softmax
+        | CallOp::Sqrt
+        | CallOp::Tanh => {
             expect_arity(op, args, 1)?;
             Ok(type_expr(&args[0], env, graph_signatures, current_graph)?.ty)
         }
@@ -672,28 +714,109 @@ fn call_result_type(
                 shape: vec![1],
             })
         }
+        CallOp::Mean => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            if input.rank() == 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "mean expects a tensor input",
+                ));
+            }
+            Ok(TensorType {
+                elem: input.elem,
+                shape: vec![1],
+            })
+        }
         CallOp::Matmul => {
             expect_arity(op, args, 2)?;
             let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
-            if lhs.rank() != 2 || rhs.rank() != 2 || lhs.elem != rhs.elem {
+            if lhs.elem != rhs.elem {
                 return Err(syn::Error::new(
                     Span::call_site(),
-                    "matmul expects two rank-2 tensors with the same element type",
+                    "matmul expects operands with the same element type",
                 ));
             }
-            if lhs.shape[1] != rhs.shape[0] {
+            match (lhs.rank(), rhs.rank()) {
+                (2, 2) => {
+                    if lhs.shape[1] != rhs.shape[0] {
+                        return Err(syn::Error::new(
+                            Span::call_site(),
+                            format!(
+                                "matmul inner dimensions must match, got {} and {}",
+                                lhs.shape[1], rhs.shape[0]
+                            ),
+                        ));
+                    }
+                    Ok(TensorType {
+                        elem: lhs.elem,
+                        shape: vec![lhs.shape[0], rhs.shape[1]],
+                    })
+                }
+                (3, 3) => {
+                    if lhs.shape[0] != rhs.shape[0] {
+                        return Err(syn::Error::new(
+                            Span::call_site(),
+                            format!(
+                                "batched matmul batch dimensions must match, got {} and {}",
+                                lhs.shape[0], rhs.shape[0]
+                            ),
+                        ));
+                    }
+                    if lhs.shape[2] != rhs.shape[1] {
+                        return Err(syn::Error::new(
+                            Span::call_site(),
+                            format!(
+                                "batched matmul inner dimensions must match, got {} and {}",
+                                lhs.shape[2], rhs.shape[1]
+                            ),
+                        ));
+                    }
+                    Ok(TensorType {
+                        elem: lhs.elem,
+                        shape: vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
+                    })
+                }
+                _ => Err(syn::Error::new(
+                    Span::call_site(),
+                    "matmul expects rank-2 operands or rank-3 batched operands",
+                )),
+            }
+        }
+        CallOp::Conv2d => {
+            expect_arity(op, args, 2)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let kernel = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            if input.rank() != 4 || kernel.rank() != 4 || input.elem != kernel.elem {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "conv2d expects NHWC input and HWCF kernel rank-4 tensors with the same element type",
+                ));
+            }
+            if input.shape[3] != kernel.shape[2] {
                 return Err(syn::Error::new(
                     Span::call_site(),
                     format!(
-                        "matmul inner dimensions must match, got {} and {}",
-                        lhs.shape[1], rhs.shape[0]
+                        "conv2d input channels must match kernel channels, got {} and {}",
+                        input.shape[3], kernel.shape[2]
                     ),
                 ));
             }
+            if input.shape[1] < kernel.shape[0] || input.shape[2] < kernel.shape[1] {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "conv2d kernel spatial dimensions must fit inside the input",
+                ));
+            }
             Ok(TensorType {
-                elem: lhs.elem,
-                shape: vec![lhs.shape[0], rhs.shape[1]],
+                elem: input.elem,
+                shape: vec![
+                    input.shape[0],
+                    input.shape[1] - kernel.shape[0] + 1,
+                    input.shape[2] - kernel.shape[1] + 1,
+                    kernel.shape[3],
+                ],
             })
         }
         CallOp::Graph(name) => {
@@ -827,6 +950,76 @@ mod tests {
         })
         .unwrap();
         assert_eq!(sum.body.ty, tensor(&[1]));
+    }
+
+    #[test]
+    fn parses_higher_rank_tensors_and_infers_inference_ops() {
+        let reshape = parse(parse_quote! {
+            fn reshape8(x: Tensor1<f32, 8>) -> Tensor3<f32, 2, 2, 2> {
+                reshape::<Tensor3<f32, 2, 2, 2>>(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(reshape.body.ty, tensor(&[2, 2, 2]));
+
+        let batch_mm = parse(parse_quote! {
+            fn batch_mm(x: Tensor3<f32, 1, 2, 3>, y: Tensor3<f32, 1, 3, 2>) -> Tensor3<f32, 1, 2, 2> {
+                matmul(x, y)
+            }
+        })
+        .unwrap();
+        assert_eq!(batch_mm.body.ty, tensor(&[1, 2, 2]));
+
+        let conv = parse(parse_quote! {
+            fn conv(x: Tensor4<f32, 1, 4, 4, 3>, k: Tensor4<f32, 3, 3, 3, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+                conv2d(x, k)
+            }
+        })
+        .unwrap();
+        assert_eq!(conv.body.ty, tensor(&[1, 2, 2, 8]));
+    }
+
+    #[test]
+    fn infers_scalar_classifier_op_shapes() {
+        for item in [
+            parse_quote! {
+                fn exp4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { exp(x) }
+            },
+            parse_quote! {
+                fn log4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { log(x) }
+            },
+            parse_quote! {
+                fn sqrt4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { sqrt(x) }
+            },
+            parse_quote! {
+                fn tanh4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { tanh(x) }
+            },
+            parse_quote! {
+                fn sigmoid4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { sigmoid(x) }
+            },
+            parse_quote! {
+                fn softmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { softmax(x) }
+            },
+        ] {
+            let graph = parse(item).unwrap();
+            assert_eq!(graph.body.ty, tensor(&[4]));
+        }
+
+        let mean = parse(parse_quote! {
+            fn mean4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+                mean(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(mean.body.ty, tensor(&[1]));
+
+        let argmax = parse(parse_quote! {
+            fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+                argmax(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(argmax.body.ty, tensor(&[1]));
     }
 
     #[test]
