@@ -168,10 +168,10 @@ wrapper path that constructs runtime state per invocation. Larger benchmark
 shapes currently include:
 
 - `matmul_64x64`: `Tensor2<f32, 64, 64> @ Tensor2<f32, 64, 64>`
-- `batched_matmul_8x32x32`: `Tensor3<f32, 8, 32, 32>`
-- `conv2d_nhwc_1x32x32x3_hwcf_3x3x3x16`
-- `mlp_1x128x64`: `1x128 @ 128x64 + 1x64`, then `relu`
-- `softmax_1000`: `Tensor1<f32, 1000>`
+- `batched_matmul_32x32x32`: `Tensor3<f32, 32, 32, 32>`
+- `conv2d_nhwc_16x32x32x3_hwcf_3x3x3x16`
+- `mlp_128x128x64`: `128x128 @ 128x64 + 128x64`, then `relu`
+- `softmax_64x1000`: `Tensor2<f32, 64, 1000>`
 
 Comparison groups include `ndarray` equivalents for matmul, batched matmul,
 MLP, softmax, and a direct NHWC/HWCF convolution loop over `ndarray::Array4`;
