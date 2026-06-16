@@ -13,6 +13,8 @@ knok-macros.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+nalgebra.workspace = true
+ndarray.workspace = true
 trybuild.workspace = true
 
 [[bench]]

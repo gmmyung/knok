@@ -151,7 +151,7 @@ cargo test
 
 ## Benchmarks
 
-Runtime and tensor microbenchmarks use Criterion:
+Runtime and tensor benchmarks use Criterion:
 
 ```sh
 cargo bench -p knok --bench runtime
@@ -164,4 +164,15 @@ cargo bench -p knok --bench runtime -- --sample-size 10 --warm-up-time 0.1 --mea
 ```
 
 The runtime benchmark includes both reusable `Engine` calls and the convenience
-wrapper path that constructs runtime state per invocation.
+wrapper path that constructs runtime state per invocation. Larger benchmark
+shapes currently include:
+
+- `matmul_64x64`: `Tensor2<f32, 64, 64> @ Tensor2<f32, 64, 64>`
+- `batched_matmul_8x32x32`: `Tensor3<f32, 8, 32, 32>`
+- `conv2d_nhwc_1x32x32x3_hwcf_3x3x3x16`
+- `mlp_1x128x64`: `1x128 @ 128x64 + 1x64`, then `relu`
+- `softmax_1000`: `Tensor1<f32, 1000>`
+
+Comparison groups include `ndarray` equivalents for matmul, batched matmul,
+MLP, softmax, and a direct NHWC/HWCF convolution loop over `ndarray::Array4`;
+`nalgebra` is included for dense `64x64` matrix multiplication.
