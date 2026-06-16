@@ -1,0 +1,13 @@
+error: unsupported IREE backend `vulkan-spirv`; expected `llvm-cpu` or `metal-spirv`
+ --> tests/ui/unsupported_backend.rs:3:25
+  |
+3 | #[knok::graph(backend = "vulkan-spirv")]
+  |                         ^^^^^^^^^^^^^^
+
+warning: unused import: `knok::prelude::*`
+ --> tests/ui/unsupported_backend.rs:1:5
+  |
+1 | use knok::prelude::*;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

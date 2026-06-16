@@ -32,10 +32,12 @@ For repeated inference, create a reusable runtime engine and call the generated
 and resolved function instead of rebuilding runtime state on every call:
 
 ```rust
-use knok::{Engine, RuntimeConfig};
+use knok::{Backend, Engine, RuntimeConfig};
 
 let engine = Engine::new(RuntimeConfig::auto())?;
 let output = forward_run(&engine, x, y)?;
+
+let cpu_engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
 ```
 
 Graphs can also embed multiple IREE backend variants. The runtime selects the
@@ -86,6 +88,8 @@ Recursive graph calls are rejected.
 
 `Tensor1<T, D0>` through `Tensor4<T, D0, ...>` are used because stable Rust does
 not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
+They expose `from_array`, `from_vec`, `TryFrom<Vec<_>>`, `zeros`, `ones`,
+`filled`, `as_slice`, `as_mut_slice`, `into_vec`, and checked indexing helpers.
 
 ## Examples
 
@@ -121,6 +125,7 @@ They cover the recommended hosted workflow:
 - Static rank-1 through rank-4 shapes only.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
+  Backend names and driver compatibility are validated at macro expansion time.
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, `relu`, `matmul`,
   batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2 `transpose`, reshape
   across ranks 1-4, scalar-like `broadcast`, full-tensor `sum`, full-tensor
@@ -130,8 +135,9 @@ They cover the recommended hosted workflow:
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
   macro expansion process.
-- `softmax` normalizes over the whole tensor. `argmax` currently returns the
-  rank-1 index as `Tensor1<f32, 1>` because public tensors are still `f32` only.
+- `softmax` normalizes over the whole tensor using max-subtracted exponentials.
+  `argmax` currently returns the rank-1 index as `Tensor1<f32, 1>` because
+  public tensors are still `f32` only.
 
 ## Development
 

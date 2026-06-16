@@ -364,6 +364,13 @@ fn reduction_and_classifier_op_graphs_run() {
         &[0.032058604, 0.08714432, 0.23688284, 0.6439143],
     );
 
+    let large_softmax_output =
+        softmax4(Tensor1::from_array([1000.0, 1001.0, 1002.0, 1003.0])).unwrap();
+    assert_close(
+        &large_softmax_output.into_vec(),
+        &[0.032058604, 0.08714432, 0.23688284, 0.6439143],
+    );
+
     let mean_output = mean4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
     assert_close(&mean_output.into_vec(), &[2.5]);
 

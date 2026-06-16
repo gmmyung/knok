@@ -71,14 +71,71 @@ struct BackendSpec {
     extra_flags: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IreeBackend {
+    LlvmCpu,
+    MetalSpirv,
+}
+
+impl IreeBackend {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "llvm-cpu" => Some(Self::LlvmCpu),
+            "metal-spirv" => Some(Self::MetalSpirv),
+            _ => None,
+        }
+    }
+
+    fn default_driver(self) -> &'static str {
+        match self {
+            Self::LlvmCpu => "local-task",
+            Self::MetalSpirv => "metal",
+        }
+    }
+
+    fn target_backend(self) -> &'static str {
+        match self {
+            Self::LlvmCpu => "llvm-cpu",
+            Self::MetalSpirv => "metal-spirv",
+        }
+    }
+
+    fn supports_driver(self, driver: &str) -> bool {
+        self.default_driver() == driver
+    }
+}
+
 impl BackendSpec {
-    fn new(backend: String, driver: Option<String>, extra_flags: Vec<String>) -> Self {
-        let driver = driver.unwrap_or_else(|| default_driver_for_backend(&backend).to_string());
-        Self {
+    fn new(
+        backend: String,
+        driver: Option<String>,
+        extra_flags: Vec<String>,
+        span: proc_macro2::Span,
+    ) -> syn::Result<Self> {
+        let capability = IreeBackend::parse(&backend).ok_or_else(|| {
+            syn::Error::new(
+                span,
+                format!(
+                    "unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`"
+                ),
+            )
+        })?;
+        let driver = driver.unwrap_or_else(|| capability.default_driver().to_string());
+        if !capability.supports_driver(&driver) {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "backend `{}` expects runtime driver `{}`, got `{driver}`",
+                    capability.target_backend(),
+                    capability.default_driver(),
+                ),
+            ));
+        }
+        Ok(Self {
             backend,
             driver,
             extra_flags,
-        }
+        })
     }
 }
 
@@ -106,7 +163,12 @@ fn parse_backend_specs(attr: TokenStream) -> syn::Result<Vec<BackendSpec>> {
                     "backend must be a string literal",
                 ));
             };
-            backend = Some(vec![BackendSpec::new(lit.value(), None, Vec::new())]);
+            backend = Some(vec![BackendSpec::new(
+                lit.value(),
+                None,
+                Vec::new(),
+                lit.span(),
+            )?]);
         } else if arg.path.is_ident("backends") {
             if backend.is_some() || backends.is_some() {
                 return Err(syn::Error::new(
@@ -237,7 +299,7 @@ fn parse_backend_call(expr: &syn::Expr) -> syn::Result<BackendSpec> {
             }
         }
     }
-    Ok(BackendSpec::new(backend_lit.value(), driver, extra_flags))
+    BackendSpec::new(backend_lit.value(), driver, extra_flags, backend_lit.span())
 }
 
 fn reject_duplicate_drivers(specs: &[BackendSpec]) -> syn::Result<()> {
@@ -254,14 +316,6 @@ fn reject_duplicate_drivers(specs: &[BackendSpec]) -> syn::Result<()> {
         }
     }
     Ok(())
-}
-
-fn default_driver_for_backend(backend: &str) -> &str {
-    match backend {
-        "llvm-cpu" => "local-task",
-        "metal-spirv" => "metal",
-        other => other,
-    }
 }
 
 fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
@@ -669,7 +723,12 @@ impl Parse for MlirModel {
                         ));
                     }
                     let lit: LitStr = input.parse()?;
-                    backend_specs = Some(vec![BackendSpec::new(lit.value(), None, Vec::new())]);
+                    backend_specs = Some(vec![BackendSpec::new(
+                        lit.value(),
+                        None,
+                        Vec::new(),
+                        lit.span(),
+                    )?]);
                 }
                 "backends" => {
                     if backend_specs.is_some() {
@@ -836,6 +895,9 @@ fn verify_with_melior(mlir: &str) -> anyhow::Result<()> {
 }
 
 fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyhow::Result<Vec<u8>> {
+    if IreeBackend::parse(backend).is_none() {
+        anyhow::bail!("unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`");
+    }
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
     let iree_compile = iree_compile_command();
@@ -871,8 +933,10 @@ fn iree_compile_command() -> String {
 }
 
 fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
+    let capability = IreeBackend::parse(backend)
+        .unwrap_or_else(|| panic!("unsupported IREE backend `{backend}`"));
     let mut flags = vec![format!("--iree-hal-target-backends={backend}")];
-    if backend == "metal-spirv" {
+    if capability == IreeBackend::MetalSpirv {
         flags.push("--iree-metal-compile-to-metallib=false".to_string());
     }
     flags.extend(extra_flags.iter().cloned());
@@ -1442,7 +1506,10 @@ impl<'a> Lowerer<'a> {
     }
 
     fn softmax(&mut self, input: Value) -> anyhow::Result<Value> {
-        let exp = self.emit_unary("math.exp", input)?;
+        let max = self.max(input.clone())?;
+        let max = self.broadcast(max, &input.ty)?;
+        let shifted = self.emit_binary("arith.subf", input, max)?;
+        let exp = self.emit_unary("math.exp", shifted)?;
         let denominator = self.sum(exp.clone())?;
         let denominator = self.broadcast(denominator, &exp.ty)?;
         self.emit_binary("arith.divf", exp, denominator)
@@ -1535,6 +1602,19 @@ impl<'a> Lowerer<'a> {
     }
 
     fn sum(&mut self, input: Value) -> anyhow::Result<Value> {
+        self.reduce(input, "0.0", "arith.addf")
+    }
+
+    fn max(&mut self, input: Value) -> anyhow::Result<Value> {
+        self.reduce(input, "-3.40282347E+38", "arith.maximumf")
+    }
+
+    fn reduce(
+        &mut self,
+        input: Value,
+        initial_value: &str,
+        reducer_op: &str,
+    ) -> anyhow::Result<Value> {
         let ty = TensorType {
             elem: input.ty.elem,
             shape: vec![1],
@@ -1544,7 +1624,7 @@ impl<'a> Lowerer<'a> {
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let zero = self.fresh();
         self.lines.push(format!(
-            "    {zero} = arith.constant 0.0 : {}",
+            "    {zero} = arith.constant {initial_value} : {}",
             ty.elem.mlir_type()
         ));
         let init = self.fresh();
@@ -1565,7 +1645,7 @@ impl<'a> Lowerer<'a> {
             .map(|_| "\"reduction\"")
             .collect::<Vec<_>>()
             .join(", ");
-        let add = self.fresh();
+        let reduced = self.fresh();
         let name = self.fresh();
         self.lines.push(format!("    {name} = linalg.generic {{"));
         self.lines.push(format!(
@@ -1585,11 +1665,11 @@ impl<'a> Lowerer<'a> {
             ty.elem.mlir_type()
         ));
         self.lines.push(format!(
-            "      {add} = arith.addf %acc, %value : {}",
+            "      {reduced} = {reducer_op} %acc, %value : {}",
             ty.elem.mlir_type()
         ));
         self.lines.push(format!(
-            "      linalg.yield {add} : {}",
+            "      linalg.yield {reduced} : {}",
             ty.elem.mlir_type()
         ));
         self.lines.push(format!("    }} -> {}", ty.mlir_type()));

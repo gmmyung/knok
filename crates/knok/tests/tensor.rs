@@ -31,3 +31,40 @@ fn higher_rank_tensor_from_vec_validates_element_count() {
         }
     ));
 }
+
+#[test]
+fn tensor_convenience_constructors_work() {
+    let zeros = Tensor2::<f32, 2, 2>::zeros();
+    assert_eq!(zeros.as_slice(), &[0.0, 0.0, 0.0, 0.0]);
+
+    let ones = Tensor3::<f32, 1, 2, 2>::ones();
+    assert_eq!(ones.as_slice(), &[1.0, 1.0, 1.0, 1.0]);
+
+    let filled = Tensor4::<i32, 1, 1, 2, 2>::filled(7);
+    assert_eq!(filled.into_vec(), vec![7, 7, 7, 7]);
+}
+
+#[test]
+fn tensor_try_from_vec_and_indexing_work() {
+    let mut tensor = Tensor3::<f32, 1, 2, 2>::try_from(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+
+    assert_eq!(tensor.get(0, 1, 0), Some(&3.0));
+    assert_eq!(tensor.get(1, 0, 0), None);
+
+    *tensor.get_mut(0, 1, 1).unwrap() = 9.0;
+    assert_eq!(tensor.as_slice(), &[1.0, 2.0, 3.0, 9.0]);
+
+    tensor.as_mut_slice()[0] = 5.0;
+    assert_eq!(tensor.as_slice(), &[5.0, 2.0, 3.0, 9.0]);
+}
+
+#[test]
+fn tensor_debug_includes_shape() {
+    let tensor = Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]]);
+
+    let debug = format!("{tensor:?}");
+
+    assert!(debug.contains("Tensor2"));
+    assert!(debug.contains("shape"));
+    assert!(debug.contains("[2, 2]"));
+}

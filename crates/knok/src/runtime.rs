@@ -2,6 +2,8 @@ extern crate alloc;
 
 use alloc::string::String;
 
+use crate::Backend;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeConfig {
     driver: DriverSelection,
@@ -26,6 +28,10 @@ impl RuntimeConfig {
         }
     }
 
+    pub fn backend(backend: Backend) -> Self {
+        Self::driver(backend.default_driver())
+    }
+
     #[cfg(feature = "host-runtime")]
     fn driver_name(&self) -> &str {
         match &self.driver {
@@ -43,11 +49,9 @@ impl Default for RuntimeConfig {
 
 #[cfg(feature = "host-runtime")]
 fn driver_for_backend(backend: &'static str) -> crate::Result<&'static str> {
-    match backend {
-        "llvm-cpu" => Ok("local-task"),
-        "metal-spirv" => Ok("metal"),
-        other => Err(crate::Error::UnsupportedBackend(other)),
-    }
+    Backend::from_name(backend)
+        .map(Backend::default_driver)
+        .ok_or(crate::Error::UnsupportedBackend(backend))
 }
 
 #[cfg(feature = "host-runtime")]
@@ -101,6 +105,10 @@ mod hosted {
 
         pub fn for_backend(backend: &'static str) -> crate::Result<Self> {
             Self::new(RuntimeConfig::driver(driver_for_backend(backend)?))
+        }
+
+        pub fn for_backend_kind(backend: crate::Backend) -> crate::Result<Self> {
+            Self::new(RuntimeConfig::backend(backend))
         }
 
         pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
@@ -230,6 +238,10 @@ mod hosted {
         }
 
         pub fn for_backend(_backend: &'static str) -> crate::Result<Self> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+
+        pub fn for_backend_kind(_backend: crate::Backend) -> crate::Result<Self> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 

@@ -1,0 +1,13 @@
+error: backend `metal-spirv` expects runtime driver `metal`, got `local-task`
+ --> tests/ui/backend_driver_mismatch.rs:4:13
+  |
+4 |     backend("metal-spirv", driver = "local-task"),
+  |             ^^^^^^^^^^^^^
+
+warning: unused import: `knok::prelude::*`
+ --> tests/ui/backend_driver_mismatch.rs:1:5
+  |
+1 | use knok::prelude::*;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

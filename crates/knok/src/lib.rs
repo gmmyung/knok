@@ -5,6 +5,7 @@ extern crate alloc;
 pub use knok_macros::{graph, mlir_model};
 
 pub mod artifact;
+pub mod backend;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::private::*;
@@ -19,6 +20,7 @@ pub mod prelude {
 }
 
 pub use artifact::{GraphArtifact, GraphArtifactVariant};
+pub use backend::{Backend, SUPPORTED_BACKENDS};
 pub use runtime::{Engine, RuntimeConfig};
 
 pub type Result<T> = core::result::Result<T, Error>;
