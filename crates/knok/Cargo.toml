@@ -12,7 +12,12 @@ eerie = { workspace = true, optional = true }
 knok-macros.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 trybuild.workspace = true
+
+[[bench]]
+name = "runtime"
+harness = false
 
 [features]
 default = ["std", "host-runtime"]

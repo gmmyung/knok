@@ -148,3 +148,20 @@ compiler:
 nix develop
 cargo test
 ```
+
+## Benchmarks
+
+Runtime and tensor microbenchmarks use Criterion:
+
+```sh
+cargo bench -p knok --bench runtime
+```
+
+For a quick smoke run while developing:
+
+```sh
+cargo bench -p knok --bench runtime -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2
+```
+
+The runtime benchmark includes both reusable `Engine` calls and the convenience
+wrapper path that constructs runtime state per invocation.
