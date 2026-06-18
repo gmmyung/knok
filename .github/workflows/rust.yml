@@ -24,6 +24,7 @@ jobs:
         with:
           repository: gmmyung/eerie
           path: eerie
+          submodules: recursive
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
