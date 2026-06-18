@@ -1,0 +1,39 @@
+name: Rust
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout knok
+        uses: actions/checkout@v6.0.3
+        with:
+          path: knok
+
+      - name: Checkout eerie
+        uses: actions/checkout@v6.0.3
+        with:
+          repository: gmmyung/eerie
+          path: eerie
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check formatting
+        working-directory: knok
+        run: nix develop --command cargo fmt --all -- --check
+
+      - name: Run tests
+        working-directory: knok
+        run: nix develop --command cargo test --workspace
