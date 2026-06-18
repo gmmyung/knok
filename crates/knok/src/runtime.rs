@@ -64,6 +64,7 @@ mod hosted {
     use std::sync::Mutex;
 
     use eerie::runtime::{hal, vm};
+    use vm::ToRef;
 
     use super::{driver_for_backend, RuntimeConfig};
     use crate::{GraphArtifact, GraphArtifactVariant};
@@ -197,17 +198,37 @@ mod hosted {
                 }
             };
 
-            let tensors: Vec<_> = inputs
+            let input_buffers: Vec<_> = inputs
                 .iter()
-                .map(|(shape, data)| hal::Tensor::<f32>::from_slice(&self.device, shape, data))
+                .map(|(shape, data)| {
+                    hal::BufferView::<f32>::from_host(
+                        &self.device,
+                        shape,
+                        hal::Encoding::DenseRowMajor,
+                        data,
+                    )
+                })
                 .collect::<Result<_, _>>()?;
-            let input_refs: Vec<_> = tensors.iter().collect();
-            let outputs = function.invoke_tensors(&input_refs, 1)?;
-            let output = outputs
-                .into_iter()
-                .next()
-                .ok_or(crate::Error::MissingOutput)?;
+            let output = self.invoke_buffer_views_f32(&function, &input_buffers)?;
             Ok(output.read_to_vec(&self.device)?)
+        }
+
+        fn invoke_buffer_views_f32(
+            &self,
+            function: &vm::Function,
+            inputs: &[hal::BufferView<f32>],
+        ) -> crate::Result<hal::BufferView<f32>> {
+            let mut input_list = vm::List::<vm::Undefined>::new(inputs.len(), &self.instance)?;
+            for input in inputs {
+                input_list.push_ref(&input.to_ref(&self.instance)?)?;
+            }
+            let mut output_list = vm::List::<vm::Undefined>::new(1, &self.instance)?;
+            function.invoke(&input_list, &mut output_list)?;
+            output_list
+                .get_ref::<hal::BufferView<f32>>(0)
+                .map_err(crate::Error::from)?
+                .to_buffer_view()
+                .map_err(crate::Error::from)
         }
     }
 

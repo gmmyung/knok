@@ -28,7 +28,7 @@ pub struct Tensor4<T, const D0: usize, const D1: usize, const D2: usize, const D
 
 impl<T> TensorData<T> {
     fn from_vec<const R: usize>(data: Vec<T>, shape: &'static [usize; R]) -> crate::Result<Self> {
-        let expected_len = shape.iter().product();
+        let expected_len: usize = shape.iter().product();
         if data.len() != expected_len {
             return Err(crate::Error::Shape {
                 expected: shape,
@@ -50,7 +50,7 @@ impl<T> TensorData<T> {
     where
         T: Clone,
     {
-        let len = shape.iter().product();
+        let len: usize = shape.iter().product();
         Self {
             data: vec![value; len],
         }
