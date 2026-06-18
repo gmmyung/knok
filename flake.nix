@@ -86,6 +86,9 @@
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
             shellHook = ''
+              export CC="${llvm.clang}/bin/clang"
+              export CXX="${llvm.clang}/bin/clang++"
+
               if [ -z "''${LIB_IREE_COMPILER:-}" ]; then
                 : "''${XDG_CACHE_HOME:=$HOME/.cache}"
                 export EERIE_IREE_VENV="''${EERIE_IREE_VENV:-$XDG_CACHE_HOME/eerie/iree-compiler-venv}"
