@@ -10,31 +10,53 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  fmt:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout knok
-        uses: actions/checkout@v6.0.3
-        with:
-          path: knok
-
-      - name: Checkout eerie
-        uses: actions/checkout@v6.0.3
-        with:
-          repository: gmmyung/eerie
-          path: eerie
-          submodules: recursive
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command cargo fmt --all -- --check
 
-      - name: Check formatting
-        working-directory: knok
-        run: nix develop --command cargo fmt --all -- --check
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command cargo test -p knok-core -p knok-compile -p knok-macros
 
-      - name: Run tests
-        working-directory: knok
-        run: nix develop --command cargo test --workspace
+  no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command cargo check -p knok --no-default-features
+      - run: nix develop --command cargo check -p knok-no-std-smoke
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command cargo doc -p knok --no-default-features --features std --no-deps
+
+  host-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command cargo test -p knok

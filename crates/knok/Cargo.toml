@@ -7,9 +7,13 @@ repository.workspace = true
 authors.workspace = true
 description = "Compile-time linalg graphs for Rust"
 
+[package.metadata.docs.rs]
+no-default-features = true
+features = ["std"]
+
 [dependencies]
 eerie = { workspace = true, optional = true }
-knok-macros.workspace = true
+knok-macros = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
@@ -22,7 +26,8 @@ name = "runtime"
 harness = false
 
 [features]
-default = ["std", "host-runtime"]
+default = ["std", "host-runtime", "macros"]
 std = ["eerie?/std"]
+macros = ["dep:knok-macros"]
 host-runtime = ["std", "dep:eerie", "eerie/runtime", "eerie/std"]
 embedded-runtime = ["dep:eerie", "eerie/runtime"]

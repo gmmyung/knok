@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+#[cfg(feature = "macros")]
 pub use knok_macros::{graph, mlir_model};
 
 pub mod artifact;
@@ -16,6 +17,7 @@ pub mod tensor;
 
 pub mod prelude {
     pub use crate::tensor::{Tensor1, Tensor2, Tensor3, Tensor4};
+    #[cfg(feature = "macros")]
     pub use crate::{graph, mlir_model};
 }
 

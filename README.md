@@ -112,8 +112,10 @@ They cover the recommended hosted workflow:
 
 ## Feature Modes
 
-- Default features enable the hosted runtime convenience path.
+- Default features enable the proc macros and hosted runtime convenience path.
 - `default-features = false` builds `knok` as `no_std + alloc`.
+- Use `default-features = false, features = ["macros"]` when a no-std target
+  still needs compile-time graph expansion.
 - Proc macros, `melior`, and `iree-compile` still run on the compile host.
 - In no-default-features mode, generated graph functions compile and expose
   `<name>_artifact()` with backend variant metadata. Runtime execution functions
@@ -146,7 +148,26 @@ compiler:
 
 ```sh
 nix develop
-cargo test
+cargo fmt --all -- --check
+cargo test --workspace
+cargo doc -p knok --no-default-features --features std --no-deps
+```
+
+CI intentionally tests against the published `eerie` crate. For local
+co-development with an adjacent checkout, add a temporary local Cargo patch
+outside committed files:
+
+```toml
+[patch.crates-io]
+eerie = { path = "../eerie" }
+```
+
+Release checks and publishing order are scripted:
+
+```sh
+scripts/release-check.sh
+scripts/publish.sh --dry-run
+scripts/publish.sh --execute
 ```
 
 ## Benchmarks
