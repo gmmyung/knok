@@ -3,7 +3,10 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
 use knok_core::{
@@ -30,6 +33,7 @@ pub fn expand_graph(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 static GRAPH_REGISTRY: OnceLock<Mutex<BTreeMap<String, TypedGraph>>> = OnceLock::new();
+static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn graph_registry() -> &'static Mutex<BTreeMap<String, TypedGraph>> {
     GRAPH_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -1186,20 +1190,24 @@ fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyho
     let flags = backend_flags(backend, extra_flags);
     let key = cache_key(backend, mlir, &iree_compile, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
-    let mlir_path = cache_dir.join(format!("{key}.mlir"));
-    if vmfb_path.exists() {
-        return Ok(fs::read(vmfb_path)?);
+    if let Some(vmfb) = read_cached_vmfb(&vmfb_path)? {
+        return Ok(vmfb);
     }
 
+    let suffix = unique_cache_temp_suffix();
+    let mlir_path = cache_dir.join(format!("{key}.{suffix}.mlir"));
+    let tmp_vmfb_path = cache_dir.join(format!("{key}.{suffix}.vmfb.tmp"));
     fs::write(&mlir_path, mlir)?;
     let mut command = Command::new(&iree_compile);
     command
         .arg(&mlir_path)
         .args(&flags)
         .arg("-o")
-        .arg(&vmfb_path);
+        .arg(&tmp_vmfb_path);
     let output = command.output()?;
+    let _ = fs::remove_file(&mlir_path);
     if !output.status.success() {
+        let _ = fs::remove_file(&tmp_vmfb_path);
         anyhow::bail!(
             "iree-compile failed with status {}\nstdout:\n{}\nstderr:\n{}",
             output.status,
@@ -1207,7 +1215,40 @@ fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyho
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    Ok(fs::read(vmfb_path)?)
+    let vmfb = fs::read(&tmp_vmfb_path)?;
+    if vmfb.len() < 16 {
+        let _ = fs::remove_file(&tmp_vmfb_path);
+        anyhow::bail!(
+            "iree-compile produced an invalid VMFB cache artifact with {} bytes",
+            vmfb.len()
+        );
+    }
+    match fs::rename(&tmp_vmfb_path, &vmfb_path) {
+        Ok(()) => Ok(vmfb),
+        Err(_) => {
+            let _ = fs::remove_file(&tmp_vmfb_path);
+            read_cached_vmfb(&vmfb_path)?
+                .ok_or_else(|| anyhow::anyhow!("failed to publish VMFB cache artifact"))
+        }
+    }
+}
+
+fn read_cached_vmfb(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(vmfb) if vmfb.len() >= 16 => Ok(Some(vmfb)),
+        Ok(_) => {
+            let _ = fs::remove_file(path);
+            Ok(None)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn unique_cache_temp_suffix() -> String {
+    let process_id = std::process::id();
+    let counter = CACHE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{process_id}-{counter}")
 }
 
 fn iree_compile_command() -> String {
