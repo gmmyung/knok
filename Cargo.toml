@@ -18,7 +18,7 @@ authors = ["Gyungmin Myung"]
 anyhow = "1.0"
 blake3 = "1.8"
 criterion = "0.7"
-eerie = { version = "0.4.1", default-features = false }
+eerie = { version = "0.4.2", default-features = false }
 knok-core = { path = "crates/knok-core", version = "0.1.0" }
 knok-compile = { path = "crates/knok-compile", version = "0.1.0" }
 knok-macros = { path = "crates/knok-macros", version = "0.1.0" }
