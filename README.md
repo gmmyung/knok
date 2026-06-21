@@ -61,15 +61,16 @@ knok::mlir_model! {
     path: "tests/fixtures/add4.mlir",
     backend: "llvm-cpu",
     function: "imported.add4",
+    inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
+    output: Tensor1<f32, 4>,
 }
 
-let output = imported_add4::invoke_raw::<f32>(&[(&[4], &x), (&[4], &y)])?;
+let output = imported_add4::invoke(x, y)?;
 ```
 
-Typed MLIR imports also expose `invoke_run(&engine, ...)` and
-`invoke_run_raw::<T>(&engine, ...)` for reusable execution. Prefer typed
-imports when the shape is known; raw invocation is for precompiled models whose
-shape or element type is handled outside the macro signature.
+Typed MLIR imports also expose `invoke_run(&engine, ...)` for reusable
+execution. MLIR imports without a declared signature still expose `artifact()`,
+but no raw public invocation wrapper.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
@@ -194,6 +195,8 @@ For a quick smoke run while developing:
 ```sh
 cargo bench -p knok --bench runtime -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2
 ```
+
+Current local benchmark snapshots are recorded in `BENCHMARKS.md`.
 
 The runtime benchmark includes both reusable `Engine` calls and the convenience
 wrapper path that constructs runtime state per invocation. Larger benchmark

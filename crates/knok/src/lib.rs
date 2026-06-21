@@ -17,18 +17,15 @@ pub mod tensor;
 
 pub mod prelude {
     pub use crate::tensor::{Tensor1, Tensor2, Tensor3, Tensor4, TensorElement};
-    pub use crate::RuntimeElement;
     #[cfg(feature = "macros")]
     pub use crate::{graph, mlir_model};
 }
 
 pub use artifact::{GraphArtifact, GraphArtifactVariant};
 pub use backend::{Backend, SUPPORTED_BACKENDS};
-pub use runtime::{Engine, RuntimeConfig, RuntimeElement};
+pub use runtime::{Engine, RuntimeConfig};
 
 pub type Result<T> = core::result::Result<T, Error>;
-/// Raw output buffer returned by untyped runtime invocation helpers.
-pub type RuntimeOutput<T> = alloc::vec::Vec<T>;
 
 #[derive(Debug)]
 pub enum Error {

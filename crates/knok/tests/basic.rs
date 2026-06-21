@@ -240,9 +240,9 @@ fn engine_reports_missing_artifact_variant_for_driver() {
     };
     let x = [1.0, 2.0, 3.0, 4.0];
     let y = [10.0, 20.0, 30.0, 40.0];
-    let error = engine
-        .invoke::<f32>(artifact, &[(&[4], &x), (&[4], &y)])
-        .unwrap_err();
+    let error =
+        knok::__private::invoke_with_engine::<f32>(&engine, artifact, &[(&[4], &x), (&[4], &y)])
+            .unwrap_err();
 
     assert!(matches!(
         error,

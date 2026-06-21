@@ -6,6 +6,7 @@ use crate::Backend;
 
 /// Element types that can be passed through raw runtime buffer views.
 #[cfg(feature = "host-runtime")]
+#[doc(hidden)]
 pub trait RuntimeElement: eerie::runtime::hal::BufferElement {}
 
 #[cfg(feature = "host-runtime")]
@@ -13,6 +14,7 @@ impl<T: eerie::runtime::hal::BufferElement> RuntimeElement for T {}
 
 /// Element types that can be named by generated runtime wrappers in no-std builds.
 #[cfg(not(feature = "host-runtime"))]
+#[doc(hidden)]
 pub trait RuntimeElement: Copy {}
 
 #[cfg(not(feature = "host-runtime"))]
@@ -144,7 +146,7 @@ mod hosted {
             &self.driver_name
         }
 
-        pub fn invoke<T: RuntimeElement>(
+        pub(crate) fn invoke<T: RuntimeElement>(
             &self,
             artifact: GraphArtifact,
             inputs: &[(&[usize], &[T])],
@@ -245,17 +247,6 @@ mod hosted {
                 .map_err(crate::Error::from)
         }
     }
-
-    pub fn invoke<T: RuntimeElement>(
-        vmfb: &[u8],
-        function_name: &'static str,
-        backend: &'static str,
-        inputs: &[(&[usize], &[T])],
-    ) -> crate::Result<Vec<T>> {
-        let driver = driver_for_backend(backend)?;
-        let engine = Engine::new(RuntimeConfig::driver(driver))?;
-        engine.invoke_raw(vmfb, function_name, backend, driver, inputs)
-    }
 }
 
 #[cfg(not(feature = "host-runtime"))]
@@ -292,7 +283,7 @@ mod hosted {
             ""
         }
 
-        pub fn invoke<T: RuntimeElement>(
+        pub(crate) fn invoke<T: RuntimeElement>(
             &self,
             _artifact: GraphArtifact,
             _inputs: &[(&[usize], &[T])],
@@ -311,15 +302,6 @@ mod hosted {
             Err(crate::Error::HostedRuntimeDisabled)
         }
     }
-
-    pub fn invoke<T: RuntimeElement>(
-        _vmfb: &[u8],
-        _function_name: &'static str,
-        _backend: &'static str,
-        _inputs: &[(&[usize], &[T])],
-    ) -> crate::Result<Vec<T>> {
-        Err(crate::Error::HostedRuntimeDisabled)
-    }
 }
 
-pub use hosted::{invoke, Engine};
+pub use hosted::Engine;

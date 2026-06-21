@@ -403,7 +403,8 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
 
         #visibility fn #run_name(engine: &::knok::Engine, #(#inputs),*) -> ::knok::Result<#output_ty> {
             let artifact = #artifact_name();
-            let output = engine.invoke::<#output_elem_ty>(
+            let output = ::knok::__private::invoke_with_engine::<#output_elem_ty>(
+                engine,
                 artifact,
                 &[#((#input_shapes, #arg_names.as_slice())),*],
             )?;
@@ -487,7 +488,7 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                 engine: &::knok::Engine,
                 #(#input_names: #input_types),*
             ) -> ::knok::Result<#output_ty> {
-                let output = invoke_run_raw::<#output_elem_ty>(engine, &[
+                let output = ::knok::__private::invoke_with_engine::<#output_elem_ty>(engine, artifact(), &[
                     #((<#input_types>::SHAPE, #input_names.as_slice())),*
                 ])?;
                 <#output_ty>::from_vec(output)
@@ -541,21 +542,6 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                     output_shape: #output_shape,
                     variants: VARIANTS,
                 }
-            }
-
-            pub fn invoke_run_raw<T: ::knok::RuntimeElement>(
-                engine: &::knok::Engine,
-                inputs: &[(&[usize], &[T])],
-            ) -> ::knok::Result<::knok::RuntimeOutput<T>> {
-                engine.invoke(artifact(), inputs)
-            }
-
-            pub fn invoke_raw<T: ::knok::RuntimeElement>(
-                inputs: &[(&[usize], &[T])],
-            ) -> ::knok::Result<::knok::RuntimeOutput<T>> {
-                let artifact = artifact();
-                let engine = ::knok::Engine::for_artifact(artifact)?;
-                invoke_run_raw(&engine, inputs)
             }
 
             #typed_invoke

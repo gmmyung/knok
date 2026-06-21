@@ -1,21 +1,17 @@
 extern crate alloc;
 
-pub fn invoke<T: crate::RuntimeElement>(
-    vmfb: &[u8],
-    function_name: &'static str,
-    backend: &'static str,
+pub fn invoke<T: crate::runtime::RuntimeElement>(
+    artifact: crate::GraphArtifact,
     inputs: &[(&[usize], &[T])],
 ) -> crate::Result<alloc::vec::Vec<T>> {
-    crate::runtime::invoke(vmfb, function_name, backend, inputs)
+    let engine = crate::Engine::for_artifact(artifact)?;
+    invoke_with_engine(&engine, artifact, inputs)
 }
 
-pub fn invoke_with_engine<T: crate::RuntimeElement>(
+pub fn invoke_with_engine<T: crate::runtime::RuntimeElement>(
     engine: &crate::Engine,
-    vmfb: &[u8],
-    function_name: &'static str,
-    backend: &'static str,
-    driver: &'static str,
+    artifact: crate::GraphArtifact,
     inputs: &[(&[usize], &[T])],
 ) -> crate::Result<alloc::vec::Vec<T>> {
-    engine.invoke_raw(vmfb, function_name, backend, driver, inputs)
+    engine.invoke(artifact, inputs)
 }
