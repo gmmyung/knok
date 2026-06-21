@@ -136,20 +136,26 @@ They cover the recommended hosted workflow:
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
   Backend names and driver compatibility are validated at macro expansion time.
-- Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, `relu`, `matmul`,
+- Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, trailing
+  broadcasting, `abs`, `minimum`, `maximum`, `clip`, `pow`, `relu`, `matmul`,
   batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2 `transpose`, reshape
-  across ranks 1-4, scalar-like `broadcast`, full-tensor `sum`, full-tensor
-  `mean`, full-tensor `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`,
-  and `sigmoid`.
+  across ranks 1-4, `broadcast`, full-tensor and axis-aware `sum`, full-tensor
+  and axis-aware `mean`, full-tensor and axis-aware `softmax`, rank-1 `argmax`,
+  `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+- Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
+  `mean::<0>(x)`, and `softmax::<1>(logits)`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `argmax`,
-  `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) currently require `f32` or `f64`.
-  Integer tensors support arithmetic, reshape/broadcast, sum, matmul, and conv
-  lowering where IREE accepts the resulting MLIR.
+  `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) currently require `f32`
+  or `f64`. Integer tensors support arithmetic, `abs`, `minimum`, `maximum`,
+  `clip`, reshape/broadcast, sum, matmul, and conv lowering where IREE accepts
+  the resulting MLIR.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
   macro expansion process.
-- `softmax` normalizes over the whole tensor using max-subtracted exponentials.
+- `softmax(x)` normalizes over the whole tensor using max-subtracted
+  exponentials; `softmax::<AXIS>(x)` normalizes over one axis using
+  `linalg.softmax`.
   `argmax` currently returns the rank-1 index in the same floating-point element
   type as its input.
 

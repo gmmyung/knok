@@ -63,19 +63,24 @@ pub enum BinaryOp {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallOp {
+    Abs,
     Argmax,
+    Clip,
     Conv2d,
     Exp,
     Log,
     Matmul,
-    Mean,
+    Mean(Option<usize>),
+    Minimum,
+    Maximum,
+    Pow,
     Relu,
     Reshape(TensorType),
     Broadcast(TensorType),
     Sigmoid,
-    Softmax,
+    Softmax(Option<usize>),
     Sqrt,
-    Sum,
+    Sum(Option<usize>),
     Tanh,
     Transpose,
     Graph(String),
@@ -465,34 +470,100 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
             let SynExpr::Path(path) = call.func.as_ref() else {
                 return Err(syn::Error::new(call.func.span(), "expected graph op name"));
             };
-            let (op_name, target_ty) = parse_call_path(&path.path)?;
+            let (op_name, generics) = parse_call_path(&path.path)?;
             let op = match op_name.as_str() {
-                "argmax" => CallOp::Argmax,
-                "conv2d" => CallOp::Conv2d,
-                "exp" => CallOp::Exp,
-                "log" => CallOp::Log,
-                "matmul" => CallOp::Matmul,
-                "mean" => CallOp::Mean,
-                "relu" => CallOp::Relu,
-                "reshape" => CallOp::Reshape(expect_target_type(target_ty, &path.path, "reshape")?),
+                "abs" => {
+                    reject_any_generics(&generics, &path.path, "abs")?;
+                    CallOp::Abs
+                }
+                "argmax" => {
+                    reject_any_generics(&generics, &path.path, "argmax")?;
+                    CallOp::Argmax
+                }
+                "clip" => {
+                    reject_any_generics(&generics, &path.path, "clip")?;
+                    CallOp::Clip
+                }
+                "conv2d" => {
+                    reject_any_generics(&generics, &path.path, "conv2d")?;
+                    CallOp::Conv2d
+                }
+                "exp" => {
+                    reject_any_generics(&generics, &path.path, "exp")?;
+                    CallOp::Exp
+                }
+                "log" => {
+                    reject_any_generics(&generics, &path.path, "log")?;
+                    CallOp::Log
+                }
+                "matmul" => {
+                    reject_any_generics(&generics, &path.path, "matmul")?;
+                    CallOp::Matmul
+                }
+                "mean" => {
+                    reject_target_type(&generics, &path.path, "mean")?;
+                    CallOp::Mean(generics.axis)
+                }
+                "minimum" => {
+                    reject_any_generics(&generics, &path.path, "minimum")?;
+                    CallOp::Minimum
+                }
+                "maximum" => {
+                    reject_any_generics(&generics, &path.path, "maximum")?;
+                    CallOp::Maximum
+                }
+                "pow" => {
+                    reject_any_generics(&generics, &path.path, "pow")?;
+                    CallOp::Pow
+                }
+                "relu" => {
+                    reject_any_generics(&generics, &path.path, "relu")?;
+                    CallOp::Relu
+                }
+                "reshape" => {
+                    reject_axis(&generics, &path.path, "reshape")?;
+                    CallOp::Reshape(expect_target_type(
+                        generics.target_ty,
+                        &path.path,
+                        "reshape",
+                    )?)
+                }
                 "broadcast" => {
-                    CallOp::Broadcast(expect_target_type(target_ty, &path.path, "broadcast")?)
+                    reject_axis(&generics, &path.path, "broadcast")?;
+                    CallOp::Broadcast(expect_target_type(
+                        generics.target_ty,
+                        &path.path,
+                        "broadcast",
+                    )?)
                 }
-                "sigmoid" => CallOp::Sigmoid,
-                "softmax" => CallOp::Softmax,
-                "sqrt" => CallOp::Sqrt,
+                "sigmoid" => {
+                    reject_any_generics(&generics, &path.path, "sigmoid")?;
+                    CallOp::Sigmoid
+                }
+                "softmax" => {
+                    reject_target_type(&generics, &path.path, "softmax")?;
+                    CallOp::Softmax(generics.axis)
+                }
+                "sqrt" => {
+                    reject_any_generics(&generics, &path.path, "sqrt")?;
+                    CallOp::Sqrt
+                }
                 "sum" => {
-                    if target_ty.is_some() {
-                        return Err(syn::Error::new(
-                            path.path.span(),
-                            "sum does not accept a target tensor type",
-                        ));
-                    }
-                    CallOp::Sum
+                    reject_target_type(&generics, &path.path, "sum")?;
+                    CallOp::Sum(generics.axis)
                 }
-                "tanh" => CallOp::Tanh,
-                "transpose" => CallOp::Transpose,
-                _ => CallOp::Graph(op_name),
+                "tanh" => {
+                    reject_any_generics(&generics, &path.path, "tanh")?;
+                    CallOp::Tanh
+                }
+                "transpose" => {
+                    reject_any_generics(&generics, &path.path, "transpose")?;
+                    CallOp::Transpose
+                }
+                _ => {
+                    reject_any_generics(&generics, &path.path, &op_name)?;
+                    CallOp::Graph(op_name)
+                }
             };
             let args = call
                 .args
@@ -508,7 +579,12 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
     }
 }
 
-fn parse_call_path(path: &syn::Path) -> syn::Result<(String, Option<TensorType>)> {
+struct CallGenerics {
+    target_ty: Option<TensorType>,
+    axis: Option<usize>,
+}
+
+fn parse_call_path(path: &syn::Path) -> syn::Result<(String, CallGenerics)> {
     let Some(segment) = path.segments.last() else {
         return Err(syn::Error::new(path.span(), "expected graph op name"));
     };
@@ -518,23 +594,40 @@ fn parse_call_path(path: &syn::Path) -> syn::Result<(String, Option<TensorType>)
             "graph op names must be unqualified identifiers",
         ));
     }
-    let target_ty = match &segment.arguments {
-        syn::PathArguments::None => None,
+    let mut generics = CallGenerics {
+        target_ty: None,
+        axis: None,
+    };
+    match &segment.arguments {
+        syn::PathArguments::None => {}
         syn::PathArguments::AngleBracketed(args) => {
             let mut args = args.args.iter();
-            let Some(GenericArgument::Type(ty)) = args.next() else {
+            let Some(arg) = args.next() else {
                 return Err(syn::Error::new(
                     segment.arguments.span(),
-                    "target tensor type must be a type argument",
+                    "missing generic argument",
                 ));
             };
             if args.next().is_some() {
                 return Err(syn::Error::new(
                     segment.arguments.span(),
-                    "graph ops accept at most one target tensor type",
+                    "graph ops accept at most one generic argument",
                 ));
             }
-            Some(parse_tensor_type(ty)?)
+            match arg {
+                GenericArgument::Type(ty) => {
+                    generics.target_ty = Some(parse_tensor_type(ty)?);
+                }
+                GenericArgument::Const(expr) => {
+                    generics.axis = Some(parse_const_axis(expr)?);
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        arg.span(),
+                        "graph op generic argument must be a tensor type or axis const",
+                    ));
+                }
+            }
         }
         syn::PathArguments::Parenthesized(_) => {
             return Err(syn::Error::new(
@@ -542,8 +635,24 @@ fn parse_call_path(path: &syn::Path) -> syn::Result<(String, Option<TensorType>)
                 "parenthesized graph op arguments are not supported",
             ));
         }
+    }
+    Ok((segment.ident.to_string(), generics))
+}
+
+fn parse_const_axis(expr: &SynExpr) -> syn::Result<usize> {
+    let SynExpr::Lit(expr_lit) = expr else {
+        return Err(syn::Error::new(
+            expr.span(),
+            "axis generic argument must be an integer const",
+        ));
     };
-    Ok((segment.ident.to_string(), target_ty))
+    let Lit::Int(lit) = &expr_lit.lit else {
+        return Err(syn::Error::new(
+            expr_lit.span(),
+            "axis generic argument must be an integer const",
+        ));
+    };
+    lit.base10_parse::<usize>()
 }
 
 fn expect_target_type(
@@ -557,6 +666,43 @@ fn expect_target_type(
             format!("{op_name} requires a target tensor type, for example {op_name}::<Tensor1<f32, 4>>(x)"),
         )
     })
+}
+
+fn reject_target_type(generics: &CallGenerics, path: &syn::Path, op_name: &str) -> syn::Result<()> {
+    if generics.target_ty.is_some() {
+        Err(syn::Error::new(
+            path.span(),
+            format!("{op_name} does not accept a target tensor type"),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_axis(generics: &CallGenerics, path: &syn::Path, op_name: &str) -> syn::Result<()> {
+    if generics.axis.is_some() {
+        Err(syn::Error::new(
+            path.span(),
+            format!("{op_name} does not accept an axis generic"),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_any_generics(
+    generics: &CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+) -> syn::Result<()> {
+    if generics.target_ty.is_some() || generics.axis.is_some() {
+        Err(syn::Error::new(
+            path.span(),
+            format!("graph call `{op_name}` does not accept generic arguments"),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_float_literal_element(lit: &syn::LitFloat) -> syn::Result<ElementType> {
@@ -686,18 +832,25 @@ fn type_expr(
 }
 
 fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
-    if lhs == rhs {
-        Ok(lhs.clone())
-    } else if lhs.rank() == 0 && lhs.elem == rhs.elem {
-        Ok(rhs.clone())
-    } else if rhs.rank() == 0 && rhs.elem == lhs.elem {
-        Ok(lhs.clone())
-    } else {
-        Err(syn::Error::new(
+    if lhs.elem != rhs.elem {
+        return Err(syn::Error::new(
             Span::call_site(),
-            format!("elementwise operands must have the same shape and element type, got {lhs:?} and {rhs:?}"),
-        ))
+            format!(
+                "elementwise operands must have the same element type, got {lhs:?} and {rhs:?}"
+            ),
+        ));
     }
+    broadcast_shape(lhs, rhs)
+        .map(|shape| TensorType {
+            elem: lhs.elem,
+            shape,
+        })
+        .map_err(|message| {
+            syn::Error::new(
+                Span::call_site(),
+                format!("elementwise operands are not broadcast-compatible: {message}"),
+            )
+        })
 }
 
 fn call_result_type(
@@ -708,6 +861,10 @@ fn call_result_type(
     current_graph: &str,
 ) -> syn::Result<TensorType> {
     match op {
+        CallOp::Abs => {
+            expect_arity(op, args, 1)?;
+            Ok(type_expr(&args[0], env, graph_signatures, current_graph)?.ty)
+        }
         CallOp::Argmax => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
@@ -727,12 +884,42 @@ fn call_result_type(
         | CallOp::Log
         | CallOp::Relu
         | CallOp::Sigmoid
-        | CallOp::Softmax
         | CallOp::Sqrt
         | CallOp::Tanh => {
             expect_arity(op, args, 1)?;
             let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             expect_float(op, ty.elem)?;
+            Ok(ty)
+        }
+        CallOp::Minimum | CallOp::Maximum => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            binary_result_type(&lhs, &rhs)
+        }
+        CallOp::Clip => {
+            expect_arity(op, args, 3)?;
+            let value = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let min = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            let max = type_expr(&args[2], env, graph_signatures, current_graph)?.ty;
+            let value = binary_result_type(&value, &min)?;
+            binary_result_type(&value, &max)
+        }
+        CallOp::Pow => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            expect_float(op, lhs.elem)?;
+            expect_float(op, rhs.elem)?;
+            binary_result_type(&lhs, &rhs)
+        }
+        CallOp::Softmax(axis) => {
+            expect_arity(op, args, 1)?;
+            let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_float(op, ty.elem)?;
+            if let Some(axis) = axis {
+                expect_axis(&ty, *axis)?;
+            }
             Ok(ty)
         }
         CallOp::Transpose => {
@@ -777,18 +964,15 @@ fn call_result_type(
                     "broadcast input and output element types must match",
                 ));
             }
-            if element_count(&input) != 1 {
+            if let Err(message) = broadcast_shape(&input, target) {
                 return Err(syn::Error::new(
                     Span::call_site(),
-                    format!(
-                        "broadcast currently expects a scalar-like input with one element, got shape {:?}",
-                        input.shape
-                    ),
+                    format!("broadcast input and output shapes are incompatible: {message}"),
                 ));
             }
             Ok(target.clone())
         }
-        CallOp::Sum => {
+        CallOp::Sum(axis) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             if input.rank() == 0 {
@@ -797,12 +981,9 @@ fn call_result_type(
                     "sum expects a tensor input",
                 ));
             }
-            Ok(TensorType {
-                elem: input.elem,
-                shape: vec![1],
-            })
+            Ok(reduction_output_type(&input, *axis)?)
         }
-        CallOp::Mean => {
+        CallOp::Mean(axis) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             expect_float(op, input.elem)?;
@@ -812,10 +993,7 @@ fn call_result_type(
                     "mean expects a tensor input",
                 ));
             }
-            Ok(TensorType {
-                elem: input.elem,
-                shape: vec![1],
-            })
+            Ok(reduction_output_type(&input, *axis)?)
         }
         CallOp::Matmul => {
             expect_arity(op, args, 2)?;
@@ -957,6 +1135,69 @@ fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
 }
 
+fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {
+    let rank = lhs.rank().max(rhs.rank());
+    let mut shape = Vec::with_capacity(rank);
+    for offset in 0..rank {
+        let lhs_dim = dim_from_trailing(&lhs.shape, rank, offset);
+        let rhs_dim = dim_from_trailing(&rhs.shape, rank, offset);
+        let dim = match (lhs_dim, rhs_dim) {
+            (Some(lhs_dim), Some(rhs_dim)) if lhs_dim == rhs_dim => lhs_dim,
+            (Some(1), Some(rhs_dim)) => rhs_dim,
+            (Some(lhs_dim), Some(1)) => lhs_dim,
+            (None, Some(dim)) | (Some(dim), None) => dim,
+            (None, None) => unreachable!("rank is derived from at least one shape"),
+            (Some(lhs_dim), Some(rhs_dim)) => {
+                return Err(format!(
+                    "dimension {} differs: {} vs {}",
+                    offset, lhs_dim, rhs_dim
+                ));
+            }
+        };
+        shape.push(dim);
+    }
+    Ok(shape)
+}
+
+fn dim_from_trailing(shape: &[usize], rank: usize, offset: usize) -> Option<usize> {
+    let pad = rank - shape.len();
+    (offset >= pad).then(|| shape[offset - pad])
+}
+
+fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result<TensorType> {
+    let shape = if let Some(axis) = axis {
+        expect_axis(input, axis)?;
+        let mut shape = input.shape.clone();
+        shape.remove(axis);
+        if shape.is_empty() {
+            vec![1]
+        } else {
+            shape
+        }
+    } else {
+        vec![1]
+    };
+    Ok(TensorType {
+        elem: input.elem,
+        shape,
+    })
+}
+
+fn expect_axis(input: &TensorType, axis: usize) -> syn::Result<()> {
+    if axis < input.rank() {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "axis {axis} is out of bounds for rank-{} tensor {:?}",
+                input.rank(),
+                input.shape
+            ),
+        ))
+    }
+}
+
 fn expect_arity(op: &CallOp, args: &[Expr], expected: usize) -> syn::Result<()> {
     if args.len() == expected {
         Ok(())
@@ -1013,6 +1254,18 @@ mod tests {
     }
 
     #[test]
+    fn infers_broadcast_elementwise_graph() {
+        let graph = parse(parse_quote! {
+            fn add_bias(x: Tensor2<f32, 2, 3>, bias: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+                x + bias
+            }
+        })
+        .unwrap();
+
+        assert_eq!(graph.body.ty, tensor(&[2, 3]));
+    }
+
+    #[test]
     fn infers_matmul_shape() {
         let graph = parse(parse_quote! {
             fn mm(x: Tensor2<f32, 2, 3>, y: Tensor2<f32, 3, 4>) -> Tensor2<f32, 2, 4> {
@@ -1050,6 +1303,22 @@ mod tests {
         })
         .unwrap();
         assert_eq!(sum.body.ty, tensor(&[1]));
+
+        let axis_sum = parse(parse_quote! {
+            fn sum_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+                sum::<1>(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(axis_sum.body.ty, tensor(&[2]));
+
+        let axis_mean = parse(parse_quote! {
+            fn mean_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+                mean::<0>(x)
+            }
+        })
+        .unwrap();
+        assert_eq!(axis_mean.body.ty, tensor(&[3]));
     }
 
     #[test]
@@ -1083,6 +1352,9 @@ mod tests {
     fn infers_scalar_classifier_op_shapes() {
         for item in [
             parse_quote! {
+                fn abs4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { abs(x) }
+            },
+            parse_quote! {
                 fn exp4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { exp(x) }
             },
             parse_quote! {
@@ -1100,9 +1372,12 @@ mod tests {
             parse_quote! {
                 fn softmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> { softmax(x) }
             },
+            parse_quote! {
+                fn softmax_axis1(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> { softmax::<1>(x) }
+            },
         ] {
             let graph = parse(item).unwrap();
-            assert_eq!(graph.body.ty, tensor(&[4]));
+            assert_eq!(graph.body.ty, graph.output);
         }
 
         let mean = parse(parse_quote! {
@@ -1120,6 +1395,35 @@ mod tests {
         })
         .unwrap();
         assert_eq!(argmax.body.ty, tensor(&[1]));
+    }
+
+    #[test]
+    fn infers_elementwise_call_shapes() {
+        for item in [
+            parse_quote! {
+                fn minimum4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    minimum(x, y)
+                }
+            },
+            parse_quote! {
+                fn maximum_broadcast(x: Tensor2<f32, 2, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+                    maximum(x, y)
+                }
+            },
+            parse_quote! {
+                fn clip4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    clip(x, 0.0, 1.0)
+                }
+            },
+            parse_quote! {
+                fn pow4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    pow(x, y)
+                }
+            },
+        ] {
+            let graph = parse(item).unwrap();
+            assert_eq!(graph.body.ty, graph.output);
+        }
     }
 
     #[test]
@@ -1155,7 +1459,7 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("same shape"));
+        assert!(error.to_string().contains("not broadcast-compatible"));
     }
 
     #[test]
@@ -1174,7 +1478,7 @@ mod tests {
             }
         })
         .unwrap_err();
-        assert!(broadcast.to_string().contains("scalar-like input"));
+        assert!(broadcast.to_string().contains("incompatible"));
     }
 
     #[test]

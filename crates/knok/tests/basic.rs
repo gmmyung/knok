@@ -54,6 +54,36 @@ fn relu4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn abs4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    abs(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn abs4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    abs(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn minimum4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    minimum(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn maximum4_i32(x: Tensor1<i32, 4>, y: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    maximum(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn clip4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    clip(x, 0.0, 2.0)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn pow4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    pow(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn mm2x2(x: Tensor2<f32, 2, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 2> {
     matmul(x, y)
 }
@@ -86,6 +116,41 @@ fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
 #[knok::graph(backend = "llvm-cpu")]
 fn sum2x2(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 1> {
     sum(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+    sum::<0>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    sum::<1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn mean2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    mean::<1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn softmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> {
+    softmax::<1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn add_bias2x3(x: Tensor2<f32, 2, 3>, bias: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+    x + bias
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn broadcast_bias2x3(bias: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+    broadcast::<Tensor2<f32, 2, 3>>(bias)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn add_column2x3(x: Tensor2<f32, 2, 3>, column: Tensor2<f32, 2, 1>) -> Tensor2<f32, 2, 3> {
+    x + column
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -311,6 +376,43 @@ fn relu_graph_runs() {
 }
 
 #[test]
+fn elementwise_op_graphs_run() {
+    let abs = abs4(Tensor1::from_array([-1.0, 2.0, -3.5, 4.5])).unwrap();
+    assert_eq!(abs.into_vec(), vec![1.0, 2.0, 3.5, 4.5]);
+
+    let abs_i32 = abs4_i32(Tensor1::from_array([-1, 2, -3, 4])).unwrap();
+    assert_eq!(abs_i32.into_vec(), vec![1, 2, 3, 4]);
+
+    let min = minimum4(
+        Tensor1::from_array([1.0, 5.0, -3.0, 10.0]),
+        Tensor1::from_array([2.0, 4.0, -4.0, 20.0]),
+    )
+    .unwrap();
+    assert_eq!(min.into_vec(), vec![1.0, 4.0, -4.0, 10.0]);
+
+    let max_i32 = maximum4_i32(
+        Tensor1::from_array([1, 5, -3, 10]),
+        Tensor1::from_array([2, 4, -4, 20]),
+    )
+    .unwrap();
+    assert_eq!(max_i32.into_vec(), vec![2, 5, -3, 20]);
+
+    let clipped = clip4(Tensor1::from_array([-1.0, 0.5, 3.0, 2.0])).unwrap();
+    assert_eq!(clipped.into_vec(), vec![0.0, 0.5, 2.0, 2.0]);
+
+    let pow = pow4(
+        Tensor1::from_array([2.0, 3.0, 4.0, 9.0]),
+        Tensor1::from_array([3.0, 2.0, 0.5, 0.5]),
+    )
+    .unwrap();
+    let output = pow.into_vec();
+    let expected = [8.0, 9.0, 2.0, 3.0];
+    for (actual, expected) in output.iter().zip(expected) {
+        assert!((actual - expected).abs() < 1.0e-5);
+    }
+}
+
+#[test]
 fn matmul_graph_runs() {
     let x = Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]]);
     let y = Tensor2::from_array([[5.0, 6.0], [7.0, 8.0]]);
@@ -358,6 +460,64 @@ fn rank2_sum_graph_runs() {
     let x = Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]]);
     let output = sum2x2(x).unwrap();
     assert_eq!(output.into_vec(), vec![10.0]);
+}
+
+#[test]
+fn axis_reduction_graphs_run() {
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+
+    let axis0 = sum2x3_axis0(x.clone()).unwrap();
+    assert_eq!(axis0.into_vec(), vec![11.0, 22.0, 33.0]);
+
+    let axis1 = sum2x3_axis1(x.clone()).unwrap();
+    assert_eq!(axis1.into_vec(), vec![6.0, 60.0]);
+
+    let mean = mean2x3_axis1(x).unwrap();
+    assert_eq!(mean.into_vec(), vec![2.0, 20.0]);
+}
+
+#[test]
+fn axis_softmax_graph_runs() {
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [1.0, 1.0, 1.0]]);
+    let output = softmax2x3_axis1(x).unwrap().into_vec();
+
+    let expected = [
+        0.09003057f32,
+        0.24472848,
+        0.66524094,
+        0.33333334,
+        0.33333334,
+        0.33333334,
+    ];
+    for (actual, expected) in output.iter().zip(expected) {
+        assert!((actual - expected).abs() < 1.0e-5);
+    }
+}
+
+#[test]
+fn rank_broadcasting_graphs_run() {
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let bias = Tensor1::from_array([100.0, 200.0, 300.0]);
+
+    let added = add_bias2x3(x, bias.clone()).unwrap();
+    assert_eq!(
+        added.into_vec(),
+        vec![101.0, 202.0, 303.0, 110.0, 220.0, 330.0]
+    );
+
+    let broadcast = broadcast_bias2x3(bias).unwrap();
+    assert_eq!(
+        broadcast.into_vec(),
+        vec![100.0, 200.0, 300.0, 100.0, 200.0, 300.0]
+    );
+
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let column = Tensor2::from_array([[100.0], [200.0]]);
+    let added = add_column2x3(x, column).unwrap();
+    assert_eq!(
+        added.into_vec(),
+        vec![101.0, 102.0, 103.0, 210.0, 220.0, 230.0]
+    );
 }
 
 #[test]

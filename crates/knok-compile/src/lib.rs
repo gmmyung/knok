@@ -691,12 +691,225 @@ fn format_shape_list(shape: &[usize]) -> String {
     )
 }
 
+fn format_usize_list(values: &[usize]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 fn reassociation_for_rank(rank: usize) -> String {
     let dims = (0..rank)
         .map(|index| index.to_string())
         .collect::<Vec<_>>()
         .join(", ");
     format!("[[{dims}]]")
+}
+
+fn format_dim_list(rank: usize) -> String {
+    (0..rank)
+        .map(|index| format!("d{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn broadcast_result_type(lhs: &TensorType, rhs: &TensorType) -> anyhow::Result<TensorType> {
+    if lhs.elem != rhs.elem {
+        anyhow::bail!("binary operands have different element types");
+    }
+    let shape = broadcast_shape(&lhs.shape, &rhs.shape)?;
+    Ok(TensorType {
+        elem: lhs.elem,
+        shape,
+    })
+}
+
+fn ensure_broadcastable(input: &TensorType, output: &TensorType) -> anyhow::Result<()> {
+    if input.elem != output.elem {
+        anyhow::bail!("broadcast input and output element types differ");
+    }
+    let shape = broadcast_shape(&input.shape, &output.shape)?;
+    if shape != output.shape {
+        anyhow::bail!(
+            "broadcast result shape {:?} does not match requested output {:?}",
+            shape,
+            output.shape
+        );
+    }
+    Ok(())
+}
+
+fn axis_broadcast_dimensions(
+    input_rank: usize,
+    output_rank: usize,
+    axis: usize,
+) -> anyhow::Result<Vec<usize>> {
+    if input_rank + 1 != output_rank {
+        anyhow::bail!("axis broadcast expects exactly one reduced dimension");
+    }
+    if axis >= output_rank {
+        anyhow::bail!("axis {axis} is out of bounds for rank {output_rank}");
+    }
+    Ok(vec![axis])
+}
+
+fn ensure_axis_broadcastable(
+    input: &TensorType,
+    output: &TensorType,
+    axis: usize,
+) -> anyhow::Result<()> {
+    if input.elem != output.elem {
+        anyhow::bail!("broadcast input and output element types differ");
+    }
+    if input.rank() + 1 != output.rank() {
+        anyhow::bail!("axis broadcast expects exactly one reduced dimension");
+    }
+    for output_index in 0..output.rank() {
+        if output_index == axis {
+            continue;
+        }
+        let input_index = if output_index < axis {
+            output_index
+        } else {
+            output_index - 1
+        };
+        if input.shape[input_index] != output.shape[output_index] {
+            anyhow::bail!(
+                "axis broadcast dimension mismatch at output dimension {}: input {} vs output {}",
+                output_index,
+                input.shape[input_index],
+                output.shape[output_index]
+            );
+        }
+    }
+    Ok(())
+}
+
+fn collapse_reassociation_for_squeezed_broadcast(
+    input_shape: &[usize],
+    aligned_output_shape: &[usize],
+) -> String {
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut pending = Vec::new();
+    for (index, (input_dim, output_dim)) in input_shape.iter().zip(aligned_output_shape).enumerate()
+    {
+        pending.push(index);
+        if !(*input_dim == 1 && *output_dim != 1) {
+            groups.push(core::mem::take(&mut pending));
+        }
+    }
+    if !pending.is_empty() {
+        if let Some(last) = groups.last_mut() {
+            last.extend(pending);
+        } else {
+            groups.push(pending);
+        }
+    }
+    let groups = groups
+        .into_iter()
+        .map(|group| {
+            format!(
+                "[{}]",
+                group
+                    .into_iter()
+                    .map(|index| index.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{groups}]")
+}
+
+fn broadcast_shape(lhs: &[usize], rhs: &[usize]) -> anyhow::Result<Vec<usize>> {
+    let rank = lhs.len().max(rhs.len());
+    let mut shape = Vec::with_capacity(rank);
+    for offset in 0..rank {
+        let lhs_dim = dim_from_trailing(lhs, rank, offset);
+        let rhs_dim = dim_from_trailing(rhs, rank, offset);
+        let dim = match (lhs_dim, rhs_dim) {
+            (Some(lhs_dim), Some(rhs_dim)) if lhs_dim == rhs_dim => lhs_dim,
+            (Some(1), Some(rhs_dim)) => rhs_dim,
+            (Some(lhs_dim), Some(1)) => lhs_dim,
+            (None, Some(dim)) | (Some(dim), None) => dim,
+            (None, None) => unreachable!("rank is derived from at least one shape"),
+            (Some(lhs_dim), Some(rhs_dim)) => {
+                anyhow::bail!("broadcast dimension {offset} differs: {lhs_dim} vs {rhs_dim}");
+            }
+        };
+        shape.push(dim);
+    }
+    Ok(shape)
+}
+
+fn dim_from_trailing(shape: &[usize], rank: usize, offset: usize) -> Option<usize> {
+    let padding = rank - shape.len();
+    (offset >= padding).then(|| shape[offset - padding])
+}
+
+fn reduction_output_shape(
+    input_shape: &[usize],
+    axis: Option<usize>,
+    keep_dims: bool,
+) -> Vec<usize> {
+    match axis {
+        Some(axis) if keep_dims => input_shape
+            .iter()
+            .enumerate()
+            .map(|(index, dim)| if index == axis { 1 } else { *dim })
+            .collect(),
+        Some(axis) => {
+            let mut shape = input_shape.to_vec();
+            shape.remove(axis);
+            if shape.is_empty() {
+                vec![1]
+            } else {
+                shape
+            }
+        }
+        None => vec![1],
+    }
+}
+
+fn reduction_output_map(input_rank: usize, axis: Option<usize>, keep_dims: bool) -> String {
+    match axis {
+        Some(axis) if keep_dims => {
+            let dims = (0..input_rank)
+                .map(|index| {
+                    if index == axis {
+                        "0".to_string()
+                    } else {
+                        format!("d{index}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({dims})")
+        }
+        Some(_) if input_rank == 1 => "(0)".to_string(),
+        Some(axis) => {
+            let dims = (0..input_rank)
+                .filter(|index| *index != axis)
+                .map(|index| format!("d{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({dims})")
+        }
+        None => "(0)".to_string(),
+    }
+}
+
+fn min_float_literal(elem: ElementType) -> &'static str {
+    match elem {
+        ElementType::F32 => "-3.40282347E+38",
+        ElementType::F64 => "-1.7976931348623157E+308",
+        ElementType::I32 | ElementType::I64 => "0",
+    }
 }
 
 struct MlirModel {
@@ -1093,9 +1306,25 @@ impl<'a> Lowerer<'a> {
                 self.binary_value(*op, lhs, rhs)
             }
             Expr::Call { op, args } => match op {
+                CallOp::Abs => {
+                    let input = self.lower_expr(&args[0])?;
+                    let op_name = if input.ty.elem.is_float() {
+                        "math.absf"
+                    } else {
+                        "math.absi"
+                    };
+                    self.emit_unary(op_name, input)
+                }
                 CallOp::Argmax => {
                     let input = self.lower_expr(&args[0])?;
                     self.argmax(input)
+                }
+                CallOp::Clip => {
+                    let value = self.lower_expr(&args[0])?;
+                    let min = self.lower_expr(&args[1])?;
+                    let max = self.lower_expr(&args[2])?;
+                    let clipped_high = self.minimum(value, max)?;
+                    self.maximum(clipped_high, min)
                 }
                 CallOp::Conv2d => {
                     let input = self.lower_expr(&args[0])?;
@@ -1115,22 +1344,37 @@ impl<'a> Lowerer<'a> {
                     let zero = self.zero_like(&value.ty)?;
                     self.emit_binary("arith.maximumf", zero, value)
                 }
-                CallOp::Mean => {
+                CallOp::Mean(axis) => {
                     let input = self.lower_expr(&args[0])?;
-                    self.mean(input)
+                    self.mean(input, *axis)
                 }
                 CallOp::Matmul => {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.matmul(lhs, rhs)
                 }
+                CallOp::Minimum => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.minimum(lhs, rhs)
+                }
+                CallOp::Maximum => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.maximum(lhs, rhs)
+                }
+                CallOp::Pow => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.emit_binary("math.powf", lhs, rhs)
+                }
                 CallOp::Sigmoid => {
                     let value = self.lower_expr(&args[0])?;
                     self.sigmoid(value)
                 }
-                CallOp::Softmax => {
+                CallOp::Softmax(axis) => {
                     let value = self.lower_expr(&args[0])?;
-                    self.softmax(value)
+                    self.softmax(value, *axis)
                 }
                 CallOp::Sqrt => {
                     let value = self.lower_expr(&args[0])?;
@@ -1152,9 +1396,9 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.broadcast(input, ty)
                 }
-                CallOp::Sum => {
+                CallOp::Sum(axis) => {
                     let input = self.lower_expr(&args[0])?;
-                    self.sum(input)
+                    self.sum(input, *axis)
                 }
                 CallOp::Graph(name) => {
                     let args = args
@@ -1264,6 +1508,34 @@ impl<'a> Lowerer<'a> {
         self.emit_binary(op_name, lhs, rhs)
     }
 
+    fn minimum(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let elem = if lhs.ty.rank() == 0 {
+            rhs.ty.elem
+        } else {
+            lhs.ty.elem
+        };
+        let op_name = if elem.is_float() {
+            "arith.minimumf"
+        } else {
+            "arith.minsi"
+        };
+        self.emit_binary(op_name, lhs, rhs)
+    }
+
+    fn maximum(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let elem = if lhs.ty.rank() == 0 {
+            rhs.ty.elem
+        } else {
+            lhs.ty.elem
+        };
+        let op_name = if elem.is_float() {
+            "arith.maximumf"
+        } else {
+            "arith.maxsi"
+        };
+        self.emit_binary(op_name, lhs, rhs)
+    }
+
     fn emit_unary(&mut self, op_name: &str, value: Value) -> anyhow::Result<Value> {
         let name = self.fresh();
         self.lines.push(format!(
@@ -1275,17 +1547,16 @@ impl<'a> Lowerer<'a> {
     }
 
     fn emit_binary(&mut self, op_name: &str, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
-        let (lhs, rhs, ty) = if lhs.ty == rhs.ty {
-            let ty = lhs.ty.clone();
-            (lhs, rhs, ty)
-        } else if lhs.ty.rank() == 0 {
-            let rhs_ty = rhs.ty.clone();
-            (self.splat(lhs, &rhs_ty)?, rhs, rhs_ty)
-        } else if rhs.ty.rank() == 0 {
-            let lhs_ty = lhs.ty.clone();
-            (lhs, self.splat(rhs, &lhs_ty)?, lhs_ty)
+        let ty = broadcast_result_type(&lhs.ty, &rhs.ty)?;
+        let lhs = if lhs.ty == ty {
+            lhs
         } else {
-            anyhow::bail!("incompatible binary operand types during lowering");
+            self.broadcast(lhs, &ty)?
+        };
+        let rhs = if rhs.ty == ty {
+            rhs
+        } else {
+            self.broadcast(rhs, &ty)?
         };
         let name = self.fresh();
         self.lines.push(format!(
@@ -1498,47 +1769,195 @@ impl<'a> Lowerer<'a> {
         if input.ty == *ty {
             return Ok(input);
         }
-        let scalar = if input.ty.rank() == 0 {
-            input
-        } else {
-            let name = self.fresh();
-            let zero = self.fresh();
-            self.lines
-                .push(format!("    {zero} = arith.constant 0 : index"));
-            let indices = vec![zero; input.ty.rank()].join(", ");
-            self.lines.push(format!(
-                "    {name} = tensor.extract {}[{}] : {}",
-                input.name,
-                indices,
-                input.ty.mlir_type()
-            ));
-            Value {
-                name,
-                ty: TensorType {
-                    elem: input.ty.elem,
-                    shape: Vec::new(),
-                },
-            }
-        };
-        self.splat(scalar, ty)
+        if input.ty.rank() == 0 {
+            return self.splat(input, ty);
+        }
+        if element_count(&input.ty) == 1 {
+            let scalar = self.extract_first_scalar(input)?;
+            return self.splat(scalar, ty);
+        }
+        ensure_broadcastable(&input.ty, ty)?;
+        let (input, dimensions) = self.squeeze_singleton_broadcast_dims(input, ty)?;
+        self.emit_linalg_broadcast(input, ty, &dimensions)
     }
 
-    fn mean(&mut self, input: Value) -> anyhow::Result<Value> {
-        let count = element_count(&input.ty);
+    fn broadcast_along_axis(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        axis: usize,
+    ) -> anyhow::Result<Value> {
+        if input.ty == *ty {
+            return Ok(input);
+        }
+        if input.ty.rank() == 0 || element_count(&input.ty) == 1 {
+            let scalar = if input.ty.rank() == 0 {
+                input
+            } else {
+                self.extract_first_scalar(input)?
+            };
+            return self.splat(scalar, ty);
+        }
+        ensure_axis_broadcastable(&input.ty, ty, axis)?;
+        let dimensions = axis_broadcast_dimensions(input.ty.rank(), ty.rank(), axis)?;
+        self.emit_linalg_broadcast(input, ty, &dimensions)
+    }
+
+    fn emit_linalg_broadcast(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        dimensions: &[usize],
+    ) -> anyhow::Result<Value> {
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let dimensions = format_usize_list(dimensions);
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = linalg.broadcast ins({} : {}) outs({empty} : {}) dimensions = {dimensions}",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn extract_first_scalar(&mut self, input: Value) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        let zero = self.fresh();
+        self.lines
+            .push(format!("    {zero} = arith.constant 0 : index"));
+        let indices = vec![zero; input.ty.rank()].join(", ");
+        self.lines.push(format!(
+            "    {name} = tensor.extract {}[{}] : {}",
+            input.name,
+            indices,
+            input.ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: TensorType {
+                elem: input.ty.elem,
+                shape: Vec::new(),
+            },
+        })
+    }
+
+    fn squeeze_singleton_broadcast_dims(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+    ) -> anyhow::Result<(Value, Vec<usize>)> {
+        let padding = ty.rank() - input.ty.rank();
+        let singleton_dimensions = input
+            .ty
+            .shape
+            .iter()
+            .enumerate()
+            .filter_map(|(index, input_dim)| {
+                let output_dim = ty.shape[padding + index];
+                (*input_dim == 1 && output_dim != 1).then_some(index)
+            })
+            .collect::<Vec<_>>();
+
+        let mut dimensions = (0..padding).collect::<Vec<_>>();
+        dimensions.extend(singleton_dimensions.iter().map(|index| padding + *index));
+
+        if singleton_dimensions.is_empty() {
+            return Ok((input, dimensions));
+        }
+
+        let squeezed_shape = input
+            .ty
+            .shape
+            .iter()
+            .enumerate()
+            .filter_map(|(index, input_dim)| {
+                let output_dim = ty.shape[padding + index];
+                (!(*input_dim == 1 && output_dim != 1)).then_some(*input_dim)
+            })
+            .collect::<Vec<_>>();
+        if squeezed_shape.is_empty() {
+            return Ok((self.extract_first_scalar(input)?, (0..ty.rank()).collect()));
+        }
+
+        let squeezed_ty = TensorType {
+            elem: input.ty.elem,
+            shape: squeezed_shape,
+        };
+        let aligned_output_shape = &ty.shape[padding..];
+        let reassociation =
+            collapse_reassociation_for_squeezed_broadcast(&input.ty.shape, aligned_output_shape);
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
+            input.name,
+            input.ty.mlir_type(),
+            squeezed_ty.mlir_type()
+        ));
+        Ok((
+            Value {
+                name,
+                ty: squeezed_ty,
+            },
+            dimensions,
+        ))
+    }
+
+    fn mean(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        let count = axis.map_or_else(|| element_count(&input.ty), |axis| input.ty.shape[axis]);
         let elem = input.ty.elem;
-        let sum = self.sum(input)?;
+        let sum = self.sum(input, axis)?;
         let scale = self.constant(&format!("{count}.0"), elem)?;
         self.emit_binary("arith.divf", sum, scale)
     }
 
-    fn softmax(&mut self, input: Value) -> anyhow::Result<Value> {
-        let max = self.max(input.clone())?;
-        let max = self.broadcast(max, &input.ty)?;
+    fn softmax(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        if let Some(axis) = axis {
+            return self.axis_softmax(input, axis);
+        }
+        let max = self.max(input.clone(), axis, false)?;
+        let max = if let Some(axis) = axis {
+            self.broadcast_along_axis(max, &input.ty, axis)?
+        } else {
+            self.broadcast(max, &input.ty)?
+        };
         let shifted = self.emit_binary("arith.subf", input, max)?;
         let exp = self.emit_unary("math.exp", shifted)?;
-        let denominator = self.sum(exp.clone())?;
-        let denominator = self.broadcast(denominator, &exp.ty)?;
+        let denominator = self.reduce(
+            exp.clone(),
+            exp.ty.elem.zero_literal(),
+            "arith.addf",
+            axis,
+            false,
+        )?;
+        let denominator = if let Some(axis) = axis {
+            self.broadcast_along_axis(denominator, &exp.ty, axis)?
+        } else {
+            self.broadcast(denominator, &exp.ty)?
+        };
         self.emit_binary("arith.divf", exp, denominator)
+    }
+
+    fn axis_softmax(&mut self, input: Value, axis: usize) -> anyhow::Result<Value> {
+        let empty = self.fresh();
+        self.lines.push(format!(
+            "    {empty} = tensor.empty() : {}",
+            input.ty.mlir_type()
+        ));
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = linalg.softmax dimension({axis}) ins({} : {}) outs({empty} : {}) -> {}",
+            input.name,
+            input.ty.mlir_type(),
+            input.ty.mlir_type(),
+            input.ty.mlir_type()
+        ));
+        Ok(Value { name, ty: input.ty })
     }
 
     fn sigmoid(&mut self, input: Value) -> anyhow::Result<Value> {
@@ -1632,18 +2051,24 @@ impl<'a> Lowerer<'a> {
         Ok(Value { name, ty })
     }
 
-    fn sum(&mut self, input: Value) -> anyhow::Result<Value> {
+    fn sum(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
         let reducer_op = if input.ty.elem.is_float() {
             "arith.addf"
         } else {
             "arith.addi"
         };
         let initial_value = input.ty.elem.zero_literal();
-        self.reduce(input, initial_value, reducer_op)
+        self.reduce(input, initial_value, reducer_op, axis, false)
     }
 
-    fn max(&mut self, input: Value) -> anyhow::Result<Value> {
-        self.reduce(input, "-3.40282347E+38", "arith.maximumf")
+    fn max(&mut self, input: Value, axis: Option<usize>, keep_dims: bool) -> anyhow::Result<Value> {
+        self.reduce(
+            input.clone(),
+            min_float_literal(input.ty.elem),
+            "arith.maximumf",
+            axis,
+            keep_dims,
+        )
     }
 
     fn reduce(
@@ -1651,10 +2076,12 @@ impl<'a> Lowerer<'a> {
         input: Value,
         initial_value: &str,
         reducer_op: &str,
+        axis: Option<usize>,
+        keep_dims: bool,
     ) -> anyhow::Result<Value> {
         let ty = TensorType {
             elem: input.ty.elem,
-            shape: vec![1],
+            shape: reduction_output_shape(&input.ty.shape, axis, keep_dims),
         };
         let empty = self.fresh();
         self.lines
@@ -1673,20 +2100,24 @@ impl<'a> Lowerer<'a> {
         ));
 
         let rank = input.ty.rank();
-        let dims = (0..rank)
-            .map(|index| format!("d{index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let dims = format_dim_list(rank);
         let input_map = format!("({dims})");
         let iterator_types = (0..rank)
-            .map(|_| "\"reduction\"")
+            .map(|index| {
+                if axis.is_none() || axis == Some(index) {
+                    "\"reduction\""
+                } else {
+                    "\"parallel\""
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ");
+        let output_map = reduction_output_map(rank, axis, keep_dims);
         let reduced = self.fresh();
         let name = self.fresh();
         self.lines.push(format!("    {name} = linalg.generic {{"));
         self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {input_map}>, affine_map<({dims}) -> (0)>],"
+            "      indexing_maps = [affine_map<({dims}) -> {input_map}>, affine_map<({dims}) -> {output_map}>],"
         ));
         self.lines
             .push(format!("      iterator_types = [{iterator_types}]"));
