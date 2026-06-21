@@ -1,4 +1,4 @@
-error: only f32, f64, i32, and i64 tensors are supported; f16/bf16 and quantized integer types are not supported yet
+error: unsupported tensor element type; supported types are f32, f64, i32, i64, and half::f16/half::bf16 when the `half` feature is enabled
  --> tests/ui/unsupported_element_type.rs:4:27
   |
 4 | fn unsupported(x: Tensor1<u8, 4>) -> Tensor1<u8, 4> {

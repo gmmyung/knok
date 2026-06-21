@@ -153,6 +153,7 @@ cargo run -p knok --example classifier
 cargo run -p knok --example imported_mlir
 cargo run -p knok --example multi_backend
 cargo run -p knok --example dtypes
+cargo test -p knok --features half half_graphs_run
 ```
 
 They cover the recommended hosted workflow:
@@ -167,6 +168,8 @@ They cover the recommended hosted workflow:
 
 - Default features enable the proc macros and hosted runtime convenience path.
 - `default-features = false` builds `knok` as `no_std + alloc`.
+- `features = ["half"]` enables `half::f16` and `half::bf16` tensor element
+  types and re-exports them as `knok::half::{f16, bf16}`.
 - Use `default-features = false, features = ["macros"]` when a no-std target
   still needs compile-time graph expansion.
 - Proc macros, `melior`, and `iree-compile` still run on the compile host.
@@ -176,10 +179,11 @@ They cover the recommended hosted workflow:
 
 ## MVP limits
 
-- Graph tensor element types: `f32`, `f64`, `i32`, and `i64`.
+- Graph tensor element types: `f32`, `f64`, `i32`, and `i64`; gated
+  `half::f16` and `half::bf16` support is available with `features = ["half"]`.
 - Graph inputs and outputs currently use one homogeneous element type per graph;
   mixed dtype promotion is not implemented.
-- `f16`, `bf16`, quantized integer types, bool tensors, complex numbers, and
+- Quantized integer types, bool tensors, complex numbers, and
   string/object-like values are not implemented yet.
 - Static rank-1 through rank-4 shapes only.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
@@ -195,10 +199,10 @@ They cover the recommended hosted workflow:
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, and `softmax::<1>(logits)`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `argmax`,
-  `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) currently require `f32`
-  or `f64`. Integer tensors support arithmetic, `abs`, `minimum`, `maximum`,
-  `clip`, reshape/broadcast, sum, matmul, and conv lowering where IREE accepts
-  the resulting MLIR.
+  `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
+  element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
+  support arithmetic, `abs`, `minimum`, `maximum`, `clip`, reshape/broadcast,
+  sum, matmul, and conv lowering where IREE accepts the resulting MLIR.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
@@ -220,10 +224,11 @@ literals.
 | --- | --- | --- | --- | --- |
 | `f32` | yes | yes | yes | Primary path; all floating-point graph ops target this first. |
 | `f64` | yes | yes | yes | Uses `--iree-input-demote-f64-to-f32=false`; backend support may vary. |
+| `f16` | `half` feature | `half` feature | `half` feature | Uses `half::f16`; backend math support may vary. |
+| `bf16` | `half` feature | `half` feature | `half` feature | Uses `half::bf16`; currently best treated as typed storage/roundtrip unless the selected backend accepts the op. |
 | `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
 | `i64` | yes | yes | yes | Same policy as `i32`. |
 | `bool` | no | no | no | Deferred until comparison, `where`, `all`, and `any` semantics are designed. |
-| `f16` / `bf16` | no | no | no | Deferred; likely requires public half types plus eerie/IREE buffer mapping. |
 | quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
 
 There is no implicit promotion, mixed-dtype graph execution, complex dtype,

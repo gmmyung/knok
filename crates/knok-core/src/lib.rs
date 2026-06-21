@@ -136,6 +136,8 @@ pub struct GraphSignature {
 pub enum ElementType {
     F32,
     F64,
+    F16,
+    BF16,
     I32,
     I64,
 }
@@ -161,25 +163,27 @@ impl ElementType {
         match self {
             Self::F32 => "f32",
             Self::F64 => "f64",
+            Self::F16 => "f16",
+            Self::BF16 => "bf16",
             Self::I32 => "i32",
             Self::I64 => "i64",
         }
     }
 
     pub fn is_float(self) -> bool {
-        matches!(self, Self::F32 | Self::F64)
+        matches!(self, Self::F32 | Self::F64 | Self::F16 | Self::BF16)
     }
 
     pub fn zero_literal(self) -> &'static str {
         match self {
-            Self::F32 | Self::F64 => "0.0",
+            Self::F32 | Self::F64 | Self::F16 | Self::BF16 => "0.0",
             Self::I32 | Self::I64 => "0",
         }
     }
 
     pub fn one_literal(self) -> &'static str {
         match self {
-            Self::F32 | Self::F64 => "1.0",
+            Self::F32 | Self::F64 | Self::F16 | Self::BF16 => "1.0",
             Self::I32 | Self::I64 => "1",
         }
     }
@@ -362,23 +366,37 @@ fn parse_element_type(arg: Option<&GenericArgument>) -> syn::Result<ElementType>
     let Some(GenericArgument::Type(Type::Path(path))) = arg else {
         return Err(syn::Error::new(
             Span::call_site(),
-            "tensor element type must be f32, f64, i32, or i64",
+            supported_element_type_message(),
+        ));
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return Err(syn::Error::new(
+            path.span(),
+            supported_element_type_message(),
         ));
     };
     for (name, elem) in [
         ("f32", ElementType::F32),
         ("f64", ElementType::F64),
+        #[cfg(feature = "half")]
+        ("f16", ElementType::F16),
+        #[cfg(feature = "half")]
+        ("bf16", ElementType::BF16),
         ("i32", ElementType::I32),
         ("i64", ElementType::I64),
     ] {
-        if path.path.is_ident(name) {
+        if segment.ident == name {
             return Ok(elem);
         }
     }
     Err(syn::Error::new(
         path.span(),
-        "only f32, f64, i32, and i64 tensors are supported; f16/bf16 and quantized integer types are not supported yet",
+        supported_element_type_message(),
     ))
+}
+
+fn supported_element_type_message() -> &'static str {
+    "unsupported tensor element type; supported types are f32, f64, i32, i64, and half::f16/half::bf16 when the `half` feature is enabled"
 }
 
 fn parse_const_usize(arg: Option<&GenericArgument>) -> syn::Result<usize> {
@@ -1554,6 +1572,26 @@ mod tests {
         assert_eq!(graph.inputs.len(), 2);
         assert_eq!(graph.output, tensor(&[4]));
         assert_eq!(graph.body.ty, tensor(&[4]));
+    }
+
+    #[cfg(feature = "half")]
+    #[test]
+    fn parses_half_element_types() {
+        let f16_graph = parse(parse_quote! {
+            fn add(x: Tensor1<half::f16, 4>, y: Tensor1<half::f16, 4>) -> Tensor1<half::f16, 4> {
+                x + y
+            }
+        })
+        .unwrap();
+        assert_eq!(f16_graph.output.elem, ElementType::F16);
+
+        let bf16_graph = parse(parse_quote! {
+            fn identity(x: Tensor1<knok::half::bf16, 4>) -> Tensor1<knok::half::bf16, 4> {
+                x
+            }
+        })
+        .unwrap();
+        assert_eq!(bf16_graph.output.elem, ElementType::BF16);
     }
 
     #[test]

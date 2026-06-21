@@ -591,6 +591,8 @@ fn rust_element_type(elem: ElementType) -> TokenStream {
     match elem {
         ElementType::F32 => quote!(f32),
         ElementType::F64 => quote!(f64),
+        ElementType::F16 => quote!(::knok::half::f16),
+        ElementType::BF16 => quote!(::knok::half::bf16),
         ElementType::I32 => quote!(i32),
         ElementType::I64 => quote!(i64),
     }
@@ -674,6 +676,8 @@ fn parse_mlir_element_type(elem: &str) -> Option<ElementType> {
     match elem {
         "f32" => Some(ElementType::F32),
         "f64" => Some(ElementType::F64),
+        "f16" => Some(ElementType::F16),
+        "bf16" => Some(ElementType::BF16),
         "i32" => Some(ElementType::I32),
         "i64" => Some(ElementType::I64),
         _ => None,
@@ -974,6 +978,8 @@ fn min_float_literal(elem: ElementType) -> &'static str {
     match elem {
         ElementType::F32 => "-3.40282347E+38",
         ElementType::F64 => "-1.7976931348623157E+308",
+        ElementType::F16 => "-65504.0",
+        ElementType::BF16 => "-3.38953139E+38",
         ElementType::I32 | ElementType::I64 => "0",
     }
 }
@@ -2289,6 +2295,7 @@ impl<'a> Lowerer<'a> {
         let index_value = self.fresh();
         let conversion_op = match input.ty.elem {
             ElementType::F32 | ElementType::F64 => "arith.uitofp",
+            ElementType::F16 | ElementType::BF16 => "arith.uitofp",
             ElementType::I32 | ElementType::I64 => "arith.index_cast",
         };
         self.lines.push(format!(
