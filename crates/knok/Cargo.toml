@@ -13,6 +13,7 @@ features = ["std"]
 
 [dependencies]
 eerie = { workspace = true, optional = true }
+half = { workspace = true, optional = true }
 knok-macros = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -27,7 +28,8 @@ harness = false
 
 [features]
 default = ["std", "host-runtime", "macros"]
-std = ["eerie?/std"]
+std = ["eerie?/std", "half?/std"]
 macros = ["dep:knok-macros"]
+half = ["dep:half", "knok-macros?/half"]
 host-runtime = ["std", "dep:eerie", "eerie/runtime", "eerie/std"]
 embedded-runtime = ["dep:eerie", "eerie/runtime"]

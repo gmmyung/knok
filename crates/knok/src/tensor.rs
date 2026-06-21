@@ -19,6 +19,18 @@ macro_rules! impl_tensor_element {
 
 impl_tensor_element!(f32, f64, i32, i64);
 
+#[cfg(feature = "half")]
+impl TensorElement for half::f16 {
+    const ZERO: Self = half::f16::from_bits(0);
+    const ONE: Self = half::f16::from_bits(0x3c00);
+}
+
+#[cfg(feature = "half")]
+impl TensorElement for half::bf16 {
+    const ZERO: Self = half::bf16::from_bits(0);
+    const ONE: Self = half::bf16::from_bits(0x3f80);
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct TensorData<T> {
     data: Vec<T>,

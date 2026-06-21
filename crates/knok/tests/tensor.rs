@@ -50,6 +50,22 @@ fn tensor_convenience_constructors_work() {
     assert_eq!(filled.into_vec(), vec![7, 7, 7, 7]);
 }
 
+#[cfg(feature = "half")]
+#[test]
+fn half_tensor_convenience_constructors_work() {
+    let f16_ones = Tensor1::<f16, 2>::ones();
+    assert_eq!(
+        f16_ones.as_slice(),
+        &[f16::from_f32(1.0), f16::from_f32(1.0)]
+    );
+
+    let bf16_zeros = Tensor2::<bf16, 1, 2>::zeros();
+    assert_eq!(
+        bf16_zeros.as_slice(),
+        &[bf16::from_f32(0.0), bf16::from_f32(0.0)]
+    );
+}
+
 #[test]
 fn tensor_try_from_vec_and_indexing_work() {
     let mut tensor = Tensor3::<f32, 1, 2, 2>::try_from(vec![1.0, 2.0, 3.0, 4.0]).unwrap();

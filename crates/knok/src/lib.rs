@@ -27,6 +27,9 @@ extern crate alloc;
 #[cfg(feature = "macros")]
 pub use knok_macros::{graph, mlir_model};
 
+#[cfg(feature = "half")]
+pub use half;
+
 pub mod artifact;
 pub mod backend;
 #[doc(hidden)]
@@ -38,6 +41,8 @@ pub mod runtime;
 pub mod tensor;
 
 pub mod prelude {
+    #[cfg(feature = "half")]
+    pub use crate::half::{bf16, f16};
     pub use crate::tensor::{Tensor1, Tensor2, Tensor3, Tensor4, TensorElement};
     #[cfg(feature = "macros")]
     pub use crate::{graph, mlir_model};

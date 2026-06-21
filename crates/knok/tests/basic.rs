@@ -21,6 +21,18 @@ fn add4_i64(x: Tensor1<i64, 4>, y: Tensor1<i64, 4>) -> Tensor1<i64, 4> {
     x + y
 }
 
+#[cfg(feature = "half")]
+#[knok::graph(backend = "llvm-cpu")]
+fn add4_f16(x: Tensor1<f16, 4>, y: Tensor1<f16, 4>) -> Tensor1<f16, 4> {
+    x + y
+}
+
+#[cfg(feature = "half")]
+#[knok::graph(backend = "llvm-cpu")]
+fn identity4_bf16(x: Tensor1<bf16, 4>) -> Tensor1<bf16, 4> {
+    x
+}
+
 #[knok::graph(backend = "llvm-cpu")]
 fn sum4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 1> {
     sum(x)
@@ -278,6 +290,44 @@ fn add_graph_runs() {
     let y = Tensor1::from_array([10.0, 20.0, 30.0, 40.0]);
     let output = add4(x, y).unwrap();
     assert_eq!(output.into_vec(), vec![11.0, 22.0, 33.0, 44.0]);
+}
+
+#[cfg(feature = "half")]
+#[test]
+fn half_graphs_run() {
+    let f16_output = add4_f16(
+        Tensor1::from_array([
+            f16::from_f32(1.0),
+            f16::from_f32(2.0),
+            f16::from_f32(3.0),
+            f16::from_f32(4.0),
+        ]),
+        Tensor1::from_array([
+            f16::from_f32(10.0),
+            f16::from_f32(20.0),
+            f16::from_f32(30.0),
+            f16::from_f32(40.0),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(
+        f16_output.into_vec(),
+        vec![
+            f16::from_f32(11.0),
+            f16::from_f32(22.0),
+            f16::from_f32(33.0),
+            f16::from_f32(44.0)
+        ]
+    );
+
+    let bf16_input = Tensor1::from_array([
+        bf16::from_f32(1.0),
+        bf16::from_f32(2.0),
+        bf16::from_f32(3.0),
+        bf16::from_f32(4.0),
+    ]);
+    let bf16_output = identity4_bf16(bf16_input.clone()).unwrap();
+    assert_eq!(bf16_output, bf16_input);
 }
 
 #[test]
