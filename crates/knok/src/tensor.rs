@@ -1,6 +1,24 @@
 use alloc::{vec, vec::Vec};
 use core::fmt;
 
+pub trait TensorElement: Copy + Clone + PartialEq + fmt::Debug {
+    const ZERO: Self;
+    const ONE: Self;
+}
+
+macro_rules! impl_tensor_element {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl TensorElement for $ty {
+                const ZERO: Self = 0 as $ty;
+                const ONE: Self = 1 as $ty;
+            }
+        )*
+    };
+}
+
+impl_tensor_element!(f32, f64, i32, i64);
+
 #[derive(Clone, Debug, PartialEq)]
 struct TensorData<T> {
     data: Vec<T>,
@@ -256,45 +274,45 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
     }
 }
 
-impl<const D0: usize> Tensor1<f32, D0> {
+impl<T: TensorElement, const D0: usize> Tensor1<T, D0> {
     pub fn zeros() -> Self {
-        Self::filled(0.0)
+        Self::filled(T::ZERO)
     }
 
     pub fn ones() -> Self {
-        Self::filled(1.0)
+        Self::filled(T::ONE)
     }
 }
 
-impl<const D0: usize, const D1: usize> Tensor2<f32, D0, D1> {
+impl<T: TensorElement, const D0: usize, const D1: usize> Tensor2<T, D0, D1> {
     pub fn zeros() -> Self {
-        Self::filled(0.0)
+        Self::filled(T::ZERO)
     }
 
     pub fn ones() -> Self {
-        Self::filled(1.0)
+        Self::filled(T::ONE)
     }
 }
 
-impl<const D0: usize, const D1: usize, const D2: usize> Tensor3<f32, D0, D1, D2> {
+impl<T: TensorElement, const D0: usize, const D1: usize, const D2: usize> Tensor3<T, D0, D1, D2> {
     pub fn zeros() -> Self {
-        Self::filled(0.0)
+        Self::filled(T::ZERO)
     }
 
     pub fn ones() -> Self {
-        Self::filled(1.0)
+        Self::filled(T::ONE)
     }
 }
 
-impl<const D0: usize, const D1: usize, const D2: usize, const D3: usize>
-    Tensor4<f32, D0, D1, D2, D3>
+impl<T: TensorElement, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
+    Tensor4<T, D0, D1, D2, D3>
 {
     pub fn zeros() -> Self {
-        Self::filled(0.0)
+        Self::filled(T::ZERO)
     }
 
     pub fn ones() -> Self {
-        Self::filled(1.0)
+        Self::filled(T::ONE)
     }
 }
 

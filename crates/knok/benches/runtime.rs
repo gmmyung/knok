@@ -11,15 +11,15 @@ fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn matmul_64(x: Tensor2<f32, 64, 64>, y: Tensor2<f32, 64, 64>) -> Tensor2<f32, 64, 64> {
+fn matmul_128(x: Tensor2<f32, 128, 128>, y: Tensor2<f32, 128, 128>) -> Tensor2<f32, 128, 128> {
     matmul(x, y)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn batched_matmul_32x32(
-    x: Tensor3<f32, 32, 32, 32>,
-    y: Tensor3<f32, 32, 32, 32>,
-) -> Tensor3<f32, 32, 32, 32> {
+fn batched_matmul_16x128x128(
+    x: Tensor3<f32, 16, 128, 128>,
+    y: Tensor3<f32, 16, 128, 128>,
+) -> Tensor3<f32, 16, 128, 128> {
     matmul(x, y)
 }
 
@@ -87,23 +87,23 @@ fn large_knok_benches(criterion: &mut Criterion) {
     group.sample_size(10);
     let engine = Engine::new(RuntimeConfig::auto()).expect("failed to create runtime engine");
 
-    let matmul_lhs = patterned_vec(64 * 64);
-    let matmul_rhs = patterned_vec(64 * 64);
-    group.bench_function("matmul_64x64_reusable_engine", |bencher| {
+    let matmul_lhs = patterned_vec(128 * 128);
+    let matmul_rhs = patterned_vec(128 * 128);
+    group.bench_function("matmul_128x128_reusable_engine", |bencher| {
         bencher.iter(|| {
-            let lhs = Tensor2::<f32, 64, 64>::from_vec(black_box(matmul_lhs.clone())).unwrap();
-            let rhs = Tensor2::<f32, 64, 64>::from_vec(black_box(matmul_rhs.clone())).unwrap();
-            black_box(matmul_64_run(&engine, lhs, rhs).unwrap())
+            let lhs = Tensor2::<f32, 128, 128>::from_vec(black_box(matmul_lhs.clone())).unwrap();
+            let rhs = Tensor2::<f32, 128, 128>::from_vec(black_box(matmul_rhs.clone())).unwrap();
+            black_box(matmul_128_run(&engine, lhs, rhs).unwrap())
         })
     });
 
-    let batch_lhs = patterned_vec(32 * 32 * 32);
-    let batch_rhs = patterned_vec(32 * 32 * 32);
-    group.bench_function("batched_matmul_32x32x32_reusable_engine", |bencher| {
+    let batch_lhs = patterned_vec(16 * 128 * 128);
+    let batch_rhs = patterned_vec(16 * 128 * 128);
+    group.bench_function("batched_matmul_16x128x128_reusable_engine", |bencher| {
         bencher.iter(|| {
-            let lhs = Tensor3::<f32, 32, 32, 32>::from_vec(black_box(batch_lhs.clone())).unwrap();
-            let rhs = Tensor3::<f32, 32, 32, 32>::from_vec(black_box(batch_rhs.clone())).unwrap();
-            black_box(batched_matmul_32x32_run(&engine, lhs, rhs).unwrap())
+            let lhs = Tensor3::<f32, 16, 128, 128>::from_vec(black_box(batch_lhs.clone())).unwrap();
+            let rhs = Tensor3::<f32, 16, 128, 128>::from_vec(black_box(batch_rhs.clone())).unwrap();
+            black_box(batched_matmul_16x128x128_run(&engine, lhs, rhs).unwrap())
         })
     });
 
@@ -146,18 +146,18 @@ fn ndarray_comparison_benches(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("compare_ndarray");
     group.sample_size(10);
 
-    let matmul_lhs = Array2::from_shape_vec((64, 64), patterned_vec(64 * 64)).unwrap();
-    let matmul_rhs = Array2::from_shape_vec((64, 64), patterned_vec(64 * 64)).unwrap();
-    group.bench_function("matmul_64x64", |bencher| {
+    let matmul_lhs = Array2::from_shape_vec((128, 128), patterned_vec(128 * 128)).unwrap();
+    let matmul_rhs = Array2::from_shape_vec((128, 128), patterned_vec(128 * 128)).unwrap();
+    group.bench_function("matmul_128x128", |bencher| {
         bencher.iter(|| black_box(matmul_lhs.dot(black_box(&matmul_rhs))))
     });
 
-    let batch_lhs = Array3::from_shape_vec((32, 32, 32), patterned_vec(32 * 32 * 32)).unwrap();
-    let batch_rhs = Array3::from_shape_vec((32, 32, 32), patterned_vec(32 * 32 * 32)).unwrap();
-    group.bench_function("batched_matmul_32x32x32", |bencher| {
+    let batch_lhs = Array3::from_shape_vec((16, 128, 128), patterned_vec(16 * 128 * 128)).unwrap();
+    let batch_rhs = Array3::from_shape_vec((16, 128, 128), patterned_vec(16 * 128 * 128)).unwrap();
+    group.bench_function("batched_matmul_16x128x128", |bencher| {
         bencher.iter(|| {
-            let mut output = Array3::<f32>::zeros((32, 32, 32));
-            for batch in 0..32 {
+            let mut output = Array3::<f32>::zeros((16, 128, 128));
+            for batch in 0..16 {
                 let lhs = batch_lhs.index_axis(ndarray::Axis(0), batch);
                 let rhs = batch_rhs.index_axis(ndarray::Axis(0), batch);
                 output.slice_mut(s![batch, .., ..]).assign(&lhs.dot(&rhs));
@@ -196,9 +196,9 @@ fn nalgebra_comparison_benches(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("compare_nalgebra");
     group.sample_size(10);
 
-    let matmul_lhs = DMatrix::from_row_slice(64, 64, &patterned_vec(64 * 64));
-    let matmul_rhs = DMatrix::from_row_slice(64, 64, &patterned_vec(64 * 64));
-    group.bench_function(BenchmarkId::new("matmul", "64x64"), |bencher| {
+    let matmul_lhs = DMatrix::from_row_slice(128, 128, &patterned_vec(128 * 128));
+    let matmul_rhs = DMatrix::from_row_slice(128, 128, &patterned_vec(128 * 128));
+    group.bench_function(BenchmarkId::new("matmul", "128x128"), |bencher| {
         bencher.iter(|| black_box(black_box(&matmul_lhs) * black_box(&matmul_rhs)))
     });
 

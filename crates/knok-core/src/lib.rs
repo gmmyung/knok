@@ -29,7 +29,10 @@ pub struct Let {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     Var(String),
-    ConstF32(String),
+    Const {
+        value: String,
+        elem: ElementType,
+    },
     Unary {
         op: UnaryOp,
         value: Box<Expr>,
@@ -115,6 +118,9 @@ pub struct GraphSignature {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElementType {
     F32,
+    F64,
+    I32,
+    I64,
 }
 
 impl TensorType {
@@ -137,6 +143,27 @@ impl ElementType {
     pub fn mlir_type(self) -> &'static str {
         match self {
             Self::F32 => "f32",
+            Self::F64 => "f64",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+        }
+    }
+
+    pub fn is_float(self) -> bool {
+        matches!(self, Self::F32 | Self::F64)
+    }
+
+    pub fn zero_literal(self) -> &'static str {
+        match self {
+            Self::F32 | Self::F64 => "0.0",
+            Self::I32 | Self::I64 => "0",
+        }
+    }
+
+    pub fn one_literal(self) -> &'static str {
+        match self {
+            Self::F32 | Self::F64 => "1.0",
+            Self::I32 | Self::I64 => "1",
         }
     }
 }
@@ -318,17 +345,23 @@ fn parse_element_type(arg: Option<&GenericArgument>) -> syn::Result<ElementType>
     let Some(GenericArgument::Type(Type::Path(path))) = arg else {
         return Err(syn::Error::new(
             Span::call_site(),
-            "tensor element type must be f32",
+            "tensor element type must be f32, f64, i32, or i64",
         ));
     };
-    if path.path.is_ident("f32") {
-        Ok(ElementType::F32)
-    } else {
-        Err(syn::Error::new(
-            path.span(),
-            "only f32 tensors are supported",
-        ))
+    for (name, elem) in [
+        ("f32", ElementType::F32),
+        ("f64", ElementType::F64),
+        ("i32", ElementType::I32),
+        ("i64", ElementType::I64),
+    ] {
+        if path.path.is_ident(name) {
+            return Ok(elem);
+        }
     }
+    Err(syn::Error::new(
+        path.span(),
+        "only f32, f64, i32, and i64 tensors are supported; f16/bf16 and quantized integer types are not supported yet",
+    ))
 }
 
 fn parse_const_usize(arg: Option<&GenericArgument>) -> syn::Result<usize> {
@@ -400,8 +433,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
     match expr {
         SynExpr::Path(path) => Ok(Expr::Var(path.path.require_ident()?.to_string())),
         SynExpr::Lit(expr_lit) => match &expr_lit.lit {
-            Lit::Float(lit) => Ok(Expr::ConstF32(lit.base10_digits().to_string())),
-            Lit::Int(lit) => Ok(Expr::ConstF32(lit.base10_digits().to_string())),
+            Lit::Float(lit) => Ok(Expr::Const {
+                value: lit.base10_digits().to_string(),
+                elem: parse_float_literal_element(lit)?,
+            }),
+            Lit::Int(lit) => Ok(Expr::Const {
+                value: lit.base10_digits().to_string(),
+                elem: parse_int_literal_element(lit)?,
+            }),
             _ => Err(syn::Error::new(expr_lit.span(), "expected numeric literal")),
         },
         SynExpr::Paren(paren) => parse_expr(&paren.expr),
@@ -520,6 +559,28 @@ fn expect_target_type(
     })
 }
 
+fn parse_float_literal_element(lit: &syn::LitFloat) -> syn::Result<ElementType> {
+    match lit.suffix() {
+        "" | "f32" => Ok(ElementType::F32),
+        "f64" => Ok(ElementType::F64),
+        suffix => Err(syn::Error::new(
+            lit.span(),
+            format!("unsupported float literal suffix `{suffix}`; expected f32 or f64"),
+        )),
+    }
+}
+
+fn parse_int_literal_element(lit: &syn::LitInt) -> syn::Result<ElementType> {
+    match lit.suffix() {
+        "" | "i32" => Ok(ElementType::I32),
+        "i64" => Ok(ElementType::I64),
+        suffix => Err(syn::Error::new(
+            lit.span(),
+            format!("unsupported integer literal suffix `{suffix}`; expected i32 or i64"),
+        )),
+    }
+}
+
 fn parse_binary_op(op: &BinOp) -> syn::Result<BinaryOp> {
     match op {
         BinOp::Add(_) => Ok(BinaryOp::Add),
@@ -534,6 +595,7 @@ pub fn type_check(
     graph: Graph,
     graph_signatures: &[(String, GraphSignature)],
 ) -> syn::Result<TypedGraph> {
+    reject_mixed_graph_elements(&graph)?;
     let mut env = graph
         .inputs
         .iter()
@@ -568,6 +630,29 @@ pub fn type_check(
     })
 }
 
+fn reject_mixed_graph_elements(graph: &Graph) -> syn::Result<()> {
+    let expected = graph
+        .inputs
+        .first()
+        .map(|input| input.ty.elem)
+        .unwrap_or(graph.output.elem);
+    for input in &graph.inputs {
+        if input.ty.elem != expected {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "graph inputs and output must use one homogeneous tensor element type",
+            ));
+        }
+    }
+    if graph.output.elem != expected {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "graph inputs and output must use one homogeneous tensor element type",
+        ));
+    }
+    Ok(())
+}
+
 fn type_expr(
     expr: &Expr,
     env: &[(String, TensorType)],
@@ -580,8 +665,8 @@ fn type_expr(
             .rev()
             .find_map(|(candidate, ty)| (candidate == name).then(|| ty.clone()))
             .ok_or_else(|| syn::Error::new(Span::call_site(), format!("unknown value `{name}`")))?,
-        Expr::ConstF32(_) => TensorType {
-            elem: ElementType::F32,
+        Expr::Const { elem, .. } => TensorType {
+            elem: *elem,
             shape: vec![],
         },
         Expr::Unary { value, .. } => type_expr(value, env, graph_signatures, current_graph)?.ty,
@@ -603,14 +688,14 @@ fn type_expr(
 fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
     if lhs == rhs {
         Ok(lhs.clone())
-    } else if lhs.rank() == 0 {
+    } else if lhs.rank() == 0 && lhs.elem == rhs.elem {
         Ok(rhs.clone())
-    } else if rhs.rank() == 0 {
+    } else if rhs.rank() == 0 && rhs.elem == lhs.elem {
         Ok(lhs.clone())
     } else {
         Err(syn::Error::new(
             Span::call_site(),
-            format!("elementwise operands must have the same shape, got {lhs:?} and {rhs:?}"),
+            format!("elementwise operands must have the same shape and element type, got {lhs:?} and {rhs:?}"),
         ))
     }
 }
@@ -626,6 +711,7 @@ fn call_result_type(
         CallOp::Argmax => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_float(op, input.elem)?;
             if input.rank() != 1 {
                 return Err(syn::Error::new(
                     Span::call_site(),
@@ -645,7 +731,9 @@ fn call_result_type(
         | CallOp::Sqrt
         | CallOp::Tanh => {
             expect_arity(op, args, 1)?;
-            Ok(type_expr(&args[0], env, graph_signatures, current_graph)?.ty)
+            let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_float(op, ty.elem)?;
+            Ok(ty)
         }
         CallOp::Transpose => {
             expect_arity(op, args, 1)?;
@@ -717,6 +805,7 @@ fn call_result_type(
         CallOp::Mean => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_float(op, input.elem)?;
             if input.rank() == 0 {
                 return Err(syn::Error::new(
                     Span::call_site(),
@@ -875,6 +964,17 @@ fn expect_arity(op: &CallOp, args: &[Expr], expected: usize) -> syn::Result<()> 
         Err(syn::Error::new(
             Span::call_site(),
             format!("{op:?} expects {expected} arguments, got {}", args.len()),
+        ))
+    }
+}
+
+fn expect_float(op: &CallOp, elem: ElementType) -> syn::Result<()> {
+    if elem.is_float() {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op:?} supports floating-point tensors only"),
         ))
     }
 }

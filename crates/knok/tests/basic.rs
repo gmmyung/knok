@@ -6,6 +6,26 @@ fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
 }
 
+#[knok::graph(backend = "llvm-cpu")]
+fn add4_f64(x: Tensor1<f64, 4>, y: Tensor1<f64, 4>) -> Tensor1<f64, 4> {
+    x + y
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn arithmetic4_i32(x: Tensor1<i32, 4>, y: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    ((x - y) * 2i32) / 4i32
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn add4_i64(x: Tensor1<i64, 4>, y: Tensor1<i64, 4>) -> Tensor1<i64, 4> {
+    x + y
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 1> {
+    sum(x)
+}
+
 #[knok::graph(backends = [backend("llvm-cpu", driver = "local-task")])]
 fn add4_bundle(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
@@ -221,7 +241,7 @@ fn engine_reports_missing_artifact_variant_for_driver() {
     let x = [1.0, 2.0, 3.0, 4.0];
     let y = [10.0, 20.0, 30.0, 40.0];
     let error = engine
-        .invoke_f32(artifact, &[(&[4], &x), (&[4], &y)])
+        .invoke::<f32>(artifact, &[(&[4], &x), (&[4], &y)])
         .unwrap_err();
 
     assert!(matches!(
@@ -231,6 +251,33 @@ fn engine_reports_missing_artifact_variant_for_driver() {
             ..
         }
     ));
+}
+
+#[test]
+fn non_f32_numeric_graphs_run() {
+    let f64_output = add4_f64(
+        Tensor1::from_array([1.0f64, 2.0, 3.0, 4.0]),
+        Tensor1::from_array([10.0f64, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    assert_eq!(f64_output.into_vec(), vec![11.0f64, 22.0, 33.0, 44.0]);
+
+    let i32_output = arithmetic4_i32(
+        Tensor1::from_array([9i32, 10, 11, 12]),
+        Tensor1::from_array([1i32, 2, 3, 4]),
+    )
+    .unwrap();
+    assert_eq!(i32_output.into_vec(), vec![4i32, 4, 4, 4]);
+
+    let i64_output = add4_i64(
+        Tensor1::from_array([1i64, 2, 3, 4]),
+        Tensor1::from_array([10i64, 20, 30, 40]),
+    )
+    .unwrap();
+    assert_eq!(i64_output.into_vec(), vec![11i64, 22, 33, 44]);
+
+    let sum_output = sum4_i32(Tensor1::from_array([1i32, 2, 3, 4])).unwrap();
+    assert_eq!(sum_output.into_vec(), vec![10i32]);
 }
 
 #[test]

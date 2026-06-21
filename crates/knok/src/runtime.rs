@@ -4,6 +4,20 @@ use alloc::string::String;
 
 use crate::Backend;
 
+/// Element types that can be passed through raw runtime buffer views.
+#[cfg(feature = "host-runtime")]
+pub trait RuntimeElement: eerie::runtime::hal::BufferElement {}
+
+#[cfg(feature = "host-runtime")]
+impl<T: eerie::runtime::hal::BufferElement> RuntimeElement for T {}
+
+/// Element types that can be named by generated runtime wrappers in no-std builds.
+#[cfg(not(feature = "host-runtime"))]
+pub trait RuntimeElement: Copy {}
+
+#[cfg(not(feature = "host-runtime"))]
+impl<T: Copy> RuntimeElement for T {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeConfig {
     driver: DriverSelection,
@@ -66,7 +80,7 @@ mod hosted {
     use eerie::runtime::{hal, vm};
     use vm::ToRef;
 
-    use super::{driver_for_backend, RuntimeConfig};
+    use super::{driver_for_backend, RuntimeConfig, RuntimeElement};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
     pub struct Engine {
@@ -130,18 +144,18 @@ mod hosted {
             &self.driver_name
         }
 
-        pub fn invoke_f32(
+        pub fn invoke<T: RuntimeElement>(
             &self,
             artifact: GraphArtifact,
-            inputs: &[(&[usize], &[f32])],
-        ) -> crate::Result<Vec<f32>> {
+            inputs: &[(&[usize], &[T])],
+        ) -> crate::Result<Vec<T>> {
             let variant = artifact
                 .variant_for_driver(&self.driver_name)
                 .ok_or_else(|| crate::Error::MissingArtifactVariant {
                     function_name: artifact.function_name,
                     driver: self.driver_name.clone(),
                 })?;
-            self.invoke_raw_f32(
+            self.invoke_raw(
                 variant.vmfb,
                 artifact.function_name,
                 variant.backend,
@@ -150,14 +164,14 @@ mod hosted {
             )
         }
 
-        pub(crate) fn invoke_raw_f32(
+        pub(crate) fn invoke_raw<T: RuntimeElement>(
             &self,
             vmfb: &[u8],
             function_name: &'static str,
             backend: &'static str,
             driver: &'static str,
-            inputs: &[(&[usize], &[f32])],
-        ) -> crate::Result<Vec<f32>> {
+            inputs: &[(&[usize], &[T])],
+        ) -> crate::Result<Vec<T>> {
             if self.driver_name != driver {
                 return Err(crate::Error::RuntimeDriverMismatch {
                     backend,
@@ -201,7 +215,7 @@ mod hosted {
             let input_buffers: Vec<_> = inputs
                 .iter()
                 .map(|(shape, data)| {
-                    hal::BufferView::<f32>::from_host(
+                    hal::BufferView::<T>::from_host(
                         &self.device,
                         shape,
                         hal::Encoding::DenseRowMajor,
@@ -209,15 +223,15 @@ mod hosted {
                     )
                 })
                 .collect::<Result<_, _>>()?;
-            let output = self.invoke_buffer_views_f32(&function, &input_buffers)?;
+            let output = self.invoke_buffer_views(&function, &input_buffers)?;
             Ok(output.read_to_vec(&self.device)?)
         }
 
-        fn invoke_buffer_views_f32(
+        fn invoke_buffer_views<T: RuntimeElement>(
             &self,
             function: &vm::Function,
-            inputs: &[hal::BufferView<f32>],
-        ) -> crate::Result<hal::BufferView<f32>> {
+            inputs: &[hal::BufferView<T>],
+        ) -> crate::Result<hal::BufferView<T>> {
             let mut input_list = vm::List::<vm::Undefined>::new(inputs.len(), &self.instance)?;
             for input in inputs {
                 input_list.push_ref(&input.to_ref(&self.instance)?)?;
@@ -225,22 +239,22 @@ mod hosted {
             let mut output_list = vm::List::<vm::Undefined>::new(1, &self.instance)?;
             function.invoke(&input_list, &mut output_list)?;
             output_list
-                .get_ref::<hal::BufferView<f32>>(0)
+                .get_ref::<hal::BufferView<T>>(0)
                 .map_err(crate::Error::from)?
                 .to_buffer_view()
                 .map_err(crate::Error::from)
         }
     }
 
-    pub fn invoke_f32(
+    pub fn invoke<T: RuntimeElement>(
         vmfb: &[u8],
         function_name: &'static str,
         backend: &'static str,
-        inputs: &[(&[usize], &[f32])],
-    ) -> crate::Result<Vec<f32>> {
+        inputs: &[(&[usize], &[T])],
+    ) -> crate::Result<Vec<T>> {
         let driver = driver_for_backend(backend)?;
         let engine = Engine::new(RuntimeConfig::driver(driver))?;
-        engine.invoke_raw_f32(vmfb, function_name, backend, driver, inputs)
+        engine.invoke_raw(vmfb, function_name, backend, driver, inputs)
     }
 }
 
@@ -248,7 +262,7 @@ mod hosted {
 mod hosted {
     use alloc::vec::Vec;
 
-    use super::RuntimeConfig;
+    use super::{RuntimeConfig, RuntimeElement};
     use crate::GraphArtifact;
 
     pub struct Engine;
@@ -278,34 +292,34 @@ mod hosted {
             ""
         }
 
-        pub fn invoke_f32(
+        pub fn invoke<T: RuntimeElement>(
             &self,
             _artifact: GraphArtifact,
-            _inputs: &[(&[usize], &[f32])],
-        ) -> crate::Result<Vec<f32>> {
+            _inputs: &[(&[usize], &[T])],
+        ) -> crate::Result<Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        pub(crate) fn invoke_raw_f32(
+        pub(crate) fn invoke_raw<T: RuntimeElement>(
             &self,
             _vmfb: &[u8],
             _function_name: &'static str,
             _backend: &'static str,
             _driver: &'static str,
-            _inputs: &[(&[usize], &[f32])],
-        ) -> crate::Result<Vec<f32>> {
+            _inputs: &[(&[usize], &[T])],
+        ) -> crate::Result<Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
     }
 
-    pub fn invoke_f32(
+    pub fn invoke<T: RuntimeElement>(
         _vmfb: &[u8],
         _function_name: &'static str,
         _backend: &'static str,
-        _inputs: &[(&[usize], &[f32])],
-    ) -> crate::Result<Vec<f32>> {
+        _inputs: &[(&[usize], &[T])],
+    ) -> crate::Result<Vec<T>> {
         Err(crate::Error::HostedRuntimeDisabled)
     }
 }
 
-pub use hosted::{invoke_f32, Engine};
+pub use hosted::{invoke, Engine};

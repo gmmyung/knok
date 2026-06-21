@@ -63,11 +63,13 @@ knok::mlir_model! {
     function: "imported.add4",
 }
 
-let output = imported_add4::invoke_f32(&[(&[4], &x), (&[4], &y)])?;
+let output = imported_add4::invoke_raw::<f32>(&[(&[4], &x), (&[4], &y)])?;
 ```
 
 Typed MLIR imports also expose `invoke_run(&engine, ...)` and
-`invoke_f32_run(&engine, ...)` for reusable execution.
+`invoke_run_raw::<T>(&engine, ...)` for reusable execution. Prefer typed
+imports when the shape is known; raw invocation is for precompiled models whose
+shape or element type is handled outside the macro signature.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
@@ -100,6 +102,7 @@ cargo run -p knok --example mlp
 cargo run -p knok --example classifier
 cargo run -p knok --example imported_mlir
 cargo run -p knok --example multi_backend
+cargo run -p knok --example dtypes
 ```
 
 They cover the recommended hosted workflow:
@@ -123,7 +126,11 @@ They cover the recommended hosted workflow:
 
 ## MVP limits
 
-- `f32` tensors only.
+- Graph tensor element types: `f32`, `f64`, `i32`, and `i64`.
+- Graph inputs and outputs currently use one homogeneous element type per graph;
+  mixed dtype promotion is not implemented.
+- `f16`, `bf16`, quantized integer types, bool tensors, complex numbers, and
+  string/object-like values are not implemented yet.
 - Static rank-1 through rank-4 shapes only.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
@@ -133,13 +140,17 @@ They cover the recommended hosted workflow:
   across ranks 1-4, scalar-like `broadcast`, full-tensor `sum`, full-tensor
   `mean`, full-tensor `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`,
   and `sigmoid`.
+- Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `argmax`,
+  `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) currently require `f32` or `f64`.
+  Integer tensors support arithmetic, reshape/broadcast, sum, matmul, and conv
+  lowering where IREE accepts the resulting MLIR.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
   macro expansion process.
 - `softmax` normalizes over the whole tensor using max-subtracted exponentials.
-  `argmax` currently returns the rank-1 index as `Tensor1<f32, 1>` because
-  public tensors are still `f32` only.
+  `argmax` currently returns the rank-1 index in the same floating-point element
+  type as its input.
 
 ## Development
 
@@ -188,12 +199,13 @@ The runtime benchmark includes both reusable `Engine` calls and the convenience
 wrapper path that constructs runtime state per invocation. Larger benchmark
 shapes currently include:
 
-- `matmul_64x64`: `Tensor2<f32, 64, 64> @ Tensor2<f32, 64, 64>`
-- `batched_matmul_32x32x32`: `Tensor3<f32, 32, 32, 32>`
+- `matmul_128x128`: `Tensor2<f32, 128, 128> @ Tensor2<f32, 128, 128>`
+- `batched_matmul_16x128x128`: `Tensor3<f32, 16, 128, 128>` where each batch
+  computes `128x128 @ 128x128`
 - `conv2d_nhwc_16x32x32x3_hwcf_3x3x3x16`
 - `mlp_128x128x64`: `128x128 @ 128x64 + 128x64`, then `relu`
 - `softmax_64x1000`: `Tensor2<f32, 64, 1000>`
 
 Comparison groups include `ndarray` equivalents for matmul, batched matmul,
 MLP, softmax, and a direct NHWC/HWCF convolution loop over `ndarray::Array4`;
-`nalgebra` is included for dense `64x64` matrix multiplication.
+`nalgebra` is included for dense `128x128` matrix multiplication.

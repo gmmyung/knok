@@ -358,6 +358,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     let artifact_name = format_ident!("{}_artifact", name);
     let run_name = format_ident!("{}_run", name);
     let output_dims = graph.output.shape.iter().copied();
+    let output_elem_ty = rust_element_type(graph.output.elem);
     let artifact_input_shapes = graph.inputs.iter().map(|input| {
         let dims = input.ty.shape.iter().copied();
         quote!(&[#(#dims),*])
@@ -402,7 +403,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
 
         #visibility fn #run_name(engine: &::knok::Engine, #(#inputs),*) -> ::knok::Result<#output_ty> {
             let artifact = #artifact_name();
-            let output = engine.invoke_f32(
+            let output = engine.invoke::<#output_elem_ty>(
                 artifact,
                 &[#((#input_shapes, #arg_names.as_slice())),*],
             )?;
@@ -466,12 +467,18 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
         .as_ref()
         .map(|ty| quote!(<#ty>::SHAPE))
         .unwrap_or_else(|| quote!(&[]));
+    let output_elem_ty = model
+        .output
+        .as_ref()
+        .map(|ty| parse_tensor_type(ty).map(|ty| rust_element_type(ty.elem)))
+        .transpose()?;
     let typed_scope_import = model.output.as_ref().map(|_| {
         quote!(
             use super::*;
         )
     });
     let typed_invoke = if let Some(output_ty) = model.output {
+        let output_elem_ty = output_elem_ty.expect("output element type was parsed");
         let input_names = (0..input_types.len())
             .map(|index| format_ident!("input{index}"))
             .collect::<Vec<_>>();
@@ -480,7 +487,7 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                 engine: &::knok::Engine,
                 #(#input_names: #input_types),*
             ) -> ::knok::Result<#output_ty> {
-                let output = invoke_f32_run(engine, &[
+                let output = invoke_run_raw::<#output_elem_ty>(engine, &[
                     #((<#input_types>::SHAPE, #input_names.as_slice())),*
                 ])?;
                 <#output_ty>::from_vec(output)
@@ -536,19 +543,19 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                 }
             }
 
-            pub fn invoke_f32_run(
+            pub fn invoke_run_raw<T: ::knok::RuntimeElement>(
                 engine: &::knok::Engine,
-                inputs: &[(&[usize], &[f32])],
-            ) -> ::knok::Result<::knok::__private::OutputF32> {
-                engine.invoke_f32(artifact(), inputs)
+                inputs: &[(&[usize], &[T])],
+            ) -> ::knok::Result<::knok::RuntimeOutput<T>> {
+                engine.invoke(artifact(), inputs)
             }
 
-            pub fn invoke_f32(
-                inputs: &[(&[usize], &[f32])],
-            ) -> ::knok::Result<::knok::__private::OutputF32> {
+            pub fn invoke_raw<T: ::knok::RuntimeElement>(
+                inputs: &[(&[usize], &[T])],
+            ) -> ::knok::Result<::knok::RuntimeOutput<T>> {
                 let artifact = artifact();
                 let engine = ::knok::Engine::for_artifact(artifact)?;
-                invoke_f32_run(&engine, inputs)
+                invoke_run_raw(&engine, inputs)
             }
 
             #typed_invoke
@@ -588,6 +595,15 @@ fn validate_mlir_model_signature(
         ));
     }
     Ok(())
+}
+
+fn rust_element_type(elem: ElementType) -> TokenStream {
+    match elem {
+        ElementType::F32 => quote!(f32),
+        ElementType::F64 => quote!(f64),
+        ElementType::I32 => quote!(i32),
+        ElementType::I64 => quote!(i64),
+    }
 }
 
 struct MlirSignature {
@@ -648,25 +664,30 @@ fn split_top_level(input: &str, separator: char) -> Vec<&str> {
 
 fn parse_mlir_tensor_type(ty: &str) -> Option<TensorType> {
     let body = ty.strip_prefix("tensor<")?.strip_suffix('>')?;
-    if body == "f32" {
+    if let Some(elem) = parse_mlir_element_type(body) {
         return Some(TensorType {
-            elem: ElementType::F32,
+            elem,
             shape: Vec::new(),
         });
     }
     let (dims, elem) = body.rsplit_once('x')?;
-    if elem != "f32" {
-        return None;
-    }
+    let elem = parse_mlir_element_type(elem)?;
     let shape = dims
         .split('x')
         .map(str::parse)
         .collect::<Result<Vec<usize>, _>>()
         .ok()?;
-    Some(TensorType {
-        elem: ElementType::F32,
-        shape,
-    })
+    Some(TensorType { elem, shape })
+}
+
+fn parse_mlir_element_type(elem: &str) -> Option<ElementType> {
+    match elem {
+        "f32" => Some(ElementType::F32),
+        "f64" => Some(ElementType::F64),
+        "i32" => Some(ElementType::I32),
+        "i64" => Some(ElementType::I64),
+        _ => None,
+    }
 }
 
 fn element_count(ty: &TensorType) -> usize {
@@ -935,7 +956,10 @@ fn iree_compile_command() -> String {
 fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
     let capability = IreeBackend::parse(backend)
         .unwrap_or_else(|| panic!("unsupported IREE backend `{backend}`"));
-    let mut flags = vec![format!("--iree-hal-target-backends={backend}")];
+    let mut flags = vec![
+        format!("--iree-hal-target-backends={backend}"),
+        "--iree-input-demote-f64-to-f32=false".to_string(),
+    ];
     if capability == IreeBackend::MetalSpirv {
         flags.push("--iree-metal-compile-to-metallib=false".to_string());
     }
@@ -1069,7 +1093,7 @@ impl<'a> Lowerer<'a> {
                 .get(name)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("unknown value `{name}` during lowering")),
-            Expr::ConstF32(value) => self.constant_f32(value),
+            Expr::Const { value, elem } => self.constant(value, *elem),
             Expr::Unary { op, value } => match op {
                 UnaryOp::Neg => {
                     let value = self.lower_expr(value)?;
@@ -1204,14 +1228,16 @@ impl<'a> Lowerer<'a> {
         result
     }
 
-    fn constant_f32(&mut self, value: &str) -> anyhow::Result<Value> {
+    fn constant(&mut self, value: &str, elem: ElementType) -> anyhow::Result<Value> {
         let name = self.fresh();
-        self.lines
-            .push(format!("    {name} = arith.constant {value} : f32"));
+        self.lines.push(format!(
+            "    {name} = arith.constant {value} : {}",
+            elem.mlir_type()
+        ));
         Ok(Value {
             name,
             ty: TensorType {
-                elem: ElementType::F32,
+                elem,
                 shape: vec![],
             },
         })
@@ -1219,11 +1245,12 @@ impl<'a> Lowerer<'a> {
 
     fn zero_like(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
         if ty.rank() == 0 {
-            return self.constant_f32("0.0");
+            return self.constant(ty.elem.zero_literal(), ty.elem);
         }
         let name = self.fresh();
         self.lines.push(format!(
-            "    {name} = arith.constant dense<0.000000e+00> : {}",
+            "    {name} = arith.constant dense<{}> : {}",
+            ty.elem.zero_literal(),
             ty.mlir_type()
         ));
         Ok(Value {
@@ -1233,11 +1260,20 @@ impl<'a> Lowerer<'a> {
     }
 
     fn binary_value(&mut self, op: BinaryOp, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
-        let op_name = match op {
-            BinaryOp::Add => "arith.addf",
-            BinaryOp::Sub => "arith.subf",
-            BinaryOp::Mul => "arith.mulf",
-            BinaryOp::Div => "arith.divf",
+        let elem = if lhs.ty.rank() == 0 {
+            rhs.ty.elem
+        } else {
+            lhs.ty.elem
+        };
+        let op_name = match (elem.is_float(), op) {
+            (true, BinaryOp::Add) => "arith.addf",
+            (true, BinaryOp::Sub) => "arith.subf",
+            (true, BinaryOp::Mul) => "arith.mulf",
+            (true, BinaryOp::Div) => "arith.divf",
+            (false, BinaryOp::Add) => "arith.addi",
+            (false, BinaryOp::Sub) => "arith.subi",
+            (false, BinaryOp::Mul) => "arith.muli",
+            (false, BinaryOp::Div) => "arith.divsi",
         };
         self.emit_binary(op_name, lhs, rhs)
     }
@@ -1306,7 +1342,8 @@ impl<'a> Lowerer<'a> {
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let zero = self.fresh();
         self.lines.push(format!(
-            "    {zero} = arith.constant 0.0 : {}",
+            "    {zero} = arith.constant {} : {}",
+            ty.elem.zero_literal(),
             ty.elem.mlir_type()
         ));
         let init = self.fresh();
@@ -1339,7 +1376,8 @@ impl<'a> Lowerer<'a> {
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let zero = self.fresh();
         self.lines.push(format!(
-            "    {zero} = arith.constant 0.0 : {}",
+            "    {zero} = arith.constant {} : {}",
+            ty.elem.zero_literal(),
             ty.elem.mlir_type()
         ));
         let init = self.fresh();
@@ -1377,7 +1415,8 @@ impl<'a> Lowerer<'a> {
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let zero = self.fresh();
         self.lines.push(format!(
-            "    {zero} = arith.constant 0.0 : {}",
+            "    {zero} = arith.constant {} : {}",
+            ty.elem.zero_literal(),
             ty.elem.mlir_type()
         ));
         let init = self.fresh();
@@ -1500,8 +1539,9 @@ impl<'a> Lowerer<'a> {
 
     fn mean(&mut self, input: Value) -> anyhow::Result<Value> {
         let count = element_count(&input.ty);
+        let elem = input.ty.elem;
         let sum = self.sum(input)?;
-        let scale = self.constant_f32(&format!("{count}.0"))?;
+        let scale = self.constant(&format!("{count}.0"), elem)?;
         self.emit_binary("arith.divf", sum, scale)
     }
 
@@ -1516,7 +1556,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn sigmoid(&mut self, input: Value) -> anyhow::Result<Value> {
-        let one = self.constant_f32("1.0")?;
+        let one = self.constant(input.ty.elem.one_literal(), input.ty.elem)?;
         let zero = self.zero_like(&input.ty)?;
         let neg = self.emit_binary("arith.subf", zero, input)?;
         let exp = self.emit_unary("math.exp", neg)?;
@@ -1586,23 +1626,34 @@ impl<'a> Lowerer<'a> {
         self.lines.push(format!(
             "    {index_i64} = arith.index_cast {best_index} : index to i64"
         ));
-        let index_f32 = self.fresh();
+        let index_value = self.fresh();
+        let conversion_op = match input.ty.elem {
+            ElementType::F32 | ElementType::F64 => "arith.uitofp",
+            ElementType::I32 | ElementType::I64 => "arith.index_cast",
+        };
         self.lines.push(format!(
-            "    {index_f32} = arith.uitofp {index_i64} : i64 to f32"
+            "    {index_value} = {conversion_op} {index_i64} : i64 to {}",
+            input.ty.elem.mlir_type()
         ));
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let name = self.fresh();
         self.lines.push(format!(
-            "    {name} = tensor.insert {index_f32} into {empty}[{zero}] : {}",
+            "    {name} = tensor.insert {index_value} into {empty}[{zero}] : {}",
             ty.mlir_type()
         ));
         Ok(Value { name, ty })
     }
 
     fn sum(&mut self, input: Value) -> anyhow::Result<Value> {
-        self.reduce(input, "0.0", "arith.addf")
+        let reducer_op = if input.ty.elem.is_float() {
+            "arith.addf"
+        } else {
+            "arith.addi"
+        };
+        let initial_value = input.ty.elem.zero_literal();
+        self.reduce(input, initial_value, reducer_op)
     }
 
     fn max(&mut self, input: Value) -> anyhow::Result<Value> {

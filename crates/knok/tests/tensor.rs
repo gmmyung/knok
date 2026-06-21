@@ -40,6 +40,12 @@ fn tensor_convenience_constructors_work() {
     let ones = Tensor3::<f32, 1, 2, 2>::ones();
     assert_eq!(ones.as_slice(), &[1.0, 1.0, 1.0, 1.0]);
 
+    let f64_ones = Tensor1::<f64, 2>::ones();
+    assert_eq!(f64_ones.as_slice(), &[1.0, 1.0]);
+
+    let i64_zeros = Tensor2::<i64, 1, 2>::zeros();
+    assert_eq!(i64_zeros.as_slice(), &[0, 0]);
+
     let filled = Tensor4::<i32, 1, 1, 2, 2>::filled(7);
     assert_eq!(filled.into_vec(), vec![7, 7, 7, 7]);
 }
