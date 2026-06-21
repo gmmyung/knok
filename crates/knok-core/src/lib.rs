@@ -66,6 +66,7 @@ pub enum CallOp {
     Abs,
     Argmax,
     Clip,
+    Concat(usize),
     Conv2d,
     Exp,
     Log,
@@ -78,11 +79,22 @@ pub enum CallOp {
     Reshape(TensorType),
     Broadcast(TensorType),
     Sigmoid,
+    Slice {
+        target: TensorType,
+        starts: Vec<usize>,
+    },
     Softmax(Option<usize>),
     Sqrt,
+    Squeeze(TensorType),
+    Stack(usize),
     Sum(Option<usize>),
     Tanh,
+    Take {
+        axis: usize,
+        index: usize,
+    },
     Transpose,
+    Unsqueeze(TensorType),
     Graph(String),
 }
 
@@ -484,6 +496,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "clip")?;
                     CallOp::Clip
                 }
+                "concat" => {
+                    reject_target_type(&generics, &path.path, "concat")?;
+                    CallOp::Concat(expect_one_const(&generics, &path.path, "concat")?)
+                }
                 "conv2d" => {
                     reject_any_generics(&generics, &path.path, "conv2d")?;
                     CallOp::Conv2d
@@ -502,7 +518,7 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 }
                 "mean" => {
                     reject_target_type(&generics, &path.path, "mean")?;
-                    CallOp::Mean(generics.axis)
+                    CallOp::Mean(optional_axis(&generics, &path.path, "mean")?)
                 }
                 "minimum" => {
                     reject_any_generics(&generics, &path.path, "minimum")?;
@@ -521,17 +537,17 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Relu
                 }
                 "reshape" => {
-                    reject_axis(&generics, &path.path, "reshape")?;
+                    reject_consts(&generics, &path.path, "reshape")?;
                     CallOp::Reshape(expect_target_type(
-                        generics.target_ty,
+                        generics.target_ty.clone(),
                         &path.path,
                         "reshape",
                     )?)
                 }
                 "broadcast" => {
-                    reject_axis(&generics, &path.path, "broadcast")?;
+                    reject_consts(&generics, &path.path, "broadcast")?;
                     CallOp::Broadcast(expect_target_type(
-                        generics.target_ty,
+                        generics.target_ty.clone(),
                         &path.path,
                         "broadcast",
                     )?)
@@ -542,23 +558,59 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 }
                 "softmax" => {
                     reject_target_type(&generics, &path.path, "softmax")?;
-                    CallOp::Softmax(generics.axis)
+                    CallOp::Softmax(optional_axis(&generics, &path.path, "softmax")?)
+                }
+                "slice" => {
+                    let target =
+                        expect_target_type(generics.target_ty.clone(), &path.path, "slice")?;
+                    CallOp::Slice {
+                        target,
+                        starts: generics.consts.clone(),
+                    }
                 }
                 "sqrt" => {
                     reject_any_generics(&generics, &path.path, "sqrt")?;
                     CallOp::Sqrt
                 }
+                "squeeze" => {
+                    reject_consts(&generics, &path.path, "squeeze")?;
+                    CallOp::Squeeze(expect_target_type(
+                        generics.target_ty.clone(),
+                        &path.path,
+                        "squeeze",
+                    )?)
+                }
+                "stack" => {
+                    reject_target_type(&generics, &path.path, "stack")?;
+                    CallOp::Stack(expect_one_const(&generics, &path.path, "stack")?)
+                }
                 "sum" => {
                     reject_target_type(&generics, &path.path, "sum")?;
-                    CallOp::Sum(generics.axis)
+                    CallOp::Sum(optional_axis(&generics, &path.path, "sum")?)
                 }
                 "tanh" => {
                     reject_any_generics(&generics, &path.path, "tanh")?;
                     CallOp::Tanh
                 }
+                "take" => {
+                    reject_target_type(&generics, &path.path, "take")?;
+                    let values = expect_const_count(&generics, &path.path, "take", 2)?;
+                    CallOp::Take {
+                        axis: values[0],
+                        index: values[1],
+                    }
+                }
                 "transpose" => {
                     reject_any_generics(&generics, &path.path, "transpose")?;
                     CallOp::Transpose
+                }
+                "unsqueeze" => {
+                    reject_consts(&generics, &path.path, "unsqueeze")?;
+                    CallOp::Unsqueeze(expect_target_type(
+                        generics.target_ty.clone(),
+                        &path.path,
+                        "unsqueeze",
+                    )?)
                 }
                 _ => {
                     reject_any_generics(&generics, &path.path, &op_name)?;
@@ -579,9 +631,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
     }
 }
 
+#[derive(Clone, Debug, Default)]
 struct CallGenerics {
     target_ty: Option<TensorType>,
-    axis: Option<usize>,
+    consts: Vec<usize>,
 }
 
 fn parse_call_path(path: &syn::Path) -> syn::Result<(String, CallGenerics)> {
@@ -594,38 +647,36 @@ fn parse_call_path(path: &syn::Path) -> syn::Result<(String, CallGenerics)> {
             "graph op names must be unqualified identifiers",
         ));
     }
-    let mut generics = CallGenerics {
-        target_ty: None,
-        axis: None,
-    };
+    let mut generics = CallGenerics::default();
     match &segment.arguments {
         syn::PathArguments::None => {}
         syn::PathArguments::AngleBracketed(args) => {
-            let mut args = args.args.iter();
-            let Some(arg) = args.next() else {
+            if args.args.is_empty() {
                 return Err(syn::Error::new(
                     segment.arguments.span(),
                     "missing generic argument",
                 ));
-            };
-            if args.next().is_some() {
-                return Err(syn::Error::new(
-                    segment.arguments.span(),
-                    "graph ops accept at most one generic argument",
-                ));
             }
-            match arg {
-                GenericArgument::Type(ty) => {
-                    generics.target_ty = Some(parse_tensor_type(ty)?);
-                }
-                GenericArgument::Const(expr) => {
-                    generics.axis = Some(parse_const_axis(expr)?);
-                }
-                _ => {
-                    return Err(syn::Error::new(
-                        arg.span(),
-                        "graph op generic argument must be a tensor type or axis const",
-                    ));
+            for arg in &args.args {
+                match arg {
+                    GenericArgument::Type(ty) => {
+                        if generics.target_ty.is_some() {
+                            return Err(syn::Error::new(
+                                arg.span(),
+                                "graph ops accept at most one target tensor type",
+                            ));
+                        }
+                        generics.target_ty = Some(parse_tensor_type(ty)?);
+                    }
+                    GenericArgument::Const(expr) => {
+                        generics.consts.push(parse_generic_const_usize(expr)?);
+                    }
+                    _ => {
+                        return Err(syn::Error::new(
+                            arg.span(),
+                            "graph op generic argument must be a tensor type or integer const",
+                        ));
+                    }
                 }
             }
         }
@@ -639,17 +690,17 @@ fn parse_call_path(path: &syn::Path) -> syn::Result<(String, CallGenerics)> {
     Ok((segment.ident.to_string(), generics))
 }
 
-fn parse_const_axis(expr: &SynExpr) -> syn::Result<usize> {
+fn parse_generic_const_usize(expr: &SynExpr) -> syn::Result<usize> {
     let SynExpr::Lit(expr_lit) = expr else {
         return Err(syn::Error::new(
             expr.span(),
-            "axis generic argument must be an integer const",
+            "generic const argument must be an integer",
         ));
     };
     let Lit::Int(lit) = &expr_lit.lit else {
         return Err(syn::Error::new(
             expr_lit.span(),
-            "axis generic argument must be an integer const",
+            "generic const argument must be an integer",
         ));
     };
     lit.base10_parse::<usize>()
@@ -679,11 +730,11 @@ fn reject_target_type(generics: &CallGenerics, path: &syn::Path, op_name: &str) 
     }
 }
 
-fn reject_axis(generics: &CallGenerics, path: &syn::Path, op_name: &str) -> syn::Result<()> {
-    if generics.axis.is_some() {
+fn reject_consts(generics: &CallGenerics, path: &syn::Path, op_name: &str) -> syn::Result<()> {
+    if !generics.consts.is_empty() {
         Err(syn::Error::new(
             path.span(),
-            format!("{op_name} does not accept an axis generic"),
+            format!("{op_name} does not accept const generic arguments"),
         ))
     } else {
         Ok(())
@@ -695,13 +746,56 @@ fn reject_any_generics(
     path: &syn::Path,
     op_name: &str,
 ) -> syn::Result<()> {
-    if generics.target_ty.is_some() || generics.axis.is_some() {
+    if generics.target_ty.is_some() || !generics.consts.is_empty() {
         Err(syn::Error::new(
             path.span(),
             format!("graph call `{op_name}` does not accept generic arguments"),
         ))
     } else {
         Ok(())
+    }
+}
+
+fn optional_axis(
+    generics: &CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+) -> syn::Result<Option<usize>> {
+    match generics.consts.as_slice() {
+        [] => Ok(None),
+        [axis] => Ok(Some(*axis)),
+        _ => Err(syn::Error::new(
+            path.span(),
+            format!("{op_name} accepts at most one axis const generic"),
+        )),
+    }
+}
+
+fn expect_one_const(
+    generics: &CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+) -> syn::Result<usize> {
+    let values = expect_const_count(generics, path, op_name, 1)?;
+    Ok(values[0])
+}
+
+fn expect_const_count<'a>(
+    generics: &'a CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+    expected: usize,
+) -> syn::Result<&'a [usize]> {
+    if generics.consts.len() == expected {
+        Ok(&generics.consts)
+    } else {
+        Err(syn::Error::new(
+            path.span(),
+            format!(
+                "{op_name} expects {expected} const generic arguments, got {}",
+                generics.consts.len()
+            ),
+        ))
     }
 }
 
@@ -913,6 +1007,12 @@ fn call_result_type(
             expect_float(op, rhs.elem)?;
             binary_result_type(&lhs, &rhs)
         }
+        CallOp::Concat(axis) => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            concat_result_type(&lhs, &rhs, *axis)
+        }
         CallOp::Softmax(axis) => {
             expect_arity(op, args, 1)?;
             let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
@@ -972,6 +1072,24 @@ fn call_result_type(
             }
             Ok(target.clone())
         }
+        CallOp::Slice { target, starts } => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            validate_slice(&input, target, starts)?;
+            Ok(target.clone())
+        }
+        CallOp::Squeeze(target) => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            validate_squeeze(&input, target)?;
+            Ok(target.clone())
+        }
+        CallOp::Stack(axis) => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            stack_result_type(&lhs, &rhs, *axis)
+        }
         CallOp::Sum(axis) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
@@ -994,6 +1112,11 @@ fn call_result_type(
                 ));
             }
             Ok(reduction_output_type(&input, *axis)?)
+        }
+        CallOp::Take { axis, index } => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            take_result_type(&input, *axis, *index)
         }
         CallOp::Matmul => {
             expect_arity(op, args, 2)?;
@@ -1086,6 +1209,12 @@ fn call_result_type(
                 ],
             })
         }
+        CallOp::Unsqueeze(target) => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            validate_unsqueeze(&input, target)?;
+            Ok(target.clone())
+        }
         CallOp::Graph(name) => {
             if name == current_graph {
                 return Err(syn::Error::new(
@@ -1162,6 +1291,180 @@ fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, Str
 fn dim_from_trailing(shape: &[usize], rank: usize, offset: usize) -> Option<usize> {
     let pad = rank - shape.len();
     (offset >= pad).then(|| shape[offset - pad])
+}
+
+fn validate_slice(input: &TensorType, target: &TensorType, starts: &[usize]) -> syn::Result<()> {
+    if input.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "slice input and output element types must match",
+        ));
+    }
+    if input.rank() != target.rank() || starts.len() != input.rank() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "slice expects one start const per dimension and equal input/output rank, got input rank {}, output rank {}, starts {:?}",
+                input.rank(),
+                target.rank(),
+                starts
+            ),
+        ));
+    }
+    for (axis, ((start, size), input_dim)) in starts
+        .iter()
+        .zip(&target.shape)
+        .zip(&input.shape)
+        .enumerate()
+    {
+        if *start + *size > *input_dim {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "slice dimension {axis} is out of bounds: start {start} + size {size} exceeds input dimension {input_dim}",
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn take_result_type(input: &TensorType, axis: usize, index: usize) -> syn::Result<TensorType> {
+    expect_axis(input, axis)?;
+    if index >= input.shape[axis] {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "take index {index} is out of bounds for axis {axis} with dimension {}",
+                input.shape[axis]
+            ),
+        ));
+    }
+    let mut shape = input.shape.clone();
+    shape.remove(axis);
+    if shape.is_empty() {
+        shape.push(1);
+    }
+    Ok(TensorType {
+        elem: input.elem,
+        shape,
+    })
+}
+
+fn validate_squeeze(input: &TensorType, target: &TensorType) -> syn::Result<()> {
+    if input.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "squeeze input and output element types must match",
+        ));
+    }
+    let squeezed = input
+        .shape
+        .iter()
+        .copied()
+        .filter(|dim| *dim != 1)
+        .collect::<Vec<_>>();
+    let squeezed = if squeezed.is_empty() {
+        vec![1]
+    } else {
+        squeezed
+    };
+    if squeezed == target.shape {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "squeeze target shape {:?} does not match input shape {:?} after removing singleton dimensions",
+                target.shape, input.shape
+            ),
+        ))
+    }
+}
+
+fn validate_unsqueeze(input: &TensorType, target: &TensorType) -> syn::Result<()> {
+    if input.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "unsqueeze input and output element types must match",
+        ));
+    }
+    let target_without_singletons = target
+        .shape
+        .iter()
+        .copied()
+        .filter(|dim| *dim != 1)
+        .collect::<Vec<_>>();
+    let input_without_rank1_scalar = if input.shape == [1] {
+        Vec::new()
+    } else {
+        input.shape.clone()
+    };
+    if target_without_singletons == input.shape
+        || target_without_singletons == input_without_rank1_scalar
+    {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "unsqueeze target shape {:?} must insert only singleton dimensions into input shape {:?}",
+                target.shape, input.shape
+            ),
+        ))
+    }
+}
+
+fn concat_result_type(lhs: &TensorType, rhs: &TensorType, axis: usize) -> syn::Result<TensorType> {
+    if lhs.elem != rhs.elem || lhs.rank() != rhs.rank() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "concat expects tensors with the same element type and rank",
+        ));
+    }
+    expect_axis(lhs, axis)?;
+    let mut shape = lhs.shape.clone();
+    for dim in 0..lhs.rank() {
+        if dim == axis {
+            shape[dim] = lhs.shape[dim] + rhs.shape[dim];
+        } else if lhs.shape[dim] != rhs.shape[dim] {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "concat dimension {dim} must match outside axis {axis}, got {} and {}",
+                    lhs.shape[dim], rhs.shape[dim]
+                ),
+            ));
+        }
+    }
+    Ok(TensorType {
+        elem: lhs.elem,
+        shape,
+    })
+}
+
+fn stack_result_type(lhs: &TensorType, rhs: &TensorType, axis: usize) -> syn::Result<TensorType> {
+    if lhs != rhs {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("stack expects matching tensor types, got {lhs:?} and {rhs:?}"),
+        ));
+    }
+    if axis > lhs.rank() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "stack axis {axis} is out of bounds for rank-{} tensor",
+                lhs.rank()
+            ),
+        ));
+    }
+    let mut shape = lhs.shape.clone();
+    shape.insert(axis, 2);
+    Ok(TensorType {
+        elem: lhs.elem,
+        shape,
+    })
 }
 
 fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result<TensorType> {
@@ -1322,6 +1625,45 @@ mod tests {
     }
 
     #[test]
+    fn infers_static_shape_and_indexing_ops() {
+        for item in [
+            parse_quote! {
+                fn slice_mid(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
+                    slice::<Tensor2<f32, 2, 2>, 0, 1>(x)
+                }
+            },
+            parse_quote! {
+                fn take_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+                    take::<1, 2>(x)
+                }
+            },
+            parse_quote! {
+                fn squeeze4(x: Tensor4<f32, 1, 2, 1, 3>) -> Tensor2<f32, 2, 3> {
+                    squeeze::<Tensor2<f32, 2, 3>>(x)
+                }
+            },
+            parse_quote! {
+                fn unsqueeze2(x: Tensor2<f32, 2, 3>) -> Tensor4<f32, 1, 2, 1, 3> {
+                    unsqueeze::<Tensor4<f32, 1, 2, 1, 3>>(x)
+                }
+            },
+            parse_quote! {
+                fn concat_axis0(x: Tensor2<f32, 1, 3>, y: Tensor2<f32, 2, 3>) -> Tensor2<f32, 3, 3> {
+                    concat::<0>(x, y)
+                }
+            },
+            parse_quote! {
+                fn stack_axis0(x: Tensor1<f32, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+                    stack::<0>(x, y)
+                }
+            },
+        ] {
+            let graph = parse(item).unwrap();
+            assert_eq!(graph.body.ty, graph.output);
+        }
+    }
+
+    #[test]
     fn parses_higher_rank_tensors_and_infers_inference_ops() {
         let reshape = parse(parse_quote! {
             fn reshape8(x: Tensor1<f32, 8>) -> Tensor3<f32, 2, 2, 2> {
@@ -1479,6 +1821,22 @@ mod tests {
         })
         .unwrap_err();
         assert!(broadcast.to_string().contains("incompatible"));
+
+        let slice = parse(parse_quote! {
+            fn bad_slice(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 3> {
+                slice::<Tensor2<f32, 2, 3>, 0, 2>(x)
+            }
+        })
+        .unwrap_err();
+        assert!(slice.to_string().contains("out of bounds"));
+
+        let take = parse(parse_quote! {
+            fn bad_take(x: Tensor2<f32, 2, 4>) -> Tensor1<f32, 2> {
+                take::<1, 4>(x)
+            }
+        })
+        .unwrap_err();
+        assert!(take.to_string().contains("out of bounds"));
     }
 
     #[test]

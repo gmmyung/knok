@@ -710,6 +710,68 @@ fn reassociation_for_rank(rank: usize) -> String {
     format!("[[{dims}]]")
 }
 
+fn collapse_reassociation_for_removed_axis(rank: usize, axis: usize) -> String {
+    if rank <= 1 {
+        return reassociation_for_rank(rank);
+    }
+    let mut groups = Vec::new();
+    let mut index = 0;
+    while index < rank {
+        if index == axis {
+            if groups.is_empty() {
+                groups.push(vec![index, index + 1]);
+                index += 2;
+            } else {
+                groups.last_mut().expect("group exists").push(index);
+                index += 1;
+            }
+        } else {
+            groups.push(vec![index]);
+            index += 1;
+        }
+    }
+    format_reassociation_groups(groups)
+}
+
+fn expand_reassociation_for_inserted_axis(input_rank: usize, axis: usize) -> String {
+    let mut groups = Vec::new();
+    for input_axis in 0..input_rank {
+        if input_axis == axis {
+            groups.push(vec![input_axis, input_axis + 1]);
+        } else if input_axis < axis {
+            groups.push(vec![input_axis]);
+        } else {
+            groups.push(vec![input_axis + 1]);
+        }
+    }
+    if axis == input_rank {
+        if let Some(last) = groups.last_mut() {
+            last.push(axis);
+        } else {
+            groups.push(vec![axis]);
+        }
+    }
+    format_reassociation_groups(groups)
+}
+
+fn format_reassociation_groups(groups: Vec<Vec<usize>>) -> String {
+    let groups = groups
+        .into_iter()
+        .map(|group| {
+            format!(
+                "[{}]",
+                group
+                    .into_iter()
+                    .map(|index| index.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{groups}]")
+}
+
 fn format_dim_list(rank: usize) -> String {
     (0..rank)
         .map(|index| format!("d{index}"))
@@ -1326,6 +1388,11 @@ impl<'a> Lowerer<'a> {
                     let clipped_high = self.minimum(value, max)?;
                     self.maximum(clipped_high, min)
                 }
+                CallOp::Concat(axis) => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.concat(lhs, rhs, *axis)
+                }
                 CallOp::Conv2d => {
                     let input = self.lower_expr(&args[0])?;
                     let kernel = self.lower_expr(&args[1])?;
@@ -1396,9 +1463,30 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.broadcast(input, ty)
                 }
+                CallOp::Slice { target, starts } => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.slice(input, target, starts)
+                }
+                CallOp::Squeeze(ty) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.reshape(input, ty)
+                }
+                CallOp::Stack(axis) => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.stack(lhs, rhs, *axis)
+                }
                 CallOp::Sum(axis) => {
                     let input = self.lower_expr(&args[0])?;
                     self.sum(input, *axis)
+                }
+                CallOp::Take { axis, index } => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.take(input, *axis, *index)
+                }
+                CallOp::Unsqueeze(ty) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.reshape(input, ty)
                 }
                 CallOp::Graph(name) => {
                     let args = args
@@ -1755,6 +1843,132 @@ impl<'a> Lowerer<'a> {
         let reassociation = reassociation_for_rank(input.ty.rank());
         self.lines.push(format!(
             "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn slice(&mut self, input: Value, ty: &TensorType, starts: &[usize]) -> anyhow::Result<Value> {
+        let offsets = format_usize_list(starts);
+        let sizes = format_usize_list(&ty.shape);
+        let strides = format_usize_list(&vec![1; ty.rank()]);
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.extract_slice {}{offsets} {sizes} {strides} : {} to {}",
+            input.name,
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn take(&mut self, input: Value, axis: usize, index: usize) -> anyhow::Result<Value> {
+        let mut starts = vec![0; input.ty.rank()];
+        starts[axis] = index;
+        let mut slice_shape = input.ty.shape.clone();
+        slice_shape[axis] = 1;
+        let slice_ty = TensorType {
+            elem: input.ty.elem,
+            shape: slice_shape,
+        };
+        let sliced = self.slice(input, &slice_ty, &starts)?;
+        let mut output_shape = sliced.ty.shape.clone();
+        output_shape.remove(axis);
+        if output_shape.is_empty() {
+            output_shape.push(1);
+        }
+        let output_ty = TensorType {
+            elem: sliced.ty.elem,
+            shape: output_shape,
+        };
+        if sliced.ty == output_ty {
+            return Ok(sliced);
+        }
+        let name = self.fresh();
+        let reassociation = collapse_reassociation_for_removed_axis(sliced.ty.rank(), axis);
+        self.lines.push(format!(
+            "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
+            sliced.name,
+            sliced.ty.mlir_type(),
+            output_ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: output_ty,
+        })
+    }
+
+    fn concat(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {
+        let mut shape = lhs.ty.shape.clone();
+        shape[axis] += rhs.ty.shape[axis];
+        let ty = TensorType {
+            elem: lhs.ty.elem,
+            shape,
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let lhs_offsets = vec![0; ty.rank()];
+        let first = self.insert_slice(lhs, empty, &ty, &lhs_offsets)?;
+        let mut rhs_offsets = vec![0; ty.rank()];
+        rhs_offsets[axis] = ty.shape[axis] - rhs.ty.shape[axis];
+        self.insert_slice(rhs, first.name, &ty, &rhs_offsets)
+    }
+
+    fn stack(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {
+        let mut unit_shape = lhs.ty.shape.clone();
+        unit_shape.insert(axis, 1);
+        let unit_ty = TensorType {
+            elem: lhs.ty.elem,
+            shape: unit_shape,
+        };
+        let lhs = self.expand_insert_axis(lhs, &unit_ty, axis)?;
+        let rhs = self.expand_insert_axis(rhs, &unit_ty, axis)?;
+        self.concat(lhs, rhs, axis)
+    }
+
+    fn insert_slice(
+        &mut self,
+        source: Value,
+        dest: String,
+        dest_ty: &TensorType,
+        offsets: &[usize],
+    ) -> anyhow::Result<Value> {
+        let offsets = format_usize_list(offsets);
+        let sizes = format_usize_list(&source.ty.shape);
+        let strides = format_usize_list(&vec![1; source.ty.rank()]);
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.insert_slice {} into {dest}{offsets} {sizes} {strides} : {} into {}",
+            source.name,
+            source.ty.mlir_type(),
+            dest_ty.mlir_type()
+        ));
+        Ok(Value {
+            name,
+            ty: dest_ty.clone(),
+        })
+    }
+
+    fn expand_insert_axis(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        axis: usize,
+    ) -> anyhow::Result<Value> {
+        let name = self.fresh();
+        let output_shape = format_shape_list(&ty.shape);
+        let reassociation = expand_reassociation_for_inserted_axis(input.ty.rank(), axis);
+        self.lines.push(format!(
+            "    {name} = tensor.expand_shape {} {reassociation} output_shape {output_shape} : {} into {}",
             input.name,
             input.ty.mlir_type(),
             ty.mlir_type()

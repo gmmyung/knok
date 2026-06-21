@@ -291,6 +291,7 @@ mod hosted {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
+        #[allow(dead_code)]
         pub(crate) fn invoke_raw<T: RuntimeElement>(
             &self,
             _vmfb: &[u8],

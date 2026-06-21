@@ -154,6 +154,46 @@ fn add_column2x3(x: Tensor2<f32, 2, 3>, column: Tensor2<f32, 2, 1>) -> Tensor2<f
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn slice2x4_to2x2(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
+    slice::<Tensor2<f32, 2, 2>, 0, 1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn take2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+    take::<0, 1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn take2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    take::<1, 2>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn squeeze1x2x1x3(x: Tensor4<f32, 1, 2, 1, 3>) -> Tensor2<f32, 2, 3> {
+    squeeze::<Tensor2<f32, 2, 3>>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn unsqueeze2x3(x: Tensor2<f32, 2, 3>) -> Tensor4<f32, 1, 2, 1, 3> {
+    unsqueeze::<Tensor4<f32, 1, 2, 1, 3>>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn concat_rows2x2(x: Tensor2<f32, 1, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 3, 2> {
+    concat::<0>(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn concat_cols2x2(x: Tensor2<f32, 2, 1>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 3> {
+    concat::<1>(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn stack_vectors(x: Tensor1<f32, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+    stack::<0>(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn reshape1_to_3d(x: Tensor1<f32, 8>) -> Tensor3<f32, 2, 2, 2> {
     reshape::<Tensor3<f32, 2, 2, 2>>(x)
 }
@@ -518,6 +558,52 @@ fn rank_broadcasting_graphs_run() {
         added.into_vec(),
         vec![101.0, 102.0, 103.0, 210.0, 220.0, 230.0]
     );
+}
+
+#[test]
+fn shape_and_indexing_graphs_run() {
+    let sliced = slice2x4_to2x2(Tensor2::from_array([
+        [1.0, 2.0, 3.0, 4.0],
+        [10.0, 20.0, 30.0, 40.0],
+    ]))
+    .unwrap();
+    assert_eq!(sliced.into_vec(), vec![2.0, 3.0, 20.0, 30.0]);
+
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    assert_eq!(
+        take2x3_axis0(x.clone()).unwrap().into_vec(),
+        vec![10.0, 20.0, 30.0]
+    );
+    assert_eq!(take2x3_axis1(x).unwrap().into_vec(), vec![3.0, 30.0]);
+
+    let x4 = Tensor4::from_array([[[[1.0, 2.0, 3.0]], [[10.0, 20.0, 30.0]]]]);
+    let squeezed = squeeze1x2x1x3(x4).unwrap();
+    assert_eq!(squeezed.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
+
+    let x2 = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let unsqueezed = unsqueeze2x3(x2).unwrap();
+    assert_eq!(unsqueezed.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
+
+    let rows = concat_rows2x2(
+        Tensor2::from_array([[1.0, 2.0]]),
+        Tensor2::from_array([[10.0, 20.0], [30.0, 40.0]]),
+    )
+    .unwrap();
+    assert_eq!(rows.into_vec(), vec![1.0, 2.0, 10.0, 20.0, 30.0, 40.0]);
+
+    let cols = concat_cols2x2(
+        Tensor2::from_array([[1.0], [2.0]]),
+        Tensor2::from_array([[10.0, 20.0], [30.0, 40.0]]),
+    )
+    .unwrap();
+    assert_eq!(cols.into_vec(), vec![1.0, 10.0, 20.0, 2.0, 30.0, 40.0]);
+
+    let stacked = stack_vectors(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0]),
+    )
+    .unwrap();
+    assert_eq!(stacked.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
 }
 
 #[test]

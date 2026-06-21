@@ -10,6 +10,16 @@ The function body is parsed as a restricted graph expression, compiled to MLIR
 with `melior`, lowered to an IREE VMFB with `iree-compile`, and replaced by a
 runtime wrapper.
 
+The recommended hosted API is:
+
+- use `#[knok::graph]` for Rust-authored static tensor graphs
+- use `knok::mlir_model!` for checked local MLIR imports
+- call `foo(...)` for simple one-off execution
+- call `foo_run(&engine, ...)` or `model::invoke_run(&engine, ...)` when running
+  inference repeatedly
+- use `foo_artifact()` or `model::artifact()` only when integrating a custom
+  runtime path
+
 ```rust
 use knok::prelude::*;
 
@@ -94,6 +104,45 @@ not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 They expose `from_array`, `from_vec`, `TryFrom<Vec<_>>`, `zeros`, `ones`,
 `filled`, `as_slice`, `as_mut_slice`, `into_vec`, and checked indexing helpers.
 
+## Static graph syntax
+
+Graph bodies intentionally accept a small, static subset of Rust. Function-like
+ops are parsed by the macro, so they do not need ordinary Rust functions in
+scope.
+
+Shape-changing ops are type-directed:
+
+```rust
+fn reshape_example(x: Tensor1<f32, 6>) -> Tensor2<f32, 2, 3> {
+    reshape::<Tensor2<f32, 2, 3>>(x)
+}
+
+fn unsqueeze_example(x: Tensor2<f32, 2, 3>) -> Tensor4<f32, 1, 2, 1, 3> {
+    unsqueeze::<Tensor4<f32, 1, 2, 1, 3>>(x)
+}
+```
+
+Axis/index ops use const generics:
+
+```rust
+fn row_sums(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    sum::<1>(x)
+}
+
+fn middle_columns(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
+    slice::<Tensor2<f32, 2, 2>, 0, 1>(x)
+}
+
+fn last_column(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    take::<1, 2>(x)
+}
+```
+
+`slice::<Target, START...>(x)` keeps rank and uses the target shape as static
+slice sizes. `take::<AXIS, INDEX>(x)` removes one axis, returning `Tensor1<_, 1>`
+when that would otherwise be scalar. `concat::<AXIS>(a, b)` joins two tensors
+along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
+
 ## Examples
 
 The examples are assertion-backed and can be run directly:
@@ -139,9 +188,10 @@ They cover the recommended hosted workflow:
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, trailing
   broadcasting, `abs`, `minimum`, `maximum`, `clip`, `pow`, `relu`, `matmul`,
   batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2 `transpose`, reshape
-  across ranks 1-4, `broadcast`, full-tensor and axis-aware `sum`, full-tensor
-  and axis-aware `mean`, full-tensor and axis-aware `softmax`, rank-1 `argmax`,
-  `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+  across ranks 1-4, `broadcast`, `squeeze`, `unsqueeze`, static `slice`,
+  static `take`, binary `concat`, binary `stack`, full-tensor and axis-aware
+  `sum`, full-tensor and axis-aware `mean`, full-tensor and axis-aware
+  `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, and `softmax::<1>(logits)`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `argmax`,
@@ -158,6 +208,26 @@ They cover the recommended hosted workflow:
   `linalg.softmax`.
   `argmax` currently returns the rank-1 index in the same floating-point element
   type as its input.
+
+## Dtype support
+
+The graph frontend is deliberately homogeneous today: every graph input and the
+graph output must use the same element type. Numeric literals are typed by their
+Rust suffix, defaulting to `f32` for float literals and `i32` for integer
+literals.
+
+| dtype | Tensor container | Graph parse/typecheck | Hosted runtime | Notes |
+| --- | --- | --- | --- | --- |
+| `f32` | yes | yes | yes | Primary path; all floating-point graph ops target this first. |
+| `f64` | yes | yes | yes | Uses `--iree-input-demote-f64-to-f32=false`; backend support may vary. |
+| `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
+| `i64` | yes | yes | yes | Same policy as `i32`. |
+| `bool` | no | no | no | Deferred until comparison, `where`, `all`, and `any` semantics are designed. |
+| `f16` / `bf16` | no | no | no | Deferred; likely requires public half types plus eerie/IREE buffer mapping. |
+| quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
+
+There is no implicit promotion, mixed-dtype graph execution, complex dtype,
+string/object dtype, or NumPy object-array equivalent.
 
 ## Development
 

@@ -1,4 +1,26 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+//! Static-shape tensor graph frontend for compiling restricted Rust function
+//! bodies to IREE VM bytecode at compile time.
+//!
+//! The primary entry point is `#[knok::graph]`, which turns a Rust function body into a
+//! compiled graph artifact and generated typed wrappers:
+//!
+//! ```ignore
+//! use knok::prelude::*;
+//!
+//! #[knok::graph(backend = "llvm-cpu")]
+//! fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+//!     relu(x + y)
+//! }
+//! ```
+//!
+//! For repeated hosted inference, construct one [`Engine`] and call the
+//! generated `forward_run(&engine, ...)` wrapper. Local MLIR files can be
+//! embedded with `knok::mlir_model!`.
+//!
+//! With default features disabled, `knok` is `no_std + alloc`; proc macros still
+//! run on the compile host, while hosted runtime execution is unavailable on the
+//! target unless the runtime feature set is enabled.
 
 extern crate alloc;
 
