@@ -290,6 +290,11 @@ fn select_positive4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn select_positive_literals4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    r#where(greater(x, 0.0), 1.0, 0.0)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn select_with_bool_input4(
     condition: Tensor1<bool, 4>,
     x: Tensor1<f32, 4>,
@@ -306,6 +311,11 @@ fn compare_greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> 
 #[knok::graph(backend = "llvm-cpu")]
 fn logical_from_comparisons4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     logical_xor(greater(x, 0.0), less_equal(y, 2.0))
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn logical_not_input4(x: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+    logical_not(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -793,6 +803,9 @@ fn bool_predicate_and_where_graphs_run() {
     .unwrap();
     assert_eq!(selected.into_vec(), vec![1.0, 20.0, 3.0, 40.0]);
 
+    let selected = select_positive_literals4(Tensor1::from_array([1.0, -2.0, 3.0, -4.0])).unwrap();
+    assert_eq!(selected.into_vec(), vec![1.0, 0.0, 1.0, 0.0]);
+
     let selected = select_with_bool_input4(
         Tensor1::from_array([true, false, false, true]),
         Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
@@ -814,6 +827,9 @@ fn bool_predicate_and_where_graphs_run() {
     )
     .unwrap();
     assert_eq!(logical.into_vec(), vec![false, true, true, false]);
+
+    let logical = logical_not_input4(Tensor1::from_array([true, false, true, false])).unwrap();
+    assert_eq!(logical.into_vec(), vec![false, true, false, true]);
 
     assert_eq!(
         all_positive4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0]))

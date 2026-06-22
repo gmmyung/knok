@@ -1858,9 +1858,9 @@ impl<'a> Lowerer<'a> {
 
     fn logical_not(&mut self, value: Value) -> anyhow::Result<Value> {
         let ty = value.ty.clone();
-        self.emit_elementwise_unary(&ty, value, |result, value, elem| {
-            format!("      {result} = arith.xori {value}, 1 : {elem}")
-        })
+        let true_value = self.constant("1", ElementType::Bool)?;
+        let true_value = self.broadcast(true_value, &ty)?;
+        self.logical_binary("arith.xori", value, true_value)
     }
 
     fn where_select(

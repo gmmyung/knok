@@ -1095,13 +1095,16 @@ fn where_result_type(
         elem: lhs.elem,
         shape: value_shape,
     };
-    broadcast_shape(condition, &result).map_err(|message| {
+    let shape = broadcast_shape(condition, &result).map_err(|message| {
         syn::Error::new(
             Span::call_site(),
             format!("where condition is not broadcast-compatible with values: {message}"),
         )
     })?;
-    Ok(result)
+    Ok(TensorType {
+        elem: lhs.elem,
+        shape,
+    })
 }
 
 fn call_result_type(
@@ -2086,6 +2089,14 @@ mod tests {
         })
         .unwrap();
         assert_eq!(selected.body.ty, tensor(&[4]));
+
+        let selected_from_predicate = parse(parse_quote! {
+            fn select_from_predicate(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                r#where(greater(x, 0.0), 1.0, 0.0)
+            }
+        })
+        .unwrap();
+        assert_eq!(selected_from_predicate.body.ty, tensor(&[4]));
 
         let comparison = parse(parse_quote! {
             fn less_broadcast(x: Tensor2<i32, 2, 3>, y: Tensor1<i32, 3>) -> Tensor2<bool, 2, 3> {
