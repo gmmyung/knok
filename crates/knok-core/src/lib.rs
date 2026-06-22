@@ -1040,10 +1040,22 @@ fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorT
 fn comparison_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
     expect_numeric_element(lhs.elem, "comparison ops")?;
     expect_numeric_element(rhs.elem, "comparison ops")?;
+    predicate_result_type(lhs, rhs, "comparison")
+}
+
+fn equality_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
+    predicate_result_type(lhs, rhs, "equality")
+}
+
+fn predicate_result_type(
+    lhs: &TensorType,
+    rhs: &TensorType,
+    op_name: &str,
+) -> syn::Result<TensorType> {
     if lhs.elem != rhs.elem {
         return Err(syn::Error::new(
             Span::call_site(),
-            format!("comparison operands must have the same element type, got {lhs:?} and {rhs:?}"),
+            format!("{op_name} operands must have the same element type, got {lhs:?} and {rhs:?}"),
         ));
     }
     broadcast_shape(lhs, rhs)
@@ -1054,7 +1066,7 @@ fn comparison_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<Ten
         .map_err(|message| {
             syn::Error::new(
                 Span::call_site(),
-                format!("comparison operands are not broadcast-compatible: {message}"),
+                format!("{op_name} operands are not broadcast-compatible: {message}"),
             )
         })
 }
@@ -1171,16 +1183,17 @@ fn call_result_type(
                 Ok(ty)
             }
         }
-        CallOp::Greater
-        | CallOp::GreaterEqual
-        | CallOp::Less
-        | CallOp::LessEqual
-        | CallOp::Equal
-        | CallOp::NotEqual => {
+        CallOp::Greater | CallOp::GreaterEqual | CallOp::Less | CallOp::LessEqual => {
             expect_arity(op, args, 2)?;
             let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
             comparison_result_type(&lhs, &rhs)
+        }
+        CallOp::Equal | CallOp::NotEqual => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            equality_result_type(&lhs, &rhs)
         }
         CallOp::LogicalAnd | CallOp::LogicalOr | CallOp::LogicalXor => {
             expect_arity(op, args, 2)?;
@@ -2055,6 +2068,11 @@ mod tests {
             parse_quote! {
                 fn greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
                     greater(x, y)
+                }
+            },
+            parse_quote! {
+                fn equal_bool4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+                    equal(x, y)
                 }
             },
             parse_quote! {

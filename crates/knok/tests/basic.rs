@@ -309,8 +309,58 @@ fn compare_greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> 
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn compare_greater_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    greater_equal(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn compare_less4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    less(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn compare_less_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    less_equal(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn compare_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    equal(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn compare_not_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    not_equal(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn bool_equal4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+    equal(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn bool_not_equal4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+    not_equal(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn logical_from_comparisons4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     logical_xor(greater(x, 0.0), less_equal(y, 2.0))
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn logical_and_input4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+    logical_and(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn logical_or_input4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+    logical_or(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn logical_xor_input4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+    logical_xor(x, y)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -821,9 +871,79 @@ fn bool_predicate_and_where_graphs_run() {
     .unwrap();
     assert_eq!(compared.into_vec(), vec![true, false, false, true]);
 
+    let compared = compare_greater_equal4(
+        Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
+        Tensor1::from_array([0.0, 4.0, 3.0, 2.0]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![true, false, true, true]);
+
+    let compared = compare_less4(
+        Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
+        Tensor1::from_array([0.0, 4.0, 3.0, 2.0]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![false, true, false, false]);
+
+    let compared = compare_less_equal4(
+        Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
+        Tensor1::from_array([0.0, 4.0, 3.0, 2.0]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![false, true, true, false]);
+
+    let compared = compare_equal4(
+        Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
+        Tensor1::from_array([0.0, 4.0, 3.0, 5.0]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![false, false, true, true]);
+
+    let compared = compare_not_equal4(
+        Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
+        Tensor1::from_array([0.0, 4.0, 3.0, 5.0]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![true, true, false, false]);
+
+    let compared = bool_equal4(
+        Tensor1::from_array([true, false, true, false]),
+        Tensor1::from_array([true, true, false, false]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![true, false, false, true]);
+
+    let compared = bool_not_equal4(
+        Tensor1::from_array([true, false, true, false]),
+        Tensor1::from_array([true, true, false, false]),
+    )
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![false, true, true, false]);
+
     let logical = logical_from_comparisons4(
         Tensor1::from_array([1.0, -2.0, 3.0, -4.0]),
         Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+    )
+    .unwrap();
+    assert_eq!(logical.into_vec(), vec![false, true, true, false]);
+
+    let logical = logical_and_input4(
+        Tensor1::from_array([true, true, false, false]),
+        Tensor1::from_array([true, false, true, false]),
+    )
+    .unwrap();
+    assert_eq!(logical.into_vec(), vec![true, false, false, false]);
+
+    let logical = logical_or_input4(
+        Tensor1::from_array([true, true, false, false]),
+        Tensor1::from_array([true, false, true, false]),
+    )
+    .unwrap();
+    assert_eq!(logical.into_vec(), vec![true, true, true, false]);
+
+    let logical = logical_xor_input4(
+        Tensor1::from_array([true, true, false, false]),
+        Tensor1::from_array([true, false, true, false]),
     )
     .unwrap();
     assert_eq!(logical.into_vec(), vec![false, true, true, false]);
