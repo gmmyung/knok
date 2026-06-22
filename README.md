@@ -271,16 +271,6 @@ cargo test --workspace
 cargo doc -p knok --no-default-features --features std --no-deps
 ```
 
-Bool tensor host I/O requires an `eerie` version that implements bool
-`BufferElement` support. For local co-development with an adjacent `eerie`
-checkout before that release is published, add a temporary local Cargo patch
-outside committed files:
-
-```toml
-[patch.crates-io]
-eerie = { path = "../eerie" }
-```
-
 Release checks and publishing order are scripted:
 
 ```sh
