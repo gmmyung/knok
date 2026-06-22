@@ -47,6 +47,8 @@ impl_runtime_output!(f32);
 #[cfg(feature = "host-runtime")]
 impl_runtime_output!(f64);
 #[cfg(feature = "host-runtime")]
+impl_runtime_output!(bool);
+#[cfg(feature = "host-runtime")]
 impl_runtime_output!(i32);
 #[cfg(feature = "host-runtime")]
 impl_runtime_output!(i64);
@@ -55,18 +57,6 @@ impl_runtime_output!(i64);
 impl_runtime_output!(crate::half::f16);
 #[cfg(all(feature = "host-runtime", feature = "half"))]
 impl_runtime_output!(crate::half::bf16);
-
-#[cfg(feature = "host-runtime")]
-impl RuntimeOutput for bool {
-    fn read_output(
-        engine: &crate::Engine,
-        function: &eerie::runtime::vm::Function,
-        inputs: &[RuntimeInput<'_>],
-    ) -> crate::Result<alloc::vec::Vec<Self>> {
-        let bytes = engine.invoke_typed_buffer_views::<u8>(function, inputs)?;
-        Ok(bytes.into_iter().map(|value| value != 0).collect())
-    }
-}
 
 #[cfg(not(feature = "host-runtime"))]
 impl<T: Copy> RuntimeOutput for T {}
@@ -405,7 +395,7 @@ mod hosted {
     }
 
     enum InputBuffer {
-        Bool(hal::BufferView<u8>),
+        Bool(hal::BufferView<bool>),
         F32(hal::BufferView<f32>),
         F64(hal::BufferView<f64>),
         I32(hal::BufferView<i32>),
@@ -423,15 +413,11 @@ mod hosted {
         ) -> crate::Result<Self> {
             match input {
                 RuntimeInput::Bool(shape, data) => {
-                    let data = data
-                        .iter()
-                        .map(|value| u8::from(*value))
-                        .collect::<Vec<_>>();
-                    Ok(Self::Bool(hal::BufferView::<u8>::from_host(
+                    Ok(Self::Bool(hal::BufferView::<bool>::from_host(
                         device,
                         shape,
                         hal::Encoding::DenseRowMajor,
-                        &data,
+                        data,
                     )?))
                 }
                 RuntimeInput::F32(shape, data) => Ok(Self::F32(hal::BufferView::<f32>::from_host(

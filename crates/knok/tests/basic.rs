@@ -290,6 +290,15 @@ fn select_positive4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn select_with_bool_input4(
+    condition: Tensor1<bool, 4>,
+    x: Tensor1<f32, 4>,
+    y: Tensor1<f32, 4>,
+) -> Tensor1<f32, 4> {
+    r#where(condition, x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn compare_greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     greater(x, y)
 }
@@ -784,29 +793,45 @@ fn bool_predicate_and_where_graphs_run() {
     .unwrap();
     assert_eq!(selected.into_vec(), vec![1.0, 20.0, 3.0, 40.0]);
 
-    let error = compare_greater4(
+    let selected = select_with_bool_input4(
+        Tensor1::from_array([true, false, false, true]),
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    assert_eq!(selected.into_vec(), vec![1.0, 20.0, 30.0, 4.0]);
+
+    let compared = compare_greater4(
         Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
         Tensor1::from_array([0.0, 4.0, 3.0, 2.0]),
     )
-    .unwrap_err();
-    assert_bool_runtime_gap(error);
+    .unwrap();
+    assert_eq!(compared.into_vec(), vec![true, false, false, true]);
 
-    let error = logical_from_comparisons4(
+    let logical = logical_from_comparisons4(
         Tensor1::from_array([1.0, -2.0, 3.0, -4.0]),
         Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
     )
-    .unwrap_err();
-    assert_bool_runtime_gap(error);
+    .unwrap();
+    assert_eq!(logical.into_vec(), vec![false, true, true, false]);
 
-    assert_bool_runtime_gap(all_positive4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap_err());
-    assert_bool_runtime_gap(any_nan4(Tensor1::from_array([1.0, f32::NAN, 3.0, 4.0])).unwrap_err());
-}
-
-fn assert_bool_runtime_gap(error: Error) {
-    let message = error.to_string();
-    assert!(
-        message.contains("Bool8"),
-        "expected bool runtime element gap, got {message}"
+    assert_eq!(
+        all_positive4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0]))
+            .unwrap()
+            .into_vec(),
+        vec![true]
+    );
+    assert_eq!(
+        all_positive4(Tensor1::from_array([1.0, 2.0, -3.0, 4.0]))
+            .unwrap()
+            .into_vec(),
+        vec![false]
+    );
+    assert_eq!(
+        any_nan4(Tensor1::from_array([1.0, f32::NAN, 3.0, 4.0]))
+            .unwrap()
+            .into_vec(),
+        vec![true]
     );
 }
 

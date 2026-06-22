@@ -226,11 +226,9 @@ They cover the recommended hosted workflow:
   sum, matmul, and conv lowering where IREE accepts the resulting MLIR.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
-- The compiler and MLIR lowering support real bool tensors. Hosted runtime
-  execution can use bool predicates internally when the graph returns a numeric
-  tensor. Direct bool input/output buffer execution is currently limited by the
-  safe `eerie` runtime API, which does not expose Rust `bool` as an IREE
-  `Bool8` buffer element.
+- The compiler, MLIR lowering, and hosted runtime wrappers support real bool
+  tensors. Bool tensors lower to MLIR `i1` and use `eerie` bool buffer support
+  at the runtime boundary.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
@@ -255,7 +253,7 @@ scalar bool predicate is valid.
 | `bf16` | `half` feature | `half` feature | `half` feature | Uses `half::bf16`; currently best treated as typed storage/roundtrip unless the selected backend accepts the op. |
 | `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
 | `i64` | yes | yes | yes | Same policy as `i32`. |
-| `bool` | yes | yes | partial | Lowers to MLIR `i1`; hosted runtime supports internal predicates for numeric outputs, but direct bool input/output buffers are blocked by the safe `eerie` Bool8 mapping. |
+| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, and `isnan`. |
 | quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
 
 There is no implicit promotion, mixed numeric dtype execution, complex dtype,
@@ -273,8 +271,9 @@ cargo test --workspace
 cargo doc -p knok --no-default-features --features std --no-deps
 ```
 
-CI intentionally tests against the published `eerie` crate. For local
-co-development with an adjacent checkout, add a temporary local Cargo patch
+Bool tensor host I/O requires an `eerie` version that implements bool
+`BufferElement` support. For local co-development with an adjacent `eerie`
+checkout before that release is published, add a temporary local Cargo patch
 outside committed files:
 
 ```toml
