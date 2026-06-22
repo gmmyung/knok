@@ -993,7 +993,11 @@ fn type_expr(
             elem: *elem,
             shape: vec![],
         },
-        Expr::Unary { value, .. } => type_expr(value, env, graph_signatures, current_graph)?.ty,
+        Expr::Unary { value, .. } => {
+            let ty = type_expr(value, env, graph_signatures, current_graph)?.ty;
+            expect_numeric_element(ty.elem, "arithmetic operators")?;
+            ty
+        }
         Expr::Binary { lhs, rhs, .. } => {
             let lhs = type_expr(lhs, env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(rhs, env, graph_signatures, current_graph)?.ty;
