@@ -143,6 +143,23 @@ slice sizes. `take::<AXIS, INDEX>(x)` removes one axis, returning `Tensor1<_, 1>
 when that would otherwise be scalar. `concat::<AXIS>(a, b)` joins two tensors
 along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
 
+Predicate tensors use `TensorN<bool, ...>` and lower to MLIR `i1`, not numeric
+masks. Comparisons return bool tensors and can feed logical ops, bool
+reductions, and selection:
+
+```rust
+fn select_positive(x: Tensor1<f32, 4>, fallback: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    r#where(greater(x, 0.0), x, fallback)
+}
+
+fn all_positive(x: Tensor1<f32, 4>) -> Tensor1<bool, 1> {
+    all(greater(x, 0.0))
+}
+```
+
+The selection op is the graph op `where(condition, x, y)`, but Rust source must
+spell it as the raw identifier `r#where(...)` because `where` is a keyword.
+
 ## Examples
 
 The examples are assertion-backed and can be run directly:
@@ -179,23 +196,27 @@ They cover the recommended hosted workflow:
 
 ## MVP limits
 
-- Graph tensor element types: `f32`, `f64`, `i32`, and `i64`; gated
+- Graph tensor element types: `bool`, `f32`, `f64`, `i32`, and `i64`; gated
   `half::f16` and `half::bf16` support is available with `features = ["half"]`.
-- Graph inputs and outputs currently use one homogeneous element type per graph;
-  mixed dtype promotion is not implemented.
-- Quantized integer types, bool tensors, complex numbers, and
-  string/object-like values are not implemented yet.
+- Graph operations can mix bool predicates with numeric tensors where the op
+  requires it, such as `r#where(condition, x, y)`. Numeric operands still must
+  have matching element types; mixed dtype promotion is not implemented.
+- Quantized integer types, complex numbers, and string/object-like values are
+  not implemented yet.
 - Static rank-1 through rank-4 shapes only.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
   Backend names and driver compatibility are validated at macro expansion time.
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, trailing
-  broadcasting, `abs`, `minimum`, `maximum`, `clip`, `pow`, `relu`, `matmul`,
-  batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2 `transpose`, reshape
-  across ranks 1-4, `broadcast`, `squeeze`, `unsqueeze`, static `slice`,
-  static `take`, binary `concat`, binary `stack`, full-tensor and axis-aware
-  `sum`, full-tensor and axis-aware `mean`, full-tensor and axis-aware
-  `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+  broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,
+  `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
+  `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
+  `pow`, `relu`, `matmul`, batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2
+  `transpose`, reshape across ranks 1-4, `broadcast`, `squeeze`, `unsqueeze`,
+  static `slice`, static `take`, binary `concat`, binary `stack`, full-tensor
+  and axis-aware `sum`, full-tensor and axis-aware `mean`, full-tensor and
+  axis-aware `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`, and
+  `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, and `softmax::<1>(logits)`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `argmax`,
@@ -203,6 +224,13 @@ They cover the recommended hosted workflow:
   element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
   support arithmetic, `abs`, `minimum`, `maximum`, `clip`, reshape/broadcast,
   sum, matmul, and conv lowering where IREE accepts the resulting MLIR.
+- `isfinite` and `isinf` are not exposed yet; the current lowering only adds
+  `isnan`, which maps cleanly to `arith.cmpf uno`.
+- The compiler and MLIR lowering support real bool tensors. Hosted runtime
+  execution can use bool predicates internally when the graph returns a numeric
+  tensor. Direct bool input/output buffer execution is currently limited by the
+  safe `eerie` runtime API, which does not expose Rust `bool` as an IREE
+  `Bool8` buffer element.
 - Function bodies may contain `let` bindings and one final expression. Arbitrary
   Rust control flow and function calls are rejected.
 - Graph calls must refer to earlier `#[knok::graph]` functions in the same
@@ -215,10 +243,9 @@ They cover the recommended hosted workflow:
 
 ## Dtype support
 
-The graph frontend is deliberately homogeneous today: every graph input and the
-graph output must use the same element type. Numeric literals are typed by their
-Rust suffix, defaulting to `f32` for float literals and `i32` for integer
-literals.
+Numeric literals are typed by their Rust suffix, defaulting to `f32` for float
+literals and `i32` for integer literals. Bool literals are accepted where a
+scalar bool predicate is valid.
 
 | dtype | Tensor container | Graph parse/typecheck | Hosted runtime | Notes |
 | --- | --- | --- | --- | --- |
@@ -228,10 +255,10 @@ literals.
 | `bf16` | `half` feature | `half` feature | `half` feature | Uses `half::bf16`; currently best treated as typed storage/roundtrip unless the selected backend accepts the op. |
 | `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
 | `i64` | yes | yes | yes | Same policy as `i32`. |
-| `bool` | no | no | no | Deferred until comparison, `where`, `all`, and `any` semantics are designed. |
+| `bool` | yes | yes | partial | Lowers to MLIR `i1`; hosted runtime supports internal predicates for numeric outputs, but direct bool input/output buffers are blocked by the safe `eerie` Bool8 mapping. |
 | quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
 
-There is no implicit promotion, mixed-dtype graph execution, complex dtype,
+There is no implicit promotion, mixed numeric dtype execution, complex dtype,
 string/object dtype, or NumPy object-array equivalent.
 
 ## Development

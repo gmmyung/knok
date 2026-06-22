@@ -15,3 +15,11 @@ pub fn invoke_with_engine<T: crate::runtime::RuntimeElement>(
 ) -> crate::Result<alloc::vec::Vec<T>> {
     engine.invoke(artifact, inputs)
 }
+
+pub fn invoke_typed_with_engine<T: crate::runtime::RuntimeOutput>(
+    engine: &crate::Engine,
+    artifact: crate::GraphArtifact,
+    inputs: &[crate::runtime::RuntimeInput<'_>],
+) -> crate::Result<alloc::vec::Vec<T>> {
+    engine.invoke_typed(artifact, inputs)
+}

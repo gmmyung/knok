@@ -1,5 +1,5 @@
-error: elementwise operands must have the same element type, got TensorType { elem: F32, shape: [4] } and TensorType { elem: F64, shape: [4] }
- --> tests/ui/mixed_dtype.rs:3:1
+error: arithmetic operators support numeric tensors only
+ --> tests/ui/bool_arithmetic.rs:3:1
   |
 3 | #[knok::graph(backend = "llvm-cpu")]
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -7,7 +7,7 @@ error: elementwise operands must have the same element type, got TensorType { el
   = note: this error originates in the attribute macro `knok::graph` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 warning: unused import: `knok::prelude::*`
- --> tests/ui/mixed_dtype.rs:1:5
+ --> tests/ui/bool_arithmetic.rs:1:5
   |
 1 | use knok::prelude::*;
   |     ^^^^^^^^^^^^^^^^

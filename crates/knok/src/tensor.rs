@@ -17,6 +17,11 @@ macro_rules! impl_tensor_element {
     };
 }
 
+impl TensorElement for bool {
+    const ZERO: Self = false;
+    const ONE: Self = true;
+}
+
 impl_tensor_element!(f32, f64, i32, i64);
 
 #[cfg(feature = "half")]

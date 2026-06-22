@@ -284,6 +284,31 @@ fn composed_twice4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     layer4(first - 2.0)
 }
 
+#[knok::graph(backend = "llvm-cpu")]
+fn select_positive4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    r#where(greater(x, 0.0), x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn compare_greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    greater(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn logical_from_comparisons4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+    logical_xor(greater(x, 0.0), less_equal(y, 2.0))
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn all_positive4(x: Tensor1<f32, 4>) -> Tensor1<bool, 1> {
+    all(greater(x, 0.0))
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn any_nan4(x: Tensor1<f32, 4>) -> Tensor1<bool, 1> {
+    any(isnan(x))
+}
+
 #[test]
 fn add_graph_runs() {
     let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
@@ -748,6 +773,41 @@ fn nested_graph_calls_are_inlined() {
     let y = Tensor1::from_array([0.5, 1.0, 10.0, -10.0]);
     let output = composed_twice4(x, y).unwrap();
     assert_eq!(output.into_vec(), vec![0.0, 1.0, 5.0, 0.0]);
+}
+
+#[test]
+fn bool_predicate_and_where_graphs_run() {
+    let selected = select_positive4(
+        Tensor1::from_array([1.0, -2.0, 3.0, -4.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    assert_eq!(selected.into_vec(), vec![1.0, 20.0, 3.0, 40.0]);
+
+    let error = compare_greater4(
+        Tensor1::from_array([1.0, 3.0, 3.0, 5.0]),
+        Tensor1::from_array([0.0, 4.0, 3.0, 2.0]),
+    )
+    .unwrap_err();
+    assert_bool_runtime_gap(error);
+
+    let error = logical_from_comparisons4(
+        Tensor1::from_array([1.0, -2.0, 3.0, -4.0]),
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+    )
+    .unwrap_err();
+    assert_bool_runtime_gap(error);
+
+    assert_bool_runtime_gap(all_positive4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap_err());
+    assert_bool_runtime_gap(any_nan4(Tensor1::from_array([1.0, f32::NAN, 3.0, 4.0])).unwrap_err());
+}
+
+fn assert_bool_runtime_gap(error: Error) {
+    let message = error.to_string();
+    assert!(
+        message.contains("Bool8"),
+        "expected bool runtime element gap, got {message}"
+    );
 }
 
 fn assert_close(actual: &[f32], expected: &[f32]) {
