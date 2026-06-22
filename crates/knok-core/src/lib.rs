@@ -64,16 +64,29 @@ pub enum BinaryOp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallOp {
     Abs,
+    All(Option<usize>),
     Argmax,
+    Any(Option<usize>),
     Clip,
     Concat(usize),
     Conv2d,
+    Equal,
     Exp,
+    Greater,
+    GreaterEqual,
+    IsNan,
+    Less,
+    LessEqual,
     Log,
+    LogicalAnd,
+    LogicalNot,
+    LogicalOr,
+    LogicalXor,
     Matmul,
     Mean(Option<usize>),
     Minimum,
     Maximum,
+    NotEqual,
     Pow,
     Relu,
     Reshape(TensorType),
@@ -95,6 +108,7 @@ pub enum CallOp {
     },
     Transpose,
     Unsqueeze(TensorType),
+    Where,
     Graph(String),
 }
 
@@ -134,6 +148,7 @@ pub struct GraphSignature {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElementType {
+    Bool,
     F32,
     F64,
     F16,
@@ -161,6 +176,7 @@ impl TensorType {
 impl ElementType {
     pub fn mlir_type(self) -> &'static str {
         match self {
+            Self::Bool => "i1",
             Self::F32 => "f32",
             Self::F64 => "f64",
             Self::F16 => "f16",
@@ -174,8 +190,17 @@ impl ElementType {
         matches!(self, Self::F32 | Self::F64 | Self::F16 | Self::BF16)
     }
 
+    pub fn is_bool(self) -> bool {
+        matches!(self, Self::Bool)
+    }
+
+    pub fn is_numeric(self) -> bool {
+        !self.is_bool()
+    }
+
     pub fn zero_literal(self) -> &'static str {
         match self {
+            Self::Bool => "0",
             Self::F32 | Self::F64 | Self::F16 | Self::BF16 => "0.0",
             Self::I32 | Self::I64 => "0",
         }
@@ -183,6 +208,7 @@ impl ElementType {
 
     pub fn one_literal(self) -> &'static str {
         match self {
+            Self::Bool => "1",
             Self::F32 | Self::F64 | Self::F16 | Self::BF16 => "1.0",
             Self::I32 | Self::I64 => "1",
         }
@@ -376,6 +402,7 @@ fn parse_element_type(arg: Option<&GenericArgument>) -> syn::Result<ElementType>
         ));
     };
     for (name, elem) in [
+        ("bool", ElementType::Bool),
         ("f32", ElementType::F32),
         ("f64", ElementType::F64),
         #[cfg(feature = "half")]
@@ -396,7 +423,7 @@ fn parse_element_type(arg: Option<&GenericArgument>) -> syn::Result<ElementType>
 }
 
 fn supported_element_type_message() -> &'static str {
-    "unsupported tensor element type; supported types are f32, f64, i32, i64, and half::f16/half::bf16 when the `half` feature is enabled"
+    "unsupported tensor element type; supported types are bool, f32, f64, i32, i64, and half::f16/half::bf16 when the `half` feature is enabled"
 }
 
 fn parse_const_usize(arg: Option<&GenericArgument>) -> syn::Result<usize> {
@@ -476,7 +503,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 value: lit.base10_digits().to_string(),
                 elem: parse_int_literal_element(lit)?,
             }),
-            _ => Err(syn::Error::new(expr_lit.span(), "expected numeric literal")),
+            Lit::Bool(lit) => Ok(Expr::Const {
+                value: if lit.value() { "1" } else { "0" }.to_string(),
+                elem: ElementType::Bool,
+            }),
+            _ => Err(syn::Error::new(
+                expr_lit.span(),
+                "expected numeric or bool literal",
+            )),
         },
         SynExpr::Paren(paren) => parse_expr(&paren.expr),
         SynExpr::Unary(unary) => {
@@ -506,9 +540,17 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "abs")?;
                     CallOp::Abs
                 }
+                "all" => {
+                    reject_target_type(&generics, &path.path, "all")?;
+                    CallOp::All(optional_axis(&generics, &path.path, "all")?)
+                }
                 "argmax" => {
                     reject_any_generics(&generics, &path.path, "argmax")?;
                     CallOp::Argmax
+                }
+                "any" => {
+                    reject_target_type(&generics, &path.path, "any")?;
+                    CallOp::Any(optional_axis(&generics, &path.path, "any")?)
                 }
                 "clip" => {
                     reject_any_generics(&generics, &path.path, "clip")?;
@@ -526,9 +568,45 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "exp")?;
                     CallOp::Exp
                 }
+                "greater" => {
+                    reject_any_generics(&generics, &path.path, "greater")?;
+                    CallOp::Greater
+                }
+                "greater_equal" => {
+                    reject_any_generics(&generics, &path.path, "greater_equal")?;
+                    CallOp::GreaterEqual
+                }
+                "isnan" => {
+                    reject_any_generics(&generics, &path.path, "isnan")?;
+                    CallOp::IsNan
+                }
+                "less" => {
+                    reject_any_generics(&generics, &path.path, "less")?;
+                    CallOp::Less
+                }
+                "less_equal" => {
+                    reject_any_generics(&generics, &path.path, "less_equal")?;
+                    CallOp::LessEqual
+                }
                 "log" => {
                     reject_any_generics(&generics, &path.path, "log")?;
                     CallOp::Log
+                }
+                "logical_and" => {
+                    reject_any_generics(&generics, &path.path, "logical_and")?;
+                    CallOp::LogicalAnd
+                }
+                "logical_not" => {
+                    reject_any_generics(&generics, &path.path, "logical_not")?;
+                    CallOp::LogicalNot
+                }
+                "logical_or" => {
+                    reject_any_generics(&generics, &path.path, "logical_or")?;
+                    CallOp::LogicalOr
+                }
+                "logical_xor" => {
+                    reject_any_generics(&generics, &path.path, "logical_xor")?;
+                    CallOp::LogicalXor
                 }
                 "matmul" => {
                     reject_any_generics(&generics, &path.path, "matmul")?;
@@ -549,6 +627,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "pow" => {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
+                }
+                "equal" => {
+                    reject_any_generics(&generics, &path.path, "equal")?;
+                    CallOp::Equal
+                }
+                "not_equal" => {
+                    reject_any_generics(&generics, &path.path, "not_equal")?;
+                    CallOp::NotEqual
                 }
                 "relu" => {
                     reject_any_generics(&generics, &path.path, "relu")?;
@@ -621,6 +707,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "transpose" => {
                     reject_any_generics(&generics, &path.path, "transpose")?;
                     CallOp::Transpose
+                }
+                "where" | "r#where" => {
+                    reject_any_generics(&generics, &path.path, "where")?;
+                    CallOp::Where
                 }
                 "unsqueeze" => {
                     reject_consts(&generics, &path.path, "unsqueeze")?;
@@ -853,7 +943,6 @@ pub fn type_check(
     graph: Graph,
     graph_signatures: &[(String, GraphSignature)],
 ) -> syn::Result<TypedGraph> {
-    reject_mixed_graph_elements(&graph)?;
     let mut env = graph
         .inputs
         .iter()
@@ -888,29 +977,6 @@ pub fn type_check(
     })
 }
 
-fn reject_mixed_graph_elements(graph: &Graph) -> syn::Result<()> {
-    let expected = graph
-        .inputs
-        .first()
-        .map(|input| input.ty.elem)
-        .unwrap_or(graph.output.elem);
-    for input in &graph.inputs {
-        if input.ty.elem != expected {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "graph inputs and output must use one homogeneous tensor element type",
-            ));
-        }
-    }
-    if graph.output.elem != expected {
-        return Err(syn::Error::new(
-            Span::call_site(),
-            "graph inputs and output must use one homogeneous tensor element type",
-        ));
-    }
-    Ok(())
-}
-
 fn type_expr(
     expr: &Expr,
     env: &[(String, TensorType)],
@@ -927,7 +993,11 @@ fn type_expr(
             elem: *elem,
             shape: vec![],
         },
-        Expr::Unary { value, .. } => type_expr(value, env, graph_signatures, current_graph)?.ty,
+        Expr::Unary { value, .. } => {
+            let ty = type_expr(value, env, graph_signatures, current_graph)?.ty;
+            expect_numeric_element(ty.elem, "arithmetic operators")?;
+            ty
+        }
         Expr::Binary { lhs, rhs, .. } => {
             let lhs = type_expr(lhs, env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(rhs, env, graph_signatures, current_graph)?.ty;
@@ -944,6 +1014,8 @@ fn type_expr(
 }
 
 fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
+    expect_numeric_element(lhs.elem, "arithmetic operators")?;
+    expect_numeric_element(rhs.elem, "arithmetic operators")?;
     if lhs.elem != rhs.elem {
         return Err(syn::Error::new(
             Span::call_site(),
@@ -965,6 +1037,92 @@ fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorT
         })
 }
 
+fn comparison_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
+    expect_numeric_element(lhs.elem, "comparison ops")?;
+    expect_numeric_element(rhs.elem, "comparison ops")?;
+    predicate_result_type(lhs, rhs, "comparison")
+}
+
+fn equality_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
+    predicate_result_type(lhs, rhs, "equality")
+}
+
+fn predicate_result_type(
+    lhs: &TensorType,
+    rhs: &TensorType,
+    op_name: &str,
+) -> syn::Result<TensorType> {
+    if lhs.elem != rhs.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} operands must have the same element type, got {lhs:?} and {rhs:?}"),
+        ));
+    }
+    broadcast_shape(lhs, rhs)
+        .map(|shape| TensorType {
+            elem: ElementType::Bool,
+            shape,
+        })
+        .map_err(|message| {
+            syn::Error::new(
+                Span::call_site(),
+                format!("{op_name} operands are not broadcast-compatible: {message}"),
+            )
+        })
+}
+
+fn logical_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
+    expect_bool_element(lhs.elem, "logical ops")?;
+    expect_bool_element(rhs.elem, "logical ops")?;
+    broadcast_shape(lhs, rhs)
+        .map(|shape| TensorType {
+            elem: ElementType::Bool,
+            shape,
+        })
+        .map_err(|message| {
+            syn::Error::new(
+                Span::call_site(),
+                format!("logical operands are not broadcast-compatible: {message}"),
+            )
+        })
+}
+
+fn where_result_type(
+    condition: &TensorType,
+    lhs: &TensorType,
+    rhs: &TensorType,
+) -> syn::Result<TensorType> {
+    expect_bool_element(condition.elem, "where condition")?;
+    if lhs.elem != rhs.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "where value operands must have the same element type, got {lhs:?} and {rhs:?}"
+            ),
+        ));
+    }
+    let value_shape = broadcast_shape(lhs, rhs).map_err(|message| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("where value operands are not broadcast-compatible: {message}"),
+        )
+    })?;
+    let result = TensorType {
+        elem: lhs.elem,
+        shape: value_shape,
+    };
+    let shape = broadcast_shape(condition, &result).map_err(|message| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("where condition is not broadcast-compatible with values: {message}"),
+        )
+    })?;
+    Ok(TensorType {
+        elem: lhs.elem,
+        shape,
+    })
+}
+
 fn call_result_type(
     op: &CallOp,
     args: &[Expr],
@@ -975,7 +1133,21 @@ fn call_result_type(
     match op {
         CallOp::Abs => {
             expect_arity(op, args, 1)?;
-            Ok(type_expr(&args[0], env, graph_signatures, current_graph)?.ty)
+            let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_numeric_element(ty.elem, "abs")?;
+            Ok(ty)
+        }
+        CallOp::All(axis) | CallOp::Any(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_bool_element(input.elem, "bool reductions")?;
+            if input.rank() == 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "bool reductions expect a tensor input",
+                ));
+            }
+            reduction_output_type(&input, *axis)
         }
         CallOp::Argmax => {
             expect_arity(op, args, 1)?;
@@ -993,6 +1165,7 @@ fn call_result_type(
             })
         }
         CallOp::Exp
+        | CallOp::IsNan
         | CallOp::Log
         | CallOp::Relu
         | CallOp::Sigmoid
@@ -1001,12 +1174,45 @@ fn call_result_type(
             expect_arity(op, args, 1)?;
             let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             expect_float(op, ty.elem)?;
+            if matches!(op, CallOp::IsNan) {
+                Ok(TensorType {
+                    elem: ElementType::Bool,
+                    shape: ty.shape,
+                })
+            } else {
+                Ok(ty)
+            }
+        }
+        CallOp::Greater | CallOp::GreaterEqual | CallOp::Less | CallOp::LessEqual => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            comparison_result_type(&lhs, &rhs)
+        }
+        CallOp::Equal | CallOp::NotEqual => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            equality_result_type(&lhs, &rhs)
+        }
+        CallOp::LogicalAnd | CallOp::LogicalOr | CallOp::LogicalXor => {
+            expect_arity(op, args, 2)?;
+            let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            logical_result_type(&lhs, &rhs)
+        }
+        CallOp::LogicalNot => {
+            expect_arity(op, args, 1)?;
+            let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_bool_element(ty.elem, "logical_not")?;
             Ok(ty)
         }
         CallOp::Minimum | CallOp::Maximum => {
             expect_arity(op, args, 2)?;
             let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            expect_numeric_element(lhs.elem, "min/max ops")?;
+            expect_numeric_element(rhs.elem, "min/max ops")?;
             binary_result_type(&lhs, &rhs)
         }
         CallOp::Clip => {
@@ -1014,6 +1220,9 @@ fn call_result_type(
             let value = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let min = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
             let max = type_expr(&args[2], env, graph_signatures, current_graph)?.ty;
+            expect_numeric_element(value.elem, "clip")?;
+            expect_numeric_element(min.elem, "clip")?;
+            expect_numeric_element(max.elem, "clip")?;
             let value = binary_result_type(&value, &min)?;
             binary_result_type(&value, &max)
         }
@@ -1111,6 +1320,7 @@ fn call_result_type(
         CallOp::Sum(axis) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            expect_numeric_element(input.elem, "sum")?;
             if input.rank() == 0 {
                 return Err(syn::Error::new(
                     Span::call_site(),
@@ -1146,6 +1356,7 @@ fn call_result_type(
                     "matmul expects operands with the same element type",
                 ));
             }
+            expect_numeric_element(lhs.elem, "matmul")?;
             match (lhs.rank(), rhs.rank()) {
                 (2, 2) => {
                     if lhs.shape[1] != rhs.shape[0] {
@@ -1202,6 +1413,7 @@ fn call_result_type(
                     "conv2d expects NHWC input and HWCF kernel rank-4 tensors with the same element type",
                 ));
             }
+            expect_numeric_element(input.elem, "conv2d")?;
             if input.shape[3] != kernel.shape[2] {
                 return Err(syn::Error::new(
                     Span::call_site(),
@@ -1232,6 +1444,13 @@ fn call_result_type(
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             validate_unsqueeze(&input, target)?;
             Ok(target.clone())
+        }
+        CallOp::Where => {
+            expect_arity(op, args, 3)?;
+            let condition = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            let lhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
+            let rhs = type_expr(&args[2], env, graph_signatures, current_graph)?.ty;
+            where_result_type(&condition, &lhs, &rhs)
         }
         CallOp::Graph(name) => {
             if name == current_graph {
@@ -1541,6 +1760,38 @@ fn expect_float(op: &CallOp, elem: ElementType) -> syn::Result<()> {
     }
 }
 
+fn expect_numeric_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+    if elem.is_numeric() {
+        Ok(())
+    } else {
+        let verb = if op_name.ends_with('s') {
+            "support"
+        } else {
+            "supports"
+        };
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} {verb} numeric tensors only"),
+        ))
+    }
+}
+
+fn expect_bool_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+    if elem.is_bool() {
+        Ok(())
+    } else {
+        let verb = if op_name.ends_with('s') {
+            "support"
+        } else {
+            "supports"
+        };
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} {verb} bool tensors only"),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1804,6 +2055,78 @@ mod tests {
             let graph = parse(item).unwrap();
             assert_eq!(graph.body.ty, graph.output);
         }
+    }
+
+    #[test]
+    fn infers_bool_predicate_selection_and_reduction_shapes() {
+        let bool_tensor = |shape: &[usize]| TensorType {
+            elem: ElementType::Bool,
+            shape: shape.to_vec(),
+        };
+
+        for item in [
+            parse_quote! {
+                fn greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+                    greater(x, y)
+                }
+            },
+            parse_quote! {
+                fn equal_bool4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+                    equal(x, y)
+                }
+            },
+            parse_quote! {
+                fn logical4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
+                    logical_xor(logical_and(x, y), logical_not(y))
+                }
+            },
+            parse_quote! {
+                fn any_axis1(x: Tensor2<bool, 2, 3>) -> Tensor1<bool, 2> {
+                    any::<1>(x)
+                }
+            },
+            parse_quote! {
+                fn all4(x: Tensor1<bool, 4>) -> Tensor1<bool, 1> {
+                    all(x)
+                }
+            },
+            parse_quote! {
+                fn isnan4(x: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
+                    isnan(x)
+                }
+            },
+        ] {
+            let graph = parse(item).unwrap();
+            assert_eq!(graph.body.ty, graph.output);
+        }
+
+        let selected = parse(parse_quote! {
+            fn select4(
+                c: Tensor1<bool, 4>,
+                x: Tensor1<f32, 4>,
+                y: Tensor1<f32, 1>,
+            ) -> Tensor1<f32, 4> {
+                r#where(c, x, y)
+            }
+        })
+        .unwrap();
+        assert_eq!(selected.body.ty, tensor(&[4]));
+
+        let selected_from_predicate = parse(parse_quote! {
+            fn select_from_predicate(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                r#where(greater(x, 0.0), 1.0, 0.0)
+            }
+        })
+        .unwrap();
+        assert_eq!(selected_from_predicate.body.ty, tensor(&[4]));
+
+        let comparison = parse(parse_quote! {
+            fn less_broadcast(x: Tensor2<i32, 2, 3>, y: Tensor1<i32, 3>) -> Tensor2<bool, 2, 3> {
+                less_equal(x, y)
+            }
+        })
+        .unwrap();
+        assert_eq!(comparison.body.ty, bool_tensor(&[2, 3]));
     }
 
     #[test]

@@ -4,6 +4,63 @@ use alloc::string::String;
 
 use crate::Backend;
 
+#[doc(hidden)]
+pub enum RuntimeInput<'a> {
+    Bool(&'a [usize], &'a [bool]),
+    F32(&'a [usize], &'a [f32]),
+    F64(&'a [usize], &'a [f64]),
+    I32(&'a [usize], &'a [i32]),
+    I64(&'a [usize], &'a [i64]),
+    #[cfg(feature = "half")]
+    F16(&'a [usize], &'a [crate::half::f16]),
+    #[cfg(feature = "half")]
+    BF16(&'a [usize], &'a [crate::half::bf16]),
+}
+
+#[doc(hidden)]
+pub trait RuntimeOutput: Copy {
+    #[cfg(feature = "host-runtime")]
+    fn read_output(
+        engine: &crate::Engine,
+        function: &eerie::runtime::vm::Function,
+        inputs: &[RuntimeInput<'_>],
+    ) -> crate::Result<alloc::vec::Vec<Self>>;
+}
+
+#[cfg(feature = "host-runtime")]
+macro_rules! impl_runtime_output {
+    ($ty:ty) => {
+        impl RuntimeOutput for $ty {
+            fn read_output(
+                engine: &crate::Engine,
+                function: &eerie::runtime::vm::Function,
+                inputs: &[RuntimeInput<'_>],
+            ) -> crate::Result<alloc::vec::Vec<Self>> {
+                engine.invoke_typed_buffer_views::<Self>(function, inputs)
+            }
+        }
+    };
+}
+
+#[cfg(feature = "host-runtime")]
+impl_runtime_output!(f32);
+#[cfg(feature = "host-runtime")]
+impl_runtime_output!(f64);
+#[cfg(feature = "host-runtime")]
+impl_runtime_output!(bool);
+#[cfg(feature = "host-runtime")]
+impl_runtime_output!(i32);
+#[cfg(feature = "host-runtime")]
+impl_runtime_output!(i64);
+
+#[cfg(all(feature = "host-runtime", feature = "half"))]
+impl_runtime_output!(crate::half::f16);
+#[cfg(all(feature = "host-runtime", feature = "half"))]
+impl_runtime_output!(crate::half::bf16);
+
+#[cfg(not(feature = "host-runtime"))]
+impl<T: Copy> RuntimeOutput for T {}
+
 /// Element types that can be passed through raw runtime buffer views.
 #[cfg(feature = "host-runtime")]
 #[doc(hidden)]
@@ -82,7 +139,7 @@ mod hosted {
     use eerie::runtime::{hal, vm};
     use vm::ToRef;
 
-    use super::{driver_for_backend, RuntimeConfig, RuntimeElement};
+    use super::{driver_for_backend, RuntimeConfig, RuntimeElement, RuntimeInput, RuntimeOutput};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
     pub struct Engine {
@@ -229,6 +286,77 @@ mod hosted {
             Ok(output.read_to_vec(&self.device)?)
         }
 
+        pub(crate) fn invoke_typed<T: RuntimeOutput>(
+            &self,
+            artifact: GraphArtifact,
+            inputs: &[RuntimeInput<'_>],
+        ) -> crate::Result<Vec<T>> {
+            let variant = artifact
+                .variant_for_driver(&self.driver_name)
+                .ok_or_else(|| crate::Error::MissingArtifactVariant {
+                    function_name: artifact.function_name,
+                    driver: self.driver_name.clone(),
+                })?;
+            if self.driver_name != variant.driver {
+                return Err(crate::Error::RuntimeDriverMismatch {
+                    backend: variant.backend,
+                    expected_driver: variant.driver,
+                    actual_driver: self.driver_name.clone(),
+                });
+            }
+            let function = self.resolve_function(variant.vmfb, artifact.function_name)?;
+            T::read_output(self, &function, inputs)
+        }
+
+        fn resolve_function(
+            &self,
+            vmfb: &'static [u8],
+            function_name: &'static str,
+        ) -> crate::Result<vm::Function> {
+            let mut modules = self
+                .modules
+                .lock()
+                .map_err(|_| crate::Error::EngineLockPoisoned)?;
+            if !modules.contains_key(vmfb) {
+                let bytecode_module = vm::Module::bytecode(&self.instance, vmfb)?;
+                let context = vm::Context::with_modules(
+                    &self.instance,
+                    &[&self.hal_module, &bytecode_module],
+                )?;
+                modules.insert(
+                    vmfb.to_vec(),
+                    LoadedModule {
+                        functions: BTreeMap::new(),
+                        _context: context,
+                        _bytecode_module: bytecode_module,
+                    },
+                );
+            }
+            let loaded = modules.get_mut(vmfb).expect("module was just inserted");
+            if let Some(function) = loaded.functions.get(function_name) {
+                Ok(function.clone())
+            } else {
+                let function = loaded._context.resolve_function(function_name)?;
+                loaded
+                    .functions
+                    .insert(function_name.to_string(), function.clone());
+                Ok(function)
+            }
+        }
+
+        pub(crate) fn invoke_typed_buffer_views<T: RuntimeElement>(
+            &self,
+            function: &vm::Function,
+            inputs: &[RuntimeInput<'_>],
+        ) -> crate::Result<Vec<T>> {
+            let input_buffers = inputs
+                .iter()
+                .map(|input| InputBuffer::from_runtime_input(&self.device, input))
+                .collect::<crate::Result<Vec<_>>>()?;
+            let output = self.invoke_input_buffers(function, &input_buffers)?;
+            Ok(output.read_to_vec(&self.device)?)
+        }
+
         fn invoke_buffer_views<T: RuntimeElement>(
             &self,
             function: &vm::Function,
@@ -246,6 +374,115 @@ mod hosted {
                 .to_buffer_view()
                 .map_err(crate::Error::from)
         }
+
+        fn invoke_input_buffers<T: RuntimeElement>(
+            &self,
+            function: &vm::Function,
+            inputs: &[InputBuffer],
+        ) -> crate::Result<hal::BufferView<T>> {
+            let mut input_list = vm::List::<vm::Undefined>::new(inputs.len(), &self.instance)?;
+            for input in inputs {
+                input.push_ref(&mut input_list, &self.instance)?;
+            }
+            let mut output_list = vm::List::<vm::Undefined>::new(1, &self.instance)?;
+            function.invoke(&input_list, &mut output_list)?;
+            output_list
+                .get_ref::<hal::BufferView<T>>(0)
+                .map_err(crate::Error::from)?
+                .to_buffer_view()
+                .map_err(crate::Error::from)
+        }
+    }
+
+    enum InputBuffer {
+        Bool(hal::BufferView<bool>),
+        F32(hal::BufferView<f32>),
+        F64(hal::BufferView<f64>),
+        I32(hal::BufferView<i32>),
+        I64(hal::BufferView<i64>),
+        #[cfg(feature = "half")]
+        F16(hal::BufferView<crate::half::f16>),
+        #[cfg(feature = "half")]
+        BF16(hal::BufferView<crate::half::bf16>),
+    }
+
+    impl InputBuffer {
+        fn from_runtime_input(
+            device: &hal::Device,
+            input: &RuntimeInput<'_>,
+        ) -> crate::Result<Self> {
+            match input {
+                RuntimeInput::Bool(shape, data) => {
+                    Ok(Self::Bool(hal::BufferView::<bool>::from_host(
+                        device,
+                        shape,
+                        hal::Encoding::DenseRowMajor,
+                        data,
+                    )?))
+                }
+                RuntimeInput::F32(shape, data) => Ok(Self::F32(hal::BufferView::<f32>::from_host(
+                    device,
+                    shape,
+                    hal::Encoding::DenseRowMajor,
+                    data,
+                )?)),
+                RuntimeInput::F64(shape, data) => Ok(Self::F64(hal::BufferView::<f64>::from_host(
+                    device,
+                    shape,
+                    hal::Encoding::DenseRowMajor,
+                    data,
+                )?)),
+                RuntimeInput::I32(shape, data) => Ok(Self::I32(hal::BufferView::<i32>::from_host(
+                    device,
+                    shape,
+                    hal::Encoding::DenseRowMajor,
+                    data,
+                )?)),
+                RuntimeInput::I64(shape, data) => Ok(Self::I64(hal::BufferView::<i64>::from_host(
+                    device,
+                    shape,
+                    hal::Encoding::DenseRowMajor,
+                    data,
+                )?)),
+                #[cfg(feature = "half")]
+                RuntimeInput::F16(shape, data) => {
+                    Ok(Self::F16(hal::BufferView::<crate::half::f16>::from_host(
+                        device,
+                        shape,
+                        hal::Encoding::DenseRowMajor,
+                        data,
+                    )?))
+                }
+                #[cfg(feature = "half")]
+                RuntimeInput::BF16(shape, data) => {
+                    Ok(Self::BF16(hal::BufferView::<crate::half::bf16>::from_host(
+                        device,
+                        shape,
+                        hal::Encoding::DenseRowMajor,
+                        data,
+                    )?))
+                }
+            }
+        }
+
+        fn push_ref(
+            &self,
+            list: &mut vm::List<vm::Undefined>,
+            instance: &vm::Instance,
+        ) -> crate::Result<()> {
+            match self {
+                Self::Bool(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+                Self::F32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+                Self::F64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+                Self::I32(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+                Self::I64(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+                #[cfg(feature = "half")]
+                Self::F16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+                #[cfg(feature = "half")]
+                Self::BF16(buffer) => list.push_ref(&buffer.to_ref(instance)?)?,
+            }
+            Ok(())
+        }
     }
 }
 
@@ -253,7 +490,7 @@ mod hosted {
 mod hosted {
     use alloc::vec::Vec;
 
-    use super::{RuntimeConfig, RuntimeElement};
+    use super::{RuntimeConfig, RuntimeElement, RuntimeInput, RuntimeOutput};
     use crate::GraphArtifact;
 
     pub struct Engine;
@@ -287,6 +524,14 @@ mod hosted {
             &self,
             _artifact: GraphArtifact,
             _inputs: &[(&[usize], &[T])],
+        ) -> crate::Result<Vec<T>> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+
+        pub(crate) fn invoke_typed<T: RuntimeOutput>(
+            &self,
+            _artifact: GraphArtifact,
+            _inputs: &[RuntimeInput<'_>],
         ) -> crate::Result<Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }

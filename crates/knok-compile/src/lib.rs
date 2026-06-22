@@ -354,15 +354,23 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         .iter()
         .map(input_name)
         .collect::<syn::Result<Vec<_>>>()?;
-    let input_shapes = graph.inputs.iter().map(|input| {
-        let dims = input.ty.shape.iter().copied();
-        quote!(&[#(#dims),*])
-    });
     let function_name = format!("knok.{}", graph.name);
     let artifact_name = format_ident!("{}_artifact", name);
     let run_name = format_ident!("{}_run", name);
     let output_dims = graph.output.shape.iter().copied();
     let output_elem_ty = rust_element_type(graph.output.elem);
+    let runtime_inputs = graph
+        .inputs
+        .iter()
+        .zip(arg_names.iter())
+        .map(|(input, arg_name)| {
+            let shape = {
+                let dims = input.ty.shape.iter().copied();
+                quote!(&[#(#dims),*])
+            };
+            let variant = runtime_input_variant(input.ty.elem);
+            quote!(::knok::runtime::RuntimeInput::#variant(#shape, #arg_name.as_slice()))
+        });
     let artifact_input_shapes = graph.inputs.iter().map(|input| {
         let dims = input.ty.shape.iter().copied();
         quote!(&[#(#dims),*])
@@ -407,10 +415,10 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
 
         #visibility fn #run_name(engine: &::knok::Engine, #(#inputs),*) -> ::knok::Result<#output_ty> {
             let artifact = #artifact_name();
-            let output = ::knok::__private::invoke_with_engine::<#output_elem_ty>(
+            let output = ::knok::__private::invoke_typed_with_engine::<#output_elem_ty>(
                 engine,
                 artifact,
-                &[#((#input_shapes, #arg_names.as_slice())),*],
+                &[#(#runtime_inputs),*],
             )?;
             <#output_ty>::from_vec(output)
         }
@@ -487,14 +495,26 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
         let input_names = (0..input_types.len())
             .map(|index| format_ident!("input{index}"))
             .collect::<Vec<_>>();
+        let runtime_inputs = input_types
+            .iter()
+            .zip(input_names.iter())
+            .map(|(ty, input_name)| {
+                parse_tensor_type(ty).map(|tensor_ty| {
+                    let variant = runtime_input_variant(tensor_ty.elem);
+                    quote!(::knok::runtime::RuntimeInput::#variant(<#ty>::SHAPE, #input_name.as_slice()))
+                })
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
         Some(quote! {
             pub fn invoke_run(
                 engine: &::knok::Engine,
                 #(#input_names: #input_types),*
             ) -> ::knok::Result<#output_ty> {
-                let output = ::knok::__private::invoke_with_engine::<#output_elem_ty>(engine, artifact(), &[
-                    #((<#input_types>::SHAPE, #input_names.as_slice())),*
-                ])?;
+                let output = ::knok::__private::invoke_typed_with_engine::<#output_elem_ty>(
+                    engine,
+                    artifact(),
+                    &[#(#runtime_inputs),*],
+                )?;
                 <#output_ty>::from_vec(output)
             }
 
@@ -589,12 +609,25 @@ fn validate_mlir_model_signature(
 
 fn rust_element_type(elem: ElementType) -> TokenStream {
     match elem {
+        ElementType::Bool => quote!(bool),
         ElementType::F32 => quote!(f32),
         ElementType::F64 => quote!(f64),
         ElementType::F16 => quote!(::knok::half::f16),
         ElementType::BF16 => quote!(::knok::half::bf16),
         ElementType::I32 => quote!(i32),
         ElementType::I64 => quote!(i64),
+    }
+}
+
+fn runtime_input_variant(elem: ElementType) -> proc_macro2::Ident {
+    match elem {
+        ElementType::Bool => format_ident!("Bool"),
+        ElementType::F32 => format_ident!("F32"),
+        ElementType::F64 => format_ident!("F64"),
+        ElementType::F16 => format_ident!("F16"),
+        ElementType::BF16 => format_ident!("BF16"),
+        ElementType::I32 => format_ident!("I32"),
+        ElementType::I64 => format_ident!("I64"),
     }
 }
 
@@ -674,6 +707,7 @@ fn parse_mlir_tensor_type(ty: &str) -> Option<TensorType> {
 
 fn parse_mlir_element_type(elem: &str) -> Option<ElementType> {
     match elem {
+        "i1" => Some(ElementType::Bool),
         "f32" => Some(ElementType::F32),
         "f64" => Some(ElementType::F64),
         "f16" => Some(ElementType::F16),
@@ -783,6 +817,13 @@ fn format_reassociation_groups(groups: Vec<Vec<usize>>) -> String {
 fn format_dim_list(rank: usize) -> String {
     (0..rank)
         .map(|index| format!("d{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn parallel_iterators(rank: usize) -> String {
+    (0..rank)
+        .map(|_| "\"parallel\"")
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -976,6 +1017,7 @@ fn reduction_output_map(input_rank: usize, axis: Option<usize>, keep_dims: bool)
 
 fn min_float_literal(elem: ElementType) -> &'static str {
     match elem {
+        ElementType::Bool => "0",
         ElementType::F32 => "-3.40282347E+38",
         ElementType::F64 => "-1.7976931348623157E+308",
         ElementType::F16 => "-65504.0",
@@ -1424,9 +1466,17 @@ impl<'a> Lowerer<'a> {
                     };
                     self.emit_unary(op_name, input)
                 }
+                CallOp::All(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.all(input, *axis)
+                }
                 CallOp::Argmax => {
                     let input = self.lower_expr(&args[0])?;
                     self.argmax(input)
+                }
+                CallOp::Any(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.any(input, *axis)
                 }
                 CallOp::Clip => {
                     let value = self.lower_expr(&args[0])?;
@@ -1449,9 +1499,52 @@ impl<'a> Lowerer<'a> {
                     let value = self.lower_expr(&args[0])?;
                     self.emit_unary("math.exp", value)
                 }
+                CallOp::Greater => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.comparison("ogt", "sgt", lhs, rhs)
+                }
+                CallOp::GreaterEqual => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.comparison("oge", "sge", lhs, rhs)
+                }
+                CallOp::IsNan => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.isnan(value)
+                }
+                CallOp::Less => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.comparison("olt", "slt", lhs, rhs)
+                }
+                CallOp::LessEqual => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.comparison("ole", "sle", lhs, rhs)
+                }
                 CallOp::Log => {
                     let value = self.lower_expr(&args[0])?;
                     self.emit_unary("math.log", value)
+                }
+                CallOp::LogicalAnd => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.logical_binary("arith.andi", lhs, rhs)
+                }
+                CallOp::LogicalNot => {
+                    let value = self.lower_expr(&args[0])?;
+                    self.logical_not(value)
+                }
+                CallOp::LogicalOr => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.logical_binary("arith.ori", lhs, rhs)
+                }
+                CallOp::LogicalXor => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.logical_binary("arith.xori", lhs, rhs)
                 }
                 CallOp::Relu => {
                     let value = self.lower_expr(&args[0])?;
@@ -1476,6 +1569,16 @@ impl<'a> Lowerer<'a> {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.maximum(lhs, rhs)
+                }
+                CallOp::Equal => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.comparison("oeq", "eq", lhs, rhs)
+                }
+                CallOp::NotEqual => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.comparison("une", "ne", lhs, rhs)
                 }
                 CallOp::Pow => {
                     let lhs = self.lower_expr(&args[0])?;
@@ -1534,6 +1637,12 @@ impl<'a> Lowerer<'a> {
                 CallOp::Unsqueeze(ty) => {
                     let input = self.lower_expr(&args[0])?;
                     self.reshape(input, ty)
+                }
+                CallOp::Where => {
+                    let condition = self.lower_expr(&args[0])?;
+                    let true_value = self.lower_expr(&args[1])?;
+                    let false_value = self.lower_expr(&args[2])?;
+                    self.where_select(condition, true_value, false_value)
                 }
                 CallOp::Graph(name) => {
                     let args = args
@@ -1701,6 +1810,316 @@ impl<'a> Lowerer<'a> {
             ty.mlir_type()
         ));
         Ok(Value { name, ty })
+    }
+
+    fn comparison(
+        &mut self,
+        float_predicate: &str,
+        integer_predicate: &str,
+        lhs: Value,
+        rhs: Value,
+    ) -> anyhow::Result<Value> {
+        let shape = broadcast_shape(&lhs.ty.shape, &rhs.ty.shape)?;
+        let ty = TensorType {
+            elem: ElementType::Bool,
+            shape,
+        };
+        let op_name = if lhs.ty.elem.is_float() {
+            "arith.cmpf"
+        } else {
+            "arith.cmpi"
+        };
+        let predicate = if lhs.ty.elem.is_float() {
+            float_predicate
+        } else {
+            integer_predicate
+        };
+        self.emit_elementwise_binary(&ty, lhs, rhs, |result, lhs, rhs, elem| {
+            format!("      {result} = {op_name} {predicate}, {lhs}, {rhs} : {elem}")
+        })
+    }
+
+    fn isnan(&mut self, value: Value) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: ElementType::Bool,
+            shape: value.ty.shape.clone(),
+        };
+        self.emit_elementwise_unary(&ty, value, |result, value, elem| {
+            format!("      {result} = arith.cmpf uno, {value}, {value} : {elem}")
+        })
+    }
+
+    fn logical_binary(&mut self, op_name: &str, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
+        let ty = broadcast_result_type(&lhs.ty, &rhs.ty)?;
+        self.emit_elementwise_binary(&ty, lhs, rhs, |result, lhs, rhs, elem| {
+            format!("      {result} = {op_name} {lhs}, {rhs} : {elem}")
+        })
+    }
+
+    fn logical_not(&mut self, value: Value) -> anyhow::Result<Value> {
+        let ty = value.ty.clone();
+        let true_value = self.constant("1", ElementType::Bool)?;
+        let true_value = self.broadcast(true_value, &ty)?;
+        self.logical_binary("arith.xori", value, true_value)
+    }
+
+    fn where_select(
+        &mut self,
+        condition: Value,
+        true_value: Value,
+        false_value: Value,
+    ) -> anyhow::Result<Value> {
+        let value_shape = broadcast_shape(&true_value.ty.shape, &false_value.ty.shape)?;
+        let value_ty = TensorType {
+            elem: true_value.ty.elem,
+            shape: value_shape,
+        };
+        let shape = broadcast_shape(&condition.ty.shape, &value_ty.shape)?;
+        let ty = TensorType {
+            elem: true_value.ty.elem,
+            shape,
+        };
+        let condition_ty = TensorType {
+            elem: ElementType::Bool,
+            shape: ty.shape.clone(),
+        };
+        let condition = if condition.ty == condition_ty {
+            condition
+        } else {
+            self.broadcast(condition, &condition_ty)?
+        };
+        let true_ty = TensorType {
+            elem: true_value.ty.elem,
+            shape: ty.shape.clone(),
+        };
+        let true_value = if true_value.ty == true_ty {
+            true_value
+        } else {
+            self.broadcast(true_value, &true_ty)?
+        };
+        let false_ty = TensorType {
+            elem: false_value.ty.elem,
+            shape: ty.shape.clone(),
+        };
+        let false_value = if false_value.ty == false_ty {
+            false_value
+        } else {
+            self.broadcast(false_value, &false_ty)?
+        };
+        self.emit_elementwise_ternary(&ty, condition, true_value, false_value)
+    }
+
+    fn emit_elementwise_unary<F>(
+        &mut self,
+        ty: &TensorType,
+        value: Value,
+        emit_body: F,
+    ) -> anyhow::Result<Value>
+    where
+        F: FnOnce(&str, &str, &str) -> String,
+    {
+        if ty.rank() == 0 {
+            let name = self.fresh();
+            self.lines
+                .push(emit_body(&name, &value.name, value.ty.elem.mlir_type()));
+            return Ok(Value {
+                name,
+                ty: ty.clone(),
+            });
+        }
+        let value_ty = TensorType {
+            elem: value.ty.elem,
+            shape: ty.shape.clone(),
+        };
+        let value = if value.ty == value_ty {
+            value
+        } else {
+            self.broadcast(value, &value_ty)?
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let name = self.fresh();
+        let dims = format_dim_list(ty.rank());
+        let map = format!("({dims})");
+        let iterators = parallel_iterators(ty.rank());
+        let result = self.fresh();
+        self.lines.push(format!("    {name} = linalg.generic {{"));
+        self.lines.push(format!(
+            "      indexing_maps = [affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>],"
+        ));
+        self.lines
+            .push(format!("      iterator_types = [{iterators}]"));
+        self.lines.push(format!(
+            "    }} ins({} : {}) outs({empty} : {}) {{",
+            value.name,
+            value.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "    ^bb0(%value: {}, %out: {}):",
+            value.ty.elem.mlir_type(),
+            ty.elem.mlir_type()
+        ));
+        self.lines
+            .push(emit_body(&result, "%value", value.ty.elem.mlir_type()));
+        self.lines.push(format!(
+            "      linalg.yield {result} : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn emit_elementwise_binary<F>(
+        &mut self,
+        ty: &TensorType,
+        lhs: Value,
+        rhs: Value,
+        emit_body: F,
+    ) -> anyhow::Result<Value>
+    where
+        F: FnOnce(&str, &str, &str, &str) -> String,
+    {
+        if ty.rank() == 0 {
+            let name = self.fresh();
+            self.lines.push(emit_body(
+                &name,
+                &lhs.name,
+                &rhs.name,
+                lhs.ty.elem.mlir_type(),
+            ));
+            return Ok(Value {
+                name,
+                ty: ty.clone(),
+            });
+        }
+        let lhs_ty = TensorType {
+            elem: lhs.ty.elem,
+            shape: ty.shape.clone(),
+        };
+        let lhs = if lhs.ty == lhs_ty {
+            lhs
+        } else {
+            self.broadcast(lhs, &lhs_ty)?
+        };
+        let rhs_ty = TensorType {
+            elem: rhs.ty.elem,
+            shape: ty.shape.clone(),
+        };
+        let rhs = if rhs.ty == rhs_ty {
+            rhs
+        } else {
+            self.broadcast(rhs, &rhs_ty)?
+        };
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let name = self.fresh();
+        let dims = format_dim_list(ty.rank());
+        let map = format!("({dims})");
+        let iterators = parallel_iterators(ty.rank());
+        let result = self.fresh();
+        self.lines.push(format!("    {name} = linalg.generic {{"));
+        self.lines.push(format!(
+            "      indexing_maps = [affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>],"
+        ));
+        self.lines
+            .push(format!("      iterator_types = [{iterators}]"));
+        self.lines.push(format!(
+            "    }} ins({}, {} : {}, {}) outs({empty} : {}) {{",
+            lhs.name,
+            rhs.name,
+            lhs.ty.mlir_type(),
+            rhs.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "    ^bb0(%lhs: {}, %rhs: {}, %out: {}):",
+            lhs.ty.elem.mlir_type(),
+            rhs.ty.elem.mlir_type(),
+            ty.elem.mlir_type()
+        ));
+        self.lines
+            .push(emit_body(&result, "%lhs", "%rhs", lhs.ty.elem.mlir_type()));
+        self.lines.push(format!(
+            "      linalg.yield {result} : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
+    }
+
+    fn emit_elementwise_ternary(
+        &mut self,
+        ty: &TensorType,
+        condition: Value,
+        true_value: Value,
+        false_value: Value,
+    ) -> anyhow::Result<Value> {
+        if ty.rank() == 0 {
+            let name = self.fresh();
+            self.lines.push(format!(
+                "    {name} = arith.select {}, {}, {} : {}",
+                condition.name,
+                true_value.name,
+                false_value.name,
+                ty.elem.mlir_type()
+            ));
+            return Ok(Value {
+                name,
+                ty: ty.clone(),
+            });
+        }
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let name = self.fresh();
+        let dims = format_dim_list(ty.rank());
+        let map = format!("({dims})");
+        let iterators = parallel_iterators(ty.rank());
+        let selected = self.fresh();
+        self.lines.push(format!("    {name} = linalg.generic {{"));
+        self.lines.push(format!(
+            "      indexing_maps = [affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>],"
+        ));
+        self.lines
+            .push(format!("      iterator_types = [{iterators}]"));
+        self.lines.push(format!(
+            "    }} ins({}, {}, {} : {}, {}, {}) outs({empty} : {}) {{",
+            condition.name,
+            true_value.name,
+            false_value.name,
+            condition.ty.mlir_type(),
+            true_value.ty.mlir_type(),
+            false_value.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "    ^bb0(%condition: i1, %true_value: {}, %false_value: {}, %out: {}):",
+            ty.elem.mlir_type(),
+            ty.elem.mlir_type(),
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      {selected} = arith.select %condition, %true_value, %false_value : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      linalg.yield {selected} : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
+        Ok(Value {
+            name,
+            ty: ty.clone(),
+        })
     }
 
     fn splat(&mut self, scalar: Value, ty: &TensorType) -> anyhow::Result<Value> {
@@ -2294,6 +2713,7 @@ impl<'a> Lowerer<'a> {
         ));
         let index_value = self.fresh();
         let conversion_op = match input.ty.elem {
+            ElementType::Bool => "arith.index_cast",
             ElementType::F32 | ElementType::F64 => "arith.uitofp",
             ElementType::F16 | ElementType::BF16 => "arith.uitofp",
             ElementType::I32 | ElementType::I64 => "arith.index_cast",
@@ -2321,6 +2741,14 @@ impl<'a> Lowerer<'a> {
         };
         let initial_value = input.ty.elem.zero_literal();
         self.reduce(input, initial_value, reducer_op, axis, false)
+    }
+
+    fn all(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        self.reduce(input, "1", "arith.andi", axis, false)
+    }
+
+    fn any(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        self.reduce(input, "0", "arith.ori", axis, false)
     }
 
     fn max(&mut self, input: Value, axis: Option<usize>, keep_dims: bool) -> anyhow::Result<Value> {
