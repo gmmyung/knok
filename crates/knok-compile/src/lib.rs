@@ -646,7 +646,6 @@ fn find_mlir_function_signature(mlir: &str, symbol_name: &str) -> Option<MlirSig
     let after_args = &rest[args_end + 1..];
     let arrow = after_args.find("->")? + 2;
     let output = after_args[arrow..]
-        .trim_start()
         .split_whitespace()
         .next()?
         .trim_end_matches('{');

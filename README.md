@@ -39,7 +39,7 @@ fn main() -> knok::Result<()> {
 
 For repeated inference, create a reusable runtime engine and call the generated
 `*_run` wrapper. This reuses the IREE instance, driver, device, loaded module,
-and resolved function instead of rebuilding runtime state on every call:
+and VMFB program instead of rebuilding runtime state on every call:
 
 ```rust
 use knok::{Backend, Engine, RuntimeConfig};

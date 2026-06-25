@@ -57,7 +57,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     #[cfg(feature = "host-runtime")]
-    Runtime(eerie::runtime::error::RuntimeError),
+    Runtime(eerie::runtime::RuntimeError),
     Shape {
         expected: &'static [usize],
         actual: alloc::vec::Vec<usize>,
@@ -76,13 +76,16 @@ pub enum Error {
         actual_driver: alloc::string::String,
     },
     EngineLockPoisoned,
-    MissingOutput,
+    OutputCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
     HostedRuntimeDisabled,
 }
 
 #[cfg(feature = "host-runtime")]
-impl From<eerie::runtime::error::RuntimeError> for Error {
-    fn from(error: eerie::runtime::error::RuntimeError) -> Self {
+impl From<eerie::runtime::RuntimeError> for Error {
+    fn from(error: eerie::runtime::RuntimeError) -> Self {
         Self::Runtime(error)
     }
 }
@@ -127,7 +130,12 @@ impl core::fmt::Display for Error {
                 )
             }
             Self::EngineLockPoisoned => formatter.write_str("runtime engine cache lock poisoned"),
-            Self::MissingOutput => formatter.write_str("missing runtime output"),
+            Self::OutputCountMismatch { expected, actual } => {
+                write!(
+                    formatter,
+                    "runtime output count mismatch: expected {expected}, got {actual}"
+                )
+            }
             Self::HostedRuntimeDisabled => formatter.write_str("host runtime feature is disabled"),
         }
     }

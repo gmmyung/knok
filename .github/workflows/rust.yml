@@ -59,4 +59,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+          save-if: false
       - run: nix develop --command cargo test -p knok -- --test-threads=1

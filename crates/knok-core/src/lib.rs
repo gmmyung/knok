@@ -1661,9 +1661,9 @@ fn concat_result_type(lhs: &TensorType, rhs: &TensorType, axis: usize) -> syn::R
     }
     expect_axis(lhs, axis)?;
     let mut shape = lhs.shape.clone();
-    for dim in 0..lhs.rank() {
+    for (dim, shape_dim) in shape.iter_mut().enumerate() {
         if dim == axis {
-            shape[dim] = lhs.shape[dim] + rhs.shape[dim];
+            *shape_dim = lhs.shape[dim] + rhs.shape[dim];
         } else if lhs.shape[dim] != rhs.shape[dim] {
             return Err(syn::Error::new(
                 Span::call_site(),
