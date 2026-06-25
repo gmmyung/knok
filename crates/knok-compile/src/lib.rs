@@ -54,7 +54,7 @@ fn registered_signatures() -> Vec<(String, GraphSignature)> {
                 name,
                 GraphSignature {
                     inputs: graph.inputs.into_iter().map(|input| input.ty).collect(),
-                    output: graph.output,
+                    outputs: graph.outputs,
                 },
             )
         })
@@ -332,11 +332,12 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         ReturnType::Default => {
             return Err(syn::Error::new_spanned(
                 &signature.ident,
-                "graph functions must return a Tensor type",
+                "graph functions must return a Tensor type or tuple of Tensor types",
             ));
         }
     };
     let graph = parse_graph_with_signatures(attr, item_fn, &registered_signatures())?;
+    let output_tys = parse_return_output_types(&signature.output)?;
     let graphs = registered_graphs();
     let compiled =
         compile_graph_variants_with_registry(&graph, &graphs, &backend_specs).map_err(|error| {
@@ -357,8 +358,10 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     let function_name = format!("knok.{}", graph.name);
     let artifact_name = format_ident!("{}_artifact", name);
     let run_name = format_ident!("{}_run", name);
-    let output_dims = graph.output.shape.iter().copied();
-    let output_elem_ty = rust_element_type(graph.output.elem);
+    let output_shapes = graph.outputs.iter().map(|output| {
+        let dims = output.shape.iter().copied();
+        quote!(&[#(#dims),*])
+    });
     let runtime_inputs = graph
         .inputs
         .iter()
@@ -400,27 +403,46 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         }
     });
 
+    let run_body = if output_tys.len() == 1 {
+        let output_elem_ty = rust_element_type(graph.outputs[0].elem);
+        quote! {
+            let output = ::knok::__private::invoke_one_with_engine::<#output_elem_ty>(
+                engine,
+                artifact,
+                &[#(#runtime_inputs),*],
+            )?;
+            <#output_ty>::from_vec(output)
+        }
+    } else {
+        let output_reads = graph.outputs.iter().zip(output_tys.iter()).enumerate().map(
+            |(index, (output, output_ty))| {
+                let output_elem_ty = rust_element_type(output.elem);
+                quote!(<#output_ty>::from_vec(outputs.read::<#output_elem_ty>(#index)?)?)
+            },
+        );
+        quote! {
+            let outputs = engine.invoke(artifact, &[#(#runtime_inputs),*])?;
+            Ok((#(#output_reads),*))
+        }
+    };
+
     Ok(quote! {
         #visibility fn #artifact_name() -> ::knok::GraphArtifact {
             #(#variant_statics)*
             static VARIANTS: &[::knok::GraphArtifactVariant] = &[#(#variants),*];
             static INPUT_SHAPES: &[&[usize]] = &[#(#artifact_input_shapes),*];
+            static OUTPUT_SHAPES: &[&[usize]] = &[#(#output_shapes),*];
             ::knok::GraphArtifact {
                 function_name: #function_name,
                 input_shapes: INPUT_SHAPES,
-                output_shape: &[#(#output_dims),*],
+                output_shapes: OUTPUT_SHAPES,
                 variants: VARIANTS,
             }
         }
 
         #visibility fn #run_name(engine: &::knok::Engine, #(#inputs),*) -> ::knok::Result<#output_ty> {
             let artifact = #artifact_name();
-            let output = ::knok::__private::invoke_typed_with_engine::<#output_elem_ty>(
-                engine,
-                artifact,
-                &[#(#runtime_inputs),*],
-            )?;
-            <#output_ty>::from_vec(output)
+            #run_body
         }
 
         #visibility fn #name(#(#inputs),*) -> ::knok::Result<#output_ty> {
@@ -453,17 +475,20 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             format!("failed to read MLIR file `{}`: {error}", path.display()),
         )
     })?;
-    if let (Some(inputs), Some(output)) = (&model.inputs, &model.output) {
+    if let (Some(inputs), Some(outputs)) = (&model.inputs, &model.outputs) {
         let expected_inputs = inputs
             .iter()
             .map(parse_tensor_type)
             .collect::<syn::Result<Vec<_>>>()?;
-        let expected_output = parse_tensor_type(output)?;
+        let expected_outputs = outputs
+            .iter()
+            .map(parse_tensor_type)
+            .collect::<syn::Result<Vec<_>>>()?;
         validate_mlir_model_signature(
             &mlir,
             &model.function.value(),
             &expected_inputs,
-            &expected_output,
+            &expected_outputs,
         )?;
     }
     let compiled = compile_mlir_variants(&model.backend_specs, &mlir).map_err(|error| {
@@ -475,23 +500,21 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
     let module_name = model.name;
     let function_name = model.function.value();
     let input_types = model.inputs.unwrap_or_default();
-    let output_shape = model
-        .output
+    let output_shapes = model
+        .outputs
         .as_ref()
-        .map(|ty| quote!(<#ty>::SHAPE))
-        .unwrap_or_else(|| quote!(&[]));
-    let output_elem_ty = model
-        .output
-        .as_ref()
-        .map(|ty| parse_tensor_type(ty).map(|ty| rust_element_type(ty.elem)))
-        .transpose()?;
-    let typed_scope_import = model.output.as_ref().map(|_| {
+        .map(|types| {
+            let shapes = types.iter().map(|ty| quote!(<#ty>::SHAPE));
+            quote!(&[#(#shapes),*] as &[&[usize]])
+        })
+        .unwrap_or_else(|| quote!(&[] as &[&[usize]]));
+    let output_types = model.outputs;
+    let typed_scope_import = output_types.as_ref().map(|_| {
         quote!(
             use super::*;
         )
     });
-    let typed_invoke = if let Some(output_ty) = model.output {
-        let output_elem_ty = output_elem_ty.expect("output element type was parsed");
+    let typed_invoke = if let Some(output_types) = output_types {
         let input_names = (0..input_types.len())
             .map(|index| format_ident!("input{index}"))
             .collect::<Vec<_>>();
@@ -505,17 +528,47 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                 })
             })
             .collect::<syn::Result<Vec<_>>>()?;
-        Some(quote! {
-            pub fn invoke_run(
-                engine: &::knok::Engine,
-                #(#input_names: #input_types),*
-            ) -> ::knok::Result<#output_ty> {
-                let output = ::knok::__private::invoke_typed_with_engine::<#output_elem_ty>(
+        let output_tensor_types = output_types
+            .iter()
+            .map(parse_tensor_type)
+            .collect::<syn::Result<Vec<_>>>()?;
+        let output_ty = if output_types.len() == 1 {
+            let output_ty = &output_types[0];
+            quote!(#output_ty)
+        } else {
+            quote!((#(#output_types),*))
+        };
+        let invoke_body = if output_types.len() == 1 {
+            let output_ty = &output_types[0];
+            let output_elem_ty = rust_element_type(output_tensor_types[0].elem);
+            quote! {
+                let output = ::knok::__private::invoke_one_with_engine::<#output_elem_ty>(
                     engine,
                     artifact(),
                     &[#(#runtime_inputs),*],
                 )?;
                 <#output_ty>::from_vec(output)
+            }
+        } else {
+            let output_reads = output_types
+                .iter()
+                .zip(output_tensor_types.iter())
+                .enumerate()
+                .map(|(index, (output_ty, output_tensor_ty))| {
+                    let output_elem_ty = rust_element_type(output_tensor_ty.elem);
+                    quote!(<#output_ty>::from_vec(outputs.read::<#output_elem_ty>(#index)?)?)
+                });
+            quote! {
+                let outputs = engine.invoke(artifact(), &[#(#runtime_inputs),*])?;
+                Ok((#(#output_reads),*))
+            }
+        };
+        Some(quote! {
+            pub fn invoke_run(
+                engine: &::knok::Engine,
+                #(#input_names: #input_types),*
+            ) -> ::knok::Result<#output_ty> {
+                #invoke_body
             }
 
             pub fn invoke(#(#input_names: #input_types),*) -> ::knok::Result<#output_ty> {
@@ -563,7 +616,7 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
                 ::knok::GraphArtifact {
                     function_name: #function_name,
                     input_shapes: INPUT_SHAPES,
-                    output_shape: #output_shape,
+                    output_shapes: #output_shapes,
                     variants: VARIANTS,
                 }
             }
@@ -577,7 +630,7 @@ fn validate_mlir_model_signature(
     mlir: &str,
     function_name: &str,
     expected_inputs: &[TensorType],
-    expected_output: &TensorType,
+    expected_outputs: &[TensorType],
 ) -> syn::Result<()> {
     let symbol_name = function_name.rsplit('.').next().unwrap_or(function_name);
     let signature = find_mlir_function_signature(mlir, symbol_name).ok_or_else(|| {
@@ -595,12 +648,12 @@ fn validate_mlir_model_signature(
             ),
         ));
     }
-    if &signature.output != expected_output {
+    if signature.outputs != expected_outputs {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
             format!(
-                "mlir_model output does not match MLIR function `{function_name}`: declared {:?}, MLIR has {:?}",
-                expected_output, signature.output
+                "mlir_model outputs do not match MLIR function `{function_name}`: declared {:?}, MLIR has {:?}",
+                expected_outputs, signature.outputs
             ),
         ));
     }
@@ -619,6 +672,50 @@ fn rust_element_type(elem: ElementType) -> TokenStream {
     }
 }
 
+fn parse_return_output_types(output: &ReturnType) -> syn::Result<Vec<Type>> {
+    match output {
+        ReturnType::Type(_, ty) => parse_output_types(ty),
+        ReturnType::Default => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "graph functions must return a Tensor type or tuple of Tensor types",
+        )),
+    }
+}
+
+fn parse_output_types(ty: &Type) -> syn::Result<Vec<Type>> {
+    match ty {
+        Type::Tuple(tuple) => {
+            if tuple.elems.is_empty() {
+                return Err(syn::Error::new(
+                    tuple.span(),
+                    "output tuple must contain at least one Tensor type",
+                ));
+            }
+            for elem in &tuple.elems {
+                parse_tensor_type(elem)?;
+            }
+            Ok(tuple.elems.iter().cloned().collect())
+        }
+        _ => {
+            parse_tensor_type(ty)?;
+            Ok(vec![ty.clone()])
+        }
+    }
+}
+
+fn mlir_result_types(outputs: &[TensorType]) -> String {
+    let types = outputs
+        .iter()
+        .map(TensorType::mlir_type)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if outputs.len() == 1 {
+        types
+    } else {
+        format!("({types})")
+    }
+}
+
 fn runtime_input_variant(elem: ElementType) -> proc_macro2::Ident {
     match elem {
         ElementType::Bool => format_ident!("Bool"),
@@ -633,7 +730,7 @@ fn runtime_input_variant(elem: ElementType) -> proc_macro2::Ident {
 
 struct MlirSignature {
     inputs: Vec<TensorType>,
-    output: TensorType,
+    outputs: Vec<TensorType>,
 }
 
 fn find_mlir_function_signature(mlir: &str, symbol_name: &str) -> Option<MlirSignature> {
@@ -645,10 +742,8 @@ fn find_mlir_function_signature(mlir: &str, symbol_name: &str) -> Option<MlirSig
     let args = &rest[args_start..args_end];
     let after_args = &rest[args_end + 1..];
     let arrow = after_args.find("->")? + 2;
-    let output = after_args[arrow..]
-        .split_whitespace()
-        .next()?
-        .trim_end_matches('{');
+    let after_arrow = after_args[arrow..].trim();
+    let output = mlir_function_result_text(after_arrow)?;
 
     let inputs = if args.trim().is_empty() {
         Vec::new()
@@ -663,8 +758,64 @@ fn find_mlir_function_signature(mlir: &str, symbol_name: &str) -> Option<MlirSig
     };
     Some(MlirSignature {
         inputs,
-        output: parse_mlir_tensor_type(output)?,
+        outputs: parse_mlir_result_types(output)?,
     })
+}
+
+fn mlir_function_result_text(after_arrow: &str) -> Option<&str> {
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    for (index, ch) in after_arrow.char_indices() {
+        match ch {
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            '(' if angle_depth == 0 => paren_depth += 1,
+            ')' if angle_depth == 0 => paren_depth = paren_depth.saturating_sub(1),
+            '{' if angle_depth == 0 && paren_depth == 0 => {
+                return Some(after_arrow[..index].trim());
+            }
+            _ if angle_depth == 0
+                && paren_depth == 0
+                && starts_mlir_keyword(after_arrow, index, "attributes") =>
+            {
+                return Some(after_arrow[..index].trim());
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn starts_mlir_keyword(input: &str, index: usize, keyword: &str) -> bool {
+    let tail = &input[index..];
+    if !tail.starts_with(keyword) {
+        return false;
+    }
+    let before_boundary = input[..index]
+        .chars()
+        .next_back()
+        .map_or(true, |ch| ch.is_whitespace());
+    let after_boundary = tail[keyword.len()..]
+        .chars()
+        .next()
+        .map_or(true, |ch| ch.is_whitespace() || ch == '{');
+    before_boundary && after_boundary
+}
+
+fn parse_mlir_result_types(output: &str) -> Option<Vec<TensorType>> {
+    let output = output.trim();
+    if output.starts_with('(') {
+        let inner = output.strip_prefix('(')?.strip_suffix(')')?;
+        if inner.trim().is_empty() {
+            return None;
+        }
+        split_top_level(inner, ',')
+            .into_iter()
+            .map(parse_mlir_tensor_type)
+            .collect()
+    } else {
+        Some(vec![parse_mlir_tensor_type(output)?])
+    }
 }
 
 fn split_top_level(input: &str, separator: char) -> Vec<&str> {
@@ -714,6 +865,50 @@ fn parse_mlir_element_type(elem: &str) -> Option<ElementType> {
         "i32" => Some(ElementType::I32),
         "i64" => Some(ElementType::I64),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tensor(shape: &[usize]) -> TensorType {
+        TensorType {
+            elem: ElementType::F32,
+            shape: shape.to_vec(),
+        }
+    }
+
+    #[test]
+    fn parses_mlir_signature_with_function_attributes() {
+        let mlir = r#"
+module @imported {
+  func.func @foo(%arg0: tensor<4xf32>) -> tensor<4xf32> attributes { iree.abi.stub } {
+    return %arg0 : tensor<4xf32>
+  }
+}
+"#;
+
+        let signature = find_mlir_function_signature(mlir, "foo").unwrap();
+
+        assert_eq!(signature.inputs, vec![tensor(&[4])]);
+        assert_eq!(signature.outputs, vec![tensor(&[4])]);
+    }
+
+    #[test]
+    fn parses_multi_result_mlir_signature_with_function_attributes() {
+        let mlir = r#"
+module @imported {
+  func.func @foo(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>) attributes { iree.abi.stub } {
+    return %arg0, %arg1 : tensor<4xf32>, tensor<4xf32>
+  }
+}
+"#;
+
+        let signature = find_mlir_function_signature(mlir, "foo").unwrap();
+
+        assert_eq!(signature.inputs, vec![tensor(&[4]), tensor(&[4])]);
+        assert_eq!(signature.outputs, vec![tensor(&[4]), tensor(&[4])]);
     }
 }
 
@@ -1031,7 +1226,7 @@ struct MlirModel {
     backend_specs: Vec<BackendSpec>,
     function: LitStr,
     inputs: Option<Vec<Type>>,
-    output: Option<Type>,
+    outputs: Option<Vec<Type>>,
 }
 
 impl Parse for MlirModel {
@@ -1041,7 +1236,7 @@ impl Parse for MlirModel {
         let mut backend_specs = None;
         let mut function = None;
         let mut inputs = None;
-        let mut output = None;
+        let mut outputs = None;
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             input.parse::<Token![:]>()?;
@@ -1083,7 +1278,35 @@ impl Parse for MlirModel {
                             .collect(),
                     );
                 }
-                "output" => output = Some(input.parse()?),
+                "output" => {
+                    if outputs.is_some() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "output and outputs are mutually exclusive",
+                        ));
+                    }
+                    outputs = Some(vec![input.parse()?]);
+                }
+                "outputs" => {
+                    if outputs.is_some() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "output and outputs are mutually exclusive",
+                        ));
+                    }
+                    let content;
+                    bracketed!(content in input);
+                    let parsed = Punctuated::<Type, Token![,]>::parse_terminated(&content)?
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    if parsed.is_empty() {
+                        return Err(syn::Error::new(
+                            key.span(),
+                            "outputs must contain at least one Tensor type",
+                        ));
+                    }
+                    outputs = Some(parsed);
+                }
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -1095,8 +1318,8 @@ impl Parse for MlirModel {
                 input.parse::<Token![,]>()?;
             }
         }
-        if inputs.is_some() != output.is_some() {
-            return Err(input.error("inputs and output must be provided together"));
+        if inputs.is_some() != outputs.is_some() {
+            return Err(input.error("inputs and output(s) must be provided together"));
         }
         Ok(Self {
             name: name.ok_or_else(|| input.error("missing name: <ident>"))?,
@@ -1108,7 +1331,7 @@ impl Parse for MlirModel {
             },
             function: function.ok_or_else(|| input.error("missing function: \"...\""))?,
             inputs,
-            output,
+            outputs,
         })
     }
 }
@@ -1408,15 +1631,27 @@ impl<'a> Lowerer<'a> {
             .collect::<Vec<_>>()
             .join(", ");
         for binding in &self.graph.lets {
-            let value = self.lower_expr(&binding.value.kind)?;
-            self.values.insert(binding.name.clone(), value);
+            let values = self.lower_let_values(&binding.value.kind)?;
+            self.bind_values(&binding.names, values, None)?;
         }
-        let body = self.lower_expr(&self.graph.body.kind)?;
-        self.lines.push(format!(
-            "    return {} : {}",
-            body.name,
-            body.ty.mlir_type()
-        ));
+        let body = self
+            .graph
+            .body
+            .iter()
+            .map(|expr| self.lower_expr(&expr.kind))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let return_values = body
+            .iter()
+            .map(|value| value.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let return_types = body
+            .iter()
+            .map(|value| value.ty.mlir_type())
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.lines
+            .push(format!("    return {} : {}", return_values, return_types));
 
         let mut mlir = String::new();
         mlir.push_str("module @knok {\n");
@@ -1424,7 +1659,7 @@ impl<'a> Lowerer<'a> {
             "  func.func @{}({}) -> {} {{\n",
             self.graph.name,
             arg_list,
-            self.graph.output.mlir_type()
+            mlir_result_types(&self.graph.outputs)
         ));
         for line in &self.lines {
             mlir.push_str(line);
@@ -1655,12 +1890,65 @@ impl<'a> Lowerer<'a> {
     }
 
     fn inline_graph(&mut self, name: &str, args: Vec<Value>) -> anyhow::Result<Value> {
+        let values = self.inline_graph_values(name, args)?;
+        if values.len() != 1 {
+            anyhow::bail!(
+                "graph `{name}` returns {} values and cannot be inlined as a tensor expression yet",
+                values.len()
+            );
+        }
+        Ok(values
+            .into_iter()
+            .next()
+            .expect("single-output graph call produced no values"))
+    }
+
+    fn lower_let_values(&mut self, expr: &Expr) -> anyhow::Result<Vec<Value>> {
+        match expr {
+            Expr::Call {
+                op: CallOp::Graph(name),
+                args,
+            } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.lower_expr(arg))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                self.inline_graph_values(name, args)
+            }
+            _ => Ok(vec![self.lower_expr(expr)?]),
+        }
+    }
+
+    fn bind_values(
+        &mut self,
+        names: &[String],
+        values: Vec<Value>,
+        mut overwritten: Option<&mut Vec<(String, Option<Value>)>>,
+    ) -> anyhow::Result<()> {
+        if names.len() != values.len() {
+            anyhow::bail!(
+                "internal error: let binding expected {} values, lowering produced {}",
+                names.len(),
+                values.len()
+            );
+        }
+        for (name, value) in names.iter().zip(values) {
+            let old_value = self.values.insert(name.clone(), value);
+            if let Some(overwritten) = &mut overwritten {
+                overwritten.push((name.clone(), old_value));
+            }
+        }
+        Ok(())
+    }
+
+    fn inline_graph_values(&mut self, name: &str, args: Vec<Value>) -> anyhow::Result<Vec<Value>> {
         if self.call_stack.iter().any(|candidate| candidate == name) {
             anyhow::bail!("recursive graph call `{name}` is not supported");
         }
         let graph = self
             .graphs
             .get(name)
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("unknown graph `{name}` during lowering"))?;
         if graph.inputs.len() != args.len() {
             anyhow::bail!(
@@ -1681,13 +1969,14 @@ impl<'a> Lowerer<'a> {
 
         let result = (|| {
             for binding in &graph.lets {
-                let value = self.lower_expr(&binding.value.kind)?;
-                overwritten.push((
-                    binding.name.clone(),
-                    self.values.insert(binding.name.clone(), value),
-                ));
+                let values = self.lower_let_values(&binding.value.kind)?;
+                self.bind_values(&binding.names, values, Some(&mut overwritten))?;
             }
-            self.lower_expr(&graph.body.kind)
+            graph
+                .body
+                .iter()
+                .map(|expr| self.lower_expr(&expr.kind))
+                .collect()
         })();
 
         for (name, old_value) in overwritten.into_iter().rev() {

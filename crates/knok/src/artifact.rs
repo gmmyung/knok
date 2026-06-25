@@ -2,7 +2,7 @@
 pub struct GraphArtifact {
     pub function_name: &'static str,
     pub input_shapes: &'static [&'static [usize]],
-    pub output_shape: &'static [usize],
+    pub output_shapes: &'static [&'static [usize]],
     pub variants: &'static [GraphArtifactVariant],
 }
 

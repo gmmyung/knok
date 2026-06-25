@@ -1,10 +1,12 @@
 extern crate alloc;
 
 use alloc::string::String;
+#[cfg(feature = "host-runtime")]
+use alloc::vec::Vec;
 
 use crate::Backend;
 
-#[doc(hidden)]
+/// Runtime input buffer passed to a compiled graph.
 pub enum RuntimeInput<'a> {
     Bool(&'a [usize], &'a [bool]),
     F32(&'a [usize], &'a [f32]),
@@ -17,26 +19,18 @@ pub enum RuntimeInput<'a> {
     BF16(&'a [usize], &'a [crate::half::bf16]),
 }
 
-#[doc(hidden)]
+/// Element types supported by the hosted single-output convenience path.
 pub trait RuntimeOutput: Copy {
     #[cfg(feature = "host-runtime")]
-    fn read_output(
-        engine: &crate::Engine,
-        function: &eerie::runtime::Function,
-        inputs: &[RuntimeInput<'_>],
-    ) -> crate::Result<alloc::vec::Vec<Self>>;
+    fn read_output(outputs: RuntimeOutputs) -> crate::Result<alloc::vec::Vec<Self>>;
 }
 
 #[cfg(feature = "host-runtime")]
 macro_rules! impl_runtime_output {
     ($ty:ty) => {
         impl RuntimeOutput for $ty {
-            fn read_output(
-                engine: &crate::Engine,
-                function: &eerie::runtime::Function,
-                inputs: &[RuntimeInput<'_>],
-            ) -> crate::Result<alloc::vec::Vec<Self>> {
-                engine.invoke_typed_values::<Self>(function, inputs)
+            fn read_output(outputs: RuntimeOutputs) -> crate::Result<alloc::vec::Vec<Self>> {
+                outputs.one::<Self>()
             }
         }
     };
@@ -61,12 +55,89 @@ impl_runtime_output!(crate::half::bf16);
 #[cfg(not(feature = "host-runtime"))]
 impl<T: Copy> RuntimeOutput for T {}
 
+#[cfg(feature = "host-runtime")]
+/// Outputs returned by a hosted graph invocation.
+pub struct RuntimeOutputs {
+    values: Vec<eerie::runtime::Value>,
+}
+
+#[cfg(feature = "host-runtime")]
+impl core::fmt::Debug for RuntimeOutputs {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RuntimeOutputs")
+            .field("len", &self.values.len())
+            .finish()
+    }
+}
+
+#[cfg(feature = "host-runtime")]
+impl RuntimeOutputs {
+    /// Returns the number of values produced by the invoked function.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Returns true when the invoked function produced no values.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Reads the only output as a host vector.
+    pub fn one<T: RuntimeElement>(mut self) -> crate::Result<Vec<T>> {
+        let actual = self.values.len();
+        if actual != 1 {
+            return Err(crate::Error::OutputCountMismatch {
+                expected: 1,
+                actual,
+            });
+        }
+        let value = self.values.pop().expect("output count was checked");
+        let output = T::buffer_from_value(value)?;
+        Ok(output.read()?)
+    }
+
+    /// Reads one output by index as a host vector.
+    pub fn read<T: RuntimeElement>(&self, index: usize) -> crate::Result<Vec<T>> {
+        let value = self
+            .values
+            .get(index)
+            .ok_or(crate::Error::OutputIndexOutOfBounds {
+                index,
+                len: self.values.len(),
+            })?;
+        let output = T::buffer_from_value(value.clone())?;
+        Ok(output.read()?)
+    }
+}
+
+#[cfg(not(feature = "host-runtime"))]
+#[doc(hidden)]
+pub struct RuntimeOutputs;
+
+#[cfg(not(feature = "host-runtime"))]
+impl RuntimeOutputs {
+    pub fn len(&self) -> usize {
+        0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+
+    pub fn one<T: RuntimeElement>(self) -> crate::Result<alloc::vec::Vec<T>> {
+        Err(crate::Error::HostedRuntimeDisabled)
+    }
+
+    pub fn read<T: RuntimeElement>(&self, _index: usize) -> crate::Result<alloc::vec::Vec<T>> {
+        Err(crate::Error::HostedRuntimeDisabled)
+    }
+}
+
 /// Element types that can be passed through raw runtime buffer views.
 #[cfg(feature = "host-runtime")]
 #[doc(hidden)]
 pub trait RuntimeElement: eerie::runtime::BufferElement {
-    fn buffer_to_value(buffer: &eerie::runtime::BufferView<Self>) -> eerie::runtime::Value;
-
     fn buffer_from_value(
         value: eerie::runtime::Value,
     ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError>;
@@ -76,10 +147,6 @@ pub trait RuntimeElement: eerie::runtime::BufferElement {
 macro_rules! impl_runtime_element {
     ($type:ty) => {
         impl RuntimeElement for $type {
-            fn buffer_to_value(buffer: &eerie::runtime::BufferView<Self>) -> eerie::runtime::Value {
-                buffer.into()
-            }
-
             fn buffer_from_value(
                 value: eerie::runtime::Value,
             ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError> {
@@ -183,9 +250,9 @@ mod hosted {
     };
     use std::sync::Mutex;
 
-    use eerie::runtime::{BufferView, DeviceSpec, Function, Program, Runtime, Value};
+    use eerie::runtime::{DeviceSpec, Function, Program, Runtime, Value};
 
-    use super::{driver_for_backend, RuntimeConfig, RuntimeElement, RuntimeInput, RuntimeOutput};
+    use super::{driver_for_backend, RuntimeConfig, RuntimeInput, RuntimeOutput, RuntimeOutputs};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
     pub struct Engine {
@@ -231,69 +298,11 @@ mod hosted {
             &self.driver_name
         }
 
-        pub(crate) fn invoke<T: RuntimeElement>(
-            &self,
-            artifact: GraphArtifact,
-            inputs: &[(&[usize], &[T])],
-        ) -> crate::Result<Vec<T>> {
-            let variant = artifact
-                .variant_for_driver(&self.driver_name)
-                .ok_or_else(|| crate::Error::MissingArtifactVariant {
-                    function_name: artifact.function_name,
-                    driver: self.driver_name.clone(),
-                })?;
-            self.invoke_raw(
-                variant.vmfb,
-                artifact.function_name,
-                variant.backend,
-                variant.driver,
-                inputs,
-            )
-        }
-
-        pub(crate) fn invoke_raw<T: RuntimeElement>(
-            &self,
-            vmfb: &[u8],
-            function_name: &'static str,
-            backend: &'static str,
-            driver: &'static str,
-            inputs: &[(&[usize], &[T])],
-        ) -> crate::Result<Vec<T>> {
-            if self.driver_name != driver {
-                return Err(crate::Error::RuntimeDriverMismatch {
-                    backend,
-                    expected_driver: driver,
-                    actual_driver: self.driver_name.clone(),
-                });
-            }
-
-            let function = {
-                let mut modules = self
-                    .modules
-                    .lock()
-                    .map_err(|_| crate::Error::EngineLockPoisoned)?;
-                if !modules.contains_key(vmfb) {
-                    modules.insert(vmfb.to_vec(), self.runtime.load_vmfb(vmfb)?);
-                }
-                modules
-                    .get(vmfb)
-                    .expect("module was just inserted")
-                    .function(function_name)?
-            };
-
-            let input_buffers: Vec<_> = inputs
-                .iter()
-                .map(|(shape, data)| self.runtime.buffer_view(shape, data))
-                .collect::<Result<_, _>>()?;
-            let output = self.invoke_buffer_views(&function, &input_buffers)?;
-            Ok(output.read()?)
-        }
-
-        pub(crate) fn invoke_typed<T: RuntimeOutput>(
+        pub fn invoke(
             &self,
             artifact: GraphArtifact,
             inputs: &[RuntimeInput<'_>],
-        ) -> crate::Result<Vec<T>> {
+        ) -> crate::Result<RuntimeOutputs> {
             let variant = artifact
                 .variant_for_driver(&self.driver_name)
                 .ok_or_else(|| crate::Error::MissingArtifactVariant {
@@ -308,7 +317,16 @@ mod hosted {
                 });
             }
             let function = self.resolve_function(variant.vmfb, artifact.function_name)?;
-            T::read_output(self, &function, inputs)
+            self.invoke_typed_values(&function, inputs)
+        }
+
+        pub fn invoke_one<T: RuntimeOutput>(
+            &self,
+            artifact: GraphArtifact,
+            inputs: &[RuntimeInput<'_>],
+        ) -> crate::Result<Vec<T>> {
+            let outputs = self.invoke(artifact, inputs)?;
+            T::read_output(outputs)
         }
 
         fn resolve_function(
@@ -330,46 +348,26 @@ mod hosted {
                 .map_err(crate::Error::from)
         }
 
-        pub(crate) fn invoke_typed_values<T: RuntimeElement>(
+        fn invoke_typed_values(
             &self,
             function: &Function,
             inputs: &[RuntimeInput<'_>],
-        ) -> crate::Result<Vec<T>> {
+        ) -> crate::Result<RuntimeOutputs> {
             let input_values = inputs
                 .iter()
                 .map(|input| self.input_value(input))
                 .collect::<crate::Result<Vec<_>>>()?;
-            let output = self.invoke_values(function, input_values)?;
-            Ok(output.read()?)
-        }
-
-        fn invoke_buffer_views<T: RuntimeElement>(
-            &self,
-            function: &Function,
-            inputs: &[BufferView<T>],
-        ) -> crate::Result<BufferView<T>> {
-            let input_values = inputs.iter().map(T::buffer_to_value).collect::<Vec<_>>();
             self.invoke_values(function, input_values)
         }
 
-        fn invoke_values<T: RuntimeElement>(
+        fn invoke_values(
             &self,
             function: &Function,
             input_values: Vec<Value>,
-        ) -> crate::Result<BufferView<T>> {
-            let outputs = function.invoke(input_values)?;
-            let actual = outputs.len();
-            if actual != 1 {
-                return Err(crate::Error::OutputCountMismatch {
-                    expected: 1,
-                    actual,
-                });
-            }
-            let output = outputs
-                .into_iter()
-                .next()
-                .expect("output count was checked");
-            T::buffer_from_value(output).map_err(crate::Error::from)
+        ) -> crate::Result<RuntimeOutputs> {
+            Ok(RuntimeOutputs {
+                values: function.invoke(input_values)?,
+            })
         }
 
         fn input_value(&self, input: &RuntimeInput<'_>) -> crate::Result<Value> {
@@ -406,7 +404,7 @@ mod hosted {
 mod hosted {
     use alloc::vec::Vec;
 
-    use super::{RuntimeConfig, RuntimeElement, RuntimeInput, RuntimeOutput};
+    use super::{RuntimeConfig, RuntimeInput, RuntimeOutput, RuntimeOutputs};
     use crate::GraphArtifact;
 
     pub struct Engine;
@@ -436,30 +434,18 @@ mod hosted {
             ""
         }
 
-        pub(crate) fn invoke<T: RuntimeElement>(
-            &self,
-            _artifact: GraphArtifact,
-            _inputs: &[(&[usize], &[T])],
-        ) -> crate::Result<Vec<T>> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub(crate) fn invoke_typed<T: RuntimeOutput>(
+        pub fn invoke(
             &self,
             _artifact: GraphArtifact,
             _inputs: &[RuntimeInput<'_>],
-        ) -> crate::Result<Vec<T>> {
+        ) -> crate::Result<RuntimeOutputs> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        #[allow(dead_code)]
-        pub(crate) fn invoke_raw<T: RuntimeElement>(
+        pub fn invoke_one<T: RuntimeOutput>(
             &self,
-            _vmfb: &[u8],
-            _function_name: &'static str,
-            _backend: &'static str,
-            _driver: &'static str,
-            _inputs: &[(&[usize], &[T])],
+            _artifact: GraphArtifact,
+            _inputs: &[RuntimeInput<'_>],
         ) -> crate::Result<Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }

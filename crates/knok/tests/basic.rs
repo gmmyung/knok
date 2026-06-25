@@ -1,9 +1,21 @@
 use knok::prelude::*;
+use knok::runtime::RuntimeInput;
 use knok::{Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig};
 
 #[knok::graph(backend = "llvm-cpu")]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn add_sub4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (x + y, x - y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn add_sub4_product(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    let (sum, diff) = add_sub4(x, y);
+    sum * diff
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -386,6 +398,29 @@ fn add_graph_runs() {
     assert_eq!(output.into_vec(), vec![11.0, 22.0, 33.0, 44.0]);
 }
 
+#[test]
+fn multi_output_graph_runs() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
+    let y = Tensor1::from_array([10.0, 20.0, 30.0, 40.0]);
+
+    let (sum, diff) = add_sub4_run(&engine, x, y).unwrap();
+
+    assert_eq!(sum.into_vec(), vec![11.0, 22.0, 33.0, 44.0]);
+    assert_eq!(diff.into_vec(), vec![-9.0, -18.0, -27.0, -36.0]);
+}
+
+#[test]
+fn multi_output_graph_call_can_be_destructured() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
+    let y = Tensor1::from_array([10.0, 20.0, 30.0, 40.0]);
+
+    let output = add_sub4_product_run(&engine, x, y).unwrap();
+
+    assert_eq!(output.into_vec(), vec![-99.0, -396.0, -891.0, -1584.0]);
+}
+
 #[cfg(feature = "half")]
 #[test]
 fn half_graphs_run() {
@@ -489,9 +524,12 @@ fn engine_reports_missing_artifact_variant_for_driver() {
     };
     let x = [1.0, 2.0, 3.0, 4.0];
     let y = [10.0, 20.0, 30.0, 40.0];
-    let error =
-        knok::__private::invoke_with_engine::<f32>(&engine, artifact, &[(&[4], &x), (&[4], &y)])
-            .unwrap_err();
+    let error = engine
+        .invoke(
+            artifact,
+            &[RuntimeInput::F32(&[4], &x), RuntimeInput::F32(&[4], &y)],
+        )
+        .unwrap_err();
 
     assert!(matches!(
         error,

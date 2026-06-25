@@ -50,7 +50,7 @@ pub mod prelude {
 
 pub use artifact::{GraphArtifact, GraphArtifactVariant};
 pub use backend::{Backend, SUPPORTED_BACKENDS};
-pub use runtime::{Engine, RuntimeConfig};
+pub use runtime::{Engine, RuntimeConfig, RuntimeInput, RuntimeOutputs};
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -79,6 +79,10 @@ pub enum Error {
     OutputCountMismatch {
         expected: usize,
         actual: usize,
+    },
+    OutputIndexOutOfBounds {
+        index: usize,
+        len: usize,
     },
     HostedRuntimeDisabled,
 }
@@ -134,6 +138,12 @@ impl core::fmt::Display for Error {
                 write!(
                     formatter,
                     "runtime output count mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::OutputIndexOutOfBounds { index, len } => {
+                write!(
+                    formatter,
+                    "runtime output index out of bounds: index {index}, len {len}"
                 )
             }
             Self::HostedRuntimeDisabled => formatter.write_str("host runtime feature is disabled"),
