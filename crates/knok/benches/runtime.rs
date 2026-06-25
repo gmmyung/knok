@@ -60,7 +60,7 @@ fn small_benches(criterion: &mut Criterion) {
     });
 
     group.bench_function("tensor4_zeros_shape_1x8x8x3", |bencher| {
-        bencher.iter(|| Tensor4::<f32, 1, 8, 8, 3>::zeros())
+        bencher.iter(Tensor4::<f32, 1, 8, 8, 3>::zeros)
     });
 
     group.bench_function("add4_knok_reusable_engine", |bencher| {
