@@ -50,7 +50,7 @@ pub mod prelude {
 
 pub use artifact::{GraphArtifact, GraphArtifactVariant};
 pub use backend::{Backend, SUPPORTED_BACKENDS};
-pub use runtime::{Engine, RuntimeConfig, RuntimeInput, RuntimeOutputs};
+pub use runtime::{Engine, RuntimeConfig};
 
 pub type Result<T> = core::result::Result<T, Error>;
 

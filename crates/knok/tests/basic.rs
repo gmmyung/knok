@@ -1,5 +1,5 @@
 use knok::prelude::*;
-use knok::runtime::RuntimeInput;
+use knok::runtime::raw;
 use knok::{Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig};
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -379,7 +379,7 @@ fn conv2d_pad_stride(
     x: Tensor4<f32, 1, 3, 3, 1>,
     k: Tensor4<f32, 2, 2, 1, 1>,
 ) -> Tensor4<f32, 1, 2, 2, 1> {
-    conv2d::<1, 1, 2, 2, 1, 1>(x, k)
+    conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -387,7 +387,7 @@ fn conv2d_dilated(
     x: Tensor4<f32, 1, 3, 3, 1>,
     k: Tensor4<f32, 2, 2, 1, 1>,
 ) -> Tensor4<f32, 1, 1, 1, 1> {
-    conv2d::<0, 0, 1, 1, 2, 2>(x, k)
+    conv2d::<Dilation<2, 2>>(x, k)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -637,7 +637,7 @@ fn engine_reports_missing_artifact_variant_for_driver() {
     let error = engine
         .invoke(
             artifact,
-            &[RuntimeInput::F32(&[4], &x), RuntimeInput::F32(&[4], &y)],
+            &[raw::Input::F32(&[4], &x), raw::Input::F32(&[4], &y)],
         )
         .unwrap_err();
 

@@ -112,23 +112,27 @@ pub enum CallOp {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Conv2dOptions {
-    pub pad_h: usize,
-    pub pad_w: usize,
-    pub stride_h: usize,
-    pub stride_w: usize,
-    pub dilation_h: usize,
-    pub dilation_w: usize,
+    pub padding: Padding2d,
+    pub stride: [usize; 2],
+    pub dilation: [usize; 2],
+    pub groups: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Padding2d {
+    pub top: usize,
+    pub bottom: usize,
+    pub left: usize,
+    pub right: usize,
 }
 
 impl Default for Conv2dOptions {
     fn default() -> Self {
         Self {
-            pad_h: 0,
-            pad_w: 0,
-            stride_h: 1,
-            stride_w: 1,
-            dilation_h: 1,
-            dilation_w: 1,
+            padding: Padding2d::default(),
+            stride: [1, 1],
+            dilation: [1, 1],
+            groups: 1,
         }
     }
 }

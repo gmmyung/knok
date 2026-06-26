@@ -89,7 +89,7 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             .map(|(ty, input_name)| {
                 parse_tensor_type(ty).map(|tensor_ty| {
                     let variant = runtime_input_variant(tensor_ty.elem);
-                    quote!(::knok::runtime::RuntimeInput::#variant(<#ty>::SHAPE, #input_name.as_slice()))
+                    quote!(::knok::runtime::raw::Input::#variant(<#ty>::SHAPE, #input_name.as_slice()))
                 })
             })
             .collect::<syn::Result<Vec<_>>>()?;

@@ -1,5 +1,7 @@
+mod conv;
 mod emit;
 mod lowerer;
+mod matmul;
 mod reductions;
 mod shape;
 mod tensor_ops;

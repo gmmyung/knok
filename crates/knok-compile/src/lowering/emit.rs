@@ -26,6 +26,26 @@ impl Lowerer<'_> {
         Ok(Value::tensor(name, ty.clone()))
     }
 
+    pub(super) fn zero_initialized_tensor(&mut self, ty: &TensorType) -> anyhow::Result<String> {
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant {} : {}",
+            ty.elem.zero_literal(),
+            ty.elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
+            ty.elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(init)
+    }
+
     pub(super) fn binary_value(
         &mut self,
         op: BinaryOp,

@@ -290,6 +290,28 @@ fn parses_higher_rank_tensors_and_infers_inference_ops() {
         })
         .unwrap();
     assert_eq!(conv.body[0].ty, tensor(&[1, 2, 2, 8]));
+
+    let padded_conv = parse(parse_quote! {
+            fn conv(x: Tensor4<f32, 1, 3, 3, 3>, k: Tensor4<f32, 2, 2, 3, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+                conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>, Dilation<1, 1>, Groups<1>>(x, k)
+            }
+        })
+        .unwrap();
+    assert_eq!(padded_conv.body[0].ty, tensor(&[1, 2, 2, 8]));
+}
+
+#[test]
+fn rejects_unsupported_grouped_conv2d() {
+    let error = parse(parse_quote! {
+        fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 4, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+            conv2d::<Groups<2>>(x, k)
+        }
+    })
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("grouped conv2d is not supported yet"));
 }
 
 #[test]

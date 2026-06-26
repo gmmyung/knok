@@ -98,7 +98,8 @@ let output = imported_add4::invoke(x, y)?;
 Typed MLIR imports also expose `invoke_run(&engine, ...)` for reusable
 execution. Multi-output MLIR imports use `outputs: [...]` and return a tuple.
 MLIR imports without a declared signature still expose `artifact()`; use
-`Engine::invoke` with `RuntimeInput` values when you need raw runtime execution.
+`Engine::invoke` with `knok::runtime::raw::Input` values when you need raw
+runtime execution.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
@@ -222,7 +223,9 @@ They cover the recommended hosted workflow:
   have matching element types; mixed dtype promotion is not implemented.
 - Quantized integer types, complex numbers, and string/object-like values are
   not implemented yet.
-- Static rank-1 through rank-4 shapes only.
+- Static rank-0 through rank-4 shapes only.
+- Host tensors are contiguous row-major value containers. Graph operations are
+  value operations, not NumPy-style host views.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
   Backend names and driver compatibility are validated at macro expansion time.
@@ -231,7 +234,8 @@ They cover the recommended hosted workflow:
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
   `pow`, `relu`, NumPy-style `matmul` for ranks 1-4, NHWC/HWCF `conv2d` with
-  static padding/stride/dilation options, rank-2 `transpose`, explicit
+  static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
+  `Dilation<H, W>` options, rank-2 `transpose`, explicit
   `permute::<Target, AXES...>`, reshape across ranks 0-4, `broadcast`,
   `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
   binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
@@ -239,6 +243,10 @@ They cover the recommended hosted workflow:
   `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
+- `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
+  markers, for example `conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)`.
+  `Groups<N>` is reserved, but grouped convolution is rejected for now unless
+  `N = 1`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`,
   `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
   element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
