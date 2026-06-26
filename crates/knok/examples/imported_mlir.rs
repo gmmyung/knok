@@ -4,7 +4,7 @@ use knok::{Engine, RuntimeConfig};
 knok::mlir_model! {
     name: imported_add4,
     path: "tests/fixtures/add4.mlir",
-    backend: "llvm-cpu",
+    backend: Backend::LlvmCpu,
     function: "imported.add4",
     inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
     output: Tensor1<f32, 4>,

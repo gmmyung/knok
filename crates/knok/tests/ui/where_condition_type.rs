@@ -1,6 +1,6 @@
 use knok::prelude::*;
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn bad_where_condition(
     c: Tensor1<f32, 4>,
     x: Tensor1<f32, 4>,

@@ -28,15 +28,7 @@ fn parse_backend(attr: proc_macro2::TokenStream) -> syn::Result<String> {
         .parse2(attr)?;
     for arg in args {
         if arg.path.is_ident("backend") {
-            if let SynExpr::Lit(expr_lit) = &arg.value {
-                if let Lit::Str(lit) = &expr_lit.lit {
-                    return Ok(lit.value());
-                }
-            }
-            return Err(syn::Error::new(
-                arg.span(),
-                "backend must be a string literal",
-            ));
+            return parse_backend_path(&arg.value);
         }
         if arg.path.is_ident("backends") {
             return parse_first_backend_from_array(&arg.value);
@@ -44,8 +36,38 @@ fn parse_backend(attr: proc_macro2::TokenStream) -> syn::Result<String> {
     }
     Err(syn::Error::new(
         Span::call_site(),
-        "missing required backend = \"...\" argument",
+        "missing required backend = Backend::... argument",
     ))
+}
+
+fn parse_backend_path(value: &SynExpr) -> syn::Result<String> {
+    let SynExpr::Path(path) = value else {
+        return Err(syn::Error::new(
+            value.span(),
+            "backend must be a path such as Backend::LlvmCpu or knok::Backend::LlvmCpu",
+        ));
+    };
+    let Some(backend) = backend_from_path(&path.path) else {
+        return Err(syn::Error::new(
+            path.span(),
+            "unsupported backend path; expected Backend::LlvmCpu or Backend::MetalSpirv",
+        ));
+    };
+    Ok(backend.to_string())
+}
+
+fn backend_from_path(path: &syn::Path) -> Option<&'static str> {
+    let mut segments = path.segments.iter().rev();
+    let variant = segments.next()?;
+    let ty = segments.next()?;
+    if ty.ident != "Backend" {
+        return None;
+    }
+    match variant.ident.to_string().as_str() {
+        "LlvmCpu" => Some("llvm-cpu"),
+        "MetalSpirv" => Some("metal-spirv"),
+        _ => None,
+    }
 }
 
 fn parse_first_backend_from_array(value: &SynExpr) -> syn::Result<String> {
@@ -67,16 +89,10 @@ fn parse_first_backend_from_array(value: &SynExpr) -> syn::Result<String> {
     if !path.path.is_ident("backend") {
         return Err(syn::Error::new(call.func.span(), "expected backend(...)"));
     }
-    let Some(SynExpr::Lit(expr_lit)) = call.args.first() else {
-        return Err(syn::Error::new(call.span(), "backend name is required"));
+    let Some(first) = call.args.first() else {
+        return Err(syn::Error::new(call.span(), "backend path is required"));
     };
-    let Lit::Str(lit) = &expr_lit.lit else {
-        return Err(syn::Error::new(
-            expr_lit.span(),
-            "backend name must be a string literal",
-        ));
-    };
-    Ok(lit.value())
+    parse_backend_path(first)
 }
 
 fn parse_item_fn(item: ItemFn, backend: String) -> syn::Result<Graph> {

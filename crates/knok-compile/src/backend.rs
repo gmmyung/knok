@@ -16,7 +16,7 @@ pub(crate) enum IreeBackend {
 }
 
 impl IreeBackend {
-    pub(crate) fn parse(name: &str) -> Option<Self> {
+    pub(crate) fn from_target_backend(name: &str) -> Option<Self> {
         match name {
             "llvm-cpu" => Some(Self::LlvmCpu),
             "metal-spirv" => Some(Self::MetalSpirv),
@@ -24,10 +24,18 @@ impl IreeBackend {
         }
     }
 
-    fn default_driver(self) -> &'static str {
+    fn from_path(path: &syn::Path) -> Option<Self> {
+        match typed_path_variant(path, "Backend")?.as_str() {
+            "LlvmCpu" => Some(Self::LlvmCpu),
+            "MetalSpirv" => Some(Self::MetalSpirv),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn default_driver(self) -> IreeDriver {
         match self {
-            Self::LlvmCpu => "local-task",
-            Self::MetalSpirv => "metal",
+            Self::LlvmCpu => IreeDriver::LocalTask,
+            Self::MetalSpirv => IreeDriver::Metal,
         }
     }
 
@@ -38,43 +46,112 @@ impl IreeBackend {
         }
     }
 
-    fn supports_driver(self, driver: &str) -> bool {
+    fn supports_driver(self, driver: IreeDriver) -> bool {
         self.default_driver() == driver
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IreeDriver {
+    LocalTask,
+    Metal,
+}
+
+impl IreeDriver {
+    fn from_path(path: &syn::Path) -> Option<Self> {
+        match typed_path_variant(path, "Driver")?.as_str() {
+            "LocalTask" => Some(Self::LocalTask),
+            "Metal" => Some(Self::Metal),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::LocalTask => "local-task",
+            Self::Metal => "metal",
+        }
     }
 }
 
 impl BackendSpec {
     pub(crate) fn new(
-        backend: String,
-        driver: Option<String>,
+        backend: IreeBackend,
+        driver: Option<IreeDriver>,
         extra_flags: Vec<String>,
         span: proc_macro2::Span,
     ) -> syn::Result<Self> {
-        let capability = IreeBackend::parse(&backend).ok_or_else(|| {
-            syn::Error::new(
-                span,
-                format!(
-                    "unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`"
-                ),
-            )
-        })?;
-        let driver = driver.unwrap_or_else(|| capability.default_driver().to_string());
-        if !capability.supports_driver(&driver) {
+        let driver = driver.unwrap_or_else(|| backend.default_driver());
+        if !backend.supports_driver(driver) {
             return Err(syn::Error::new(
                 span,
                 format!(
                     "backend `{}` expects runtime driver `{}`, got `{driver}`",
-                    capability.target_backend(),
-                    capability.default_driver(),
+                    backend.target_backend(),
+                    backend.default_driver(),
                 ),
             ));
         }
         Ok(Self {
-            backend,
-            driver,
+            backend: backend.target_backend().to_string(),
+            driver: driver.name().to_string(),
             extra_flags,
         })
     }
+}
+
+impl std::fmt::Display for IreeDriver {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+fn typed_path_variant(path: &syn::Path, type_name: &str) -> Option<String> {
+    let mut segments = path.segments.iter().rev();
+    let variant = segments.next()?;
+    let ty = segments.next()?;
+    if ty.ident == type_name {
+        Some(variant.ident.to_string())
+    } else {
+        None
+    }
+}
+
+fn parse_backend_path(value: &syn::Expr) -> syn::Result<(IreeBackend, proc_macro2::Span)> {
+    let syn::Expr::Path(path) = value else {
+        return Err(syn::Error::new(
+            value.span(),
+            "backend must be a path such as Backend::LlvmCpu or knok::Backend::LlvmCpu",
+        ));
+    };
+    let backend = IreeBackend::from_path(&path.path).ok_or_else(|| {
+        syn::Error::new(
+            path.span(),
+            "unsupported backend path; expected Backend::LlvmCpu or Backend::MetalSpirv",
+        )
+    })?;
+    Ok((backend, path.span()))
+}
+
+fn parse_driver_path(value: &syn::Expr) -> syn::Result<(IreeDriver, proc_macro2::Span)> {
+    let syn::Expr::Path(path) = value else {
+        return Err(syn::Error::new(
+            value.span(),
+            "driver must be a path such as Driver::LocalTask or knok::Driver::Metal",
+        ));
+    };
+    let driver = IreeDriver::from_path(&path.path).ok_or_else(|| {
+        syn::Error::new(
+            path.span(),
+            "unsupported driver path; expected Driver::LocalTask or Driver::Metal",
+        )
+    })?;
+    Ok((driver, path.span()))
+}
+
+pub(crate) fn parse_backend_expr(value: &syn::Expr) -> syn::Result<BackendSpec> {
+    let (backend, span) = parse_backend_path(value)?;
+    BackendSpec::new(backend, None, Vec::new(), span)
 }
 
 pub(crate) fn parse_backend_specs(attr: TokenStream) -> syn::Result<Vec<BackendSpec>> {
@@ -89,24 +166,7 @@ pub(crate) fn parse_backend_specs(attr: TokenStream) -> syn::Result<Vec<BackendS
                     "backend and backends are mutually exclusive",
                 ));
             }
-            let syn::Expr::Lit(expr_lit) = &arg.value else {
-                return Err(syn::Error::new(
-                    arg.value.span(),
-                    "backend must be a string literal",
-                ));
-            };
-            let Lit::Str(lit) = &expr_lit.lit else {
-                return Err(syn::Error::new(
-                    expr_lit.span(),
-                    "backend must be a string literal",
-                ));
-            };
-            backend = Some(vec![BackendSpec::new(
-                lit.value(),
-                None,
-                Vec::new(),
-                lit.span(),
-            )?]);
+            backend = Some(vec![parse_backend_expr(&arg.value)?]);
         } else if arg.path.is_ident("backends") {
             if backend.is_some() || backends.is_some() {
                 return Err(syn::Error::new(
@@ -125,7 +185,7 @@ pub(crate) fn parse_backend_specs(attr: TokenStream) -> syn::Result<Vec<BackendS
     let specs = backend.or(backends).ok_or_else(|| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
-            "missing required backend = \"...\" argument",
+            "missing required backend = Backend::... argument",
         )
     })?;
     reject_duplicate_drivers(&specs)?;
@@ -159,20 +219,9 @@ fn parse_backend_call(expr: &syn::Expr) -> syn::Result<BackendSpec> {
         return Err(syn::Error::new(call.func.span(), "expected backend(...)"));
     }
     let Some(first) = call.args.first() else {
-        return Err(syn::Error::new(call.span(), "backend name is required"));
+        return Err(syn::Error::new(call.span(), "backend path is required"));
     };
-    let syn::Expr::Lit(expr_lit) = first else {
-        return Err(syn::Error::new(
-            first.span(),
-            "backend name must be a string literal",
-        ));
-    };
-    let Lit::Str(backend_lit) = &expr_lit.lit else {
-        return Err(syn::Error::new(
-            expr_lit.span(),
-            "backend name must be a string literal",
-        ));
-    };
+    let (backend, backend_span) = parse_backend_path(first)?;
 
     let mut driver = None;
     let mut extra_flags = Vec::new();
@@ -180,7 +229,7 @@ fn parse_backend_call(expr: &syn::Expr) -> syn::Result<BackendSpec> {
         let syn::Expr::Assign(assign) = arg else {
             return Err(syn::Error::new(
                 arg.span(),
-                "backend options must be assignments such as driver = \"...\"",
+                "backend options must be assignments such as driver = Driver::LocalTask",
             ));
         };
         let syn::Expr::Path(key_path) = assign.left.as_ref() else {
@@ -192,19 +241,7 @@ fn parse_backend_call(expr: &syn::Expr) -> syn::Result<BackendSpec> {
                 if driver.is_some() {
                     return Err(syn::Error::new(assign.span(), "duplicate driver option"));
                 }
-                let syn::Expr::Lit(expr_lit) = assign.right.as_ref() else {
-                    return Err(syn::Error::new(
-                        assign.right.span(),
-                        "driver must be a string literal",
-                    ));
-                };
-                let Lit::Str(lit) = &expr_lit.lit else {
-                    return Err(syn::Error::new(
-                        expr_lit.span(),
-                        "driver must be a string literal",
-                    ));
-                };
-                driver = Some(lit.value());
+                driver = Some(parse_driver_path(assign.right.as_ref())?.0);
             }
             "flags" => {
                 let syn::Expr::Array(array) = assign.right.as_ref() else {
@@ -237,7 +274,7 @@ fn parse_backend_call(expr: &syn::Expr) -> syn::Result<BackendSpec> {
             }
         }
     }
-    BackendSpec::new(backend_lit.value(), driver, extra_flags, backend_lit.span())
+    BackendSpec::new(backend, driver, extra_flags, backend_span)
 }
 
 pub(crate) fn reject_duplicate_drivers(specs: &[BackendSpec]) -> syn::Result<()> {
@@ -257,7 +294,7 @@ pub(crate) fn reject_duplicate_drivers(specs: &[BackendSpec]) -> syn::Result<()>
 }
 
 pub(crate) fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
-    let capability = IreeBackend::parse(backend)
+    let capability = IreeBackend::from_target_backend(backend)
         .unwrap_or_else(|| panic!("unsupported IREE backend `{backend}`"));
     let mut flags = vec![
         format!("--iree-hal-target-backends={backend}"),

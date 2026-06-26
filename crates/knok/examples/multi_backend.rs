@@ -3,8 +3,8 @@ use knok::{Engine, RuntimeConfig};
 
 #[cfg(target_os = "macos")]
 #[knok::graph(backends = [
-    backend("llvm-cpu", driver = "local-task"),
-    backend("metal-spirv", driver = "metal"),
+    backend(Backend::LlvmCpu, driver = Driver::LocalTask),
+    backend(Backend::MetalSpirv, driver = Driver::Metal),
 ])]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
@@ -12,7 +12,7 @@ fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 
 #[cfg(not(target_os = "macos"))]
 #[knok::graph(backends = [
-    backend("llvm-cpu", driver = "local-task"),
+    backend(Backend::LlvmCpu, driver = Driver::LocalTask),
 ])]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
@@ -20,7 +20,7 @@ fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 
 fn main() -> knok::Result<()> {
     #[cfg(target_os = "macos")]
-    let engine = Engine::new(RuntimeConfig::driver("metal"))?;
+    let engine = Engine::new(RuntimeConfig::driver(Driver::Metal))?;
 
     #[cfg(not(target_os = "macos"))]
     let engine = Engine::new(RuntimeConfig::auto())?;

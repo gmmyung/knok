@@ -1,6 +1,6 @@
 use knok::prelude::*;
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x + y)
 }

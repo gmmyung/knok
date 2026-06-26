@@ -103,7 +103,7 @@ fn verify_with_melior(mlir: &str) -> anyhow::Result<()> {
 }
 
 fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyhow::Result<Vec<u8>> {
-    if IreeBackend::parse(backend).is_none() {
+    if IreeBackend::from_target_backend(backend).is_none() {
         anyhow::bail!("unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`");
     }
     let cache_dir = cache_dir()?;

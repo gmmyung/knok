@@ -5,17 +5,17 @@ use nalgebra::DMatrix;
 use ndarray::{s, Array2, Array3, Array4};
 use std::hint::black_box;
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn matmul_128(x: Tensor2<f32, 128, 128>, y: Tensor2<f32, 128, 128>) -> Tensor2<f32, 128, 128> {
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn batched_matmul_16x128x128(
     x: Tensor3<f32, 16, 128, 128>,
     y: Tensor3<f32, 16, 128, 128>,
@@ -23,7 +23,7 @@ fn batched_matmul_16x128x128(
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn conv2d_16x32x32x3_16(
     x: Tensor4<f32, 16, 32, 32, 3>,
     k: Tensor4<f32, 3, 3, 3, 16>,
@@ -31,7 +31,7 @@ fn conv2d_16x32x32x3_16(
     conv2d(x, k)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn mlp_128_batch_128_64(
     x: Tensor2<f32, 128, 128>,
     w: Tensor2<f32, 128, 64>,
@@ -40,7 +40,7 @@ fn mlp_128_batch_128_64(
     relu(matmul(x, w) + b)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn softmax_64x1000(logits: Tensor2<f32, 64, 1000>) -> Tensor2<f32, 64, 1000> {
     softmax(logits)
 }

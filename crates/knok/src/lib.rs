@@ -8,7 +8,7 @@
 //! ```ignore
 //! use knok::prelude::*;
 //!
-//! #[knok::graph(backend = "llvm-cpu")]
+//! #[knok::graph(backend = Backend::LlvmCpu)]
 //! fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 //!     relu(x + y)
 //! }
@@ -46,10 +46,11 @@ pub mod prelude {
     pub use crate::tensor::{Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, TensorElement};
     #[cfg(feature = "macros")]
     pub use crate::{graph, mlir_model};
+    pub use crate::{Backend, Driver};
 }
 
 pub use artifact::{GraphArtifact, GraphArtifactVariant};
-pub use backend::{Backend, SUPPORTED_BACKENDS};
+pub use backend::{Backend, Driver, SUPPORTED_BACKENDS};
 pub use runtime::{Engine, RuntimeConfig};
 
 pub type Result<T> = core::result::Result<T, Error>;

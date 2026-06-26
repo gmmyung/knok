@@ -1,4 +1,4 @@
-use knok::{Backend, Engine, RuntimeConfig, SUPPORTED_BACKENDS};
+use knok::{Backend, Driver, Engine, RuntimeConfig, SUPPORTED_BACKENDS};
 
 #[test]
 fn backend_capabilities_describe_supported_targets() {
@@ -8,8 +8,10 @@ fn backend_capabilities_describe_supported_targets() {
     assert_eq!(Backend::from_name("vulkan-spirv"), None);
     assert_eq!(Backend::LlvmCpu.name(), "llvm-cpu");
     assert_eq!(Backend::LlvmCpu.default_driver(), "local-task");
-    assert!(Backend::MetalSpirv.supports_driver("metal"));
-    assert!(!Backend::MetalSpirv.supports_driver("local-task"));
+    assert!(Backend::MetalSpirv.supports_driver(Driver::Metal));
+    assert!(!Backend::MetalSpirv.supports_driver(Driver::LocalTask));
+    assert_eq!(Driver::from_name("metal"), Some(Driver::Metal));
+    assert_eq!(Driver::from_name("vulkan"), None);
 }
 
 #[test]
@@ -20,8 +22,8 @@ fn runtime_config_can_be_constructed_from_backend() {
 }
 
 #[test]
-fn engine_can_be_constructed_from_backend_kind() {
-    let engine = Engine::for_backend_kind(Backend::LlvmCpu).unwrap();
+fn engine_can_be_constructed_from_backend() {
+    let engine = Engine::for_backend(Backend::LlvmCpu).unwrap();
 
     assert_eq!(engine.driver_name(), "local-task");
 }

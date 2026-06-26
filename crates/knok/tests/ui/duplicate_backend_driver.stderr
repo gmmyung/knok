@@ -2,8 +2,8 @@ error: duplicate runtime driver `local-task` for backends `llvm-cpu` and `llvm-c
  --> tests/ui/duplicate_backend_driver.rs:1:1
   |
 1 | / #[knok::graph(backends = [
-2 | |     backend("llvm-cpu", driver = "local-task"),
-3 | |     backend("llvm-cpu", driver = "local-task"),
+2 | |     backend(Backend::LlvmCpu, driver = Driver::LocalTask),
+3 | |     backend(Backend::LlvmCpu, driver = Driver::LocalTask),
 4 | | ])]
   | |___^
   |

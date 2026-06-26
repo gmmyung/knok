@@ -12,7 +12,7 @@ use syn::{
 };
 
 use crate::{
-    backend::{parse_backend_array, reject_duplicate_drivers, BackendSpec},
+    backend::{parse_backend_array, parse_backend_expr, reject_duplicate_drivers, BackendSpec},
     common::{runtime_input_variant, rust_element_type},
     compile::compile_mlir_variants,
     mlir_signature::validate_mlir_model_signature,
@@ -221,13 +221,8 @@ impl Parse for MlirModel {
                             "backend and backends are mutually exclusive",
                         ));
                     }
-                    let lit: LitStr = input.parse()?;
-                    backend_specs = Some(vec![BackendSpec::new(
-                        lit.value(),
-                        None,
-                        Vec::new(),
-                        lit.span(),
-                    )?]);
+                    let value: syn::Expr = input.parse()?;
+                    backend_specs = Some(vec![parse_backend_expr(&value)?]);
                 }
                 "backends" => {
                     if backend_specs.is_some() {
@@ -296,7 +291,8 @@ impl Parse for MlirModel {
             name: name.ok_or_else(|| input.error("missing name: <ident>"))?,
             path: path.ok_or_else(|| input.error("missing path: \"...\""))?,
             backend_specs: {
-                let specs = backend_specs.ok_or_else(|| input.error("missing backend: \"...\""))?;
+                let specs =
+                    backend_specs.ok_or_else(|| input.error("missing backend: Backend::..."))?;
                 reject_duplicate_drivers(&specs)?;
                 specs
             },

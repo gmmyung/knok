@@ -214,14 +214,23 @@ impl RuntimeConfig {
         }
     }
 
-    pub fn driver(name: impl Into<String>) -> Self {
+    pub fn driver(driver: crate::Driver) -> Self {
         Self {
-            driver: DriverSelection::Explicit(name.into()),
+            driver: DriverSelection::Explicit(driver.name().into()),
         }
     }
 
     pub fn backend(backend: Backend) -> Self {
-        Self::driver(backend.default_driver())
+        Self {
+            driver: DriverSelection::Explicit(backend.default_driver().into()),
+        }
+    }
+
+    #[cfg(feature = "host-runtime")]
+    fn driver_name_literal(name: &'static str) -> Self {
+        Self {
+            driver: DriverSelection::Explicit(name.into()),
+        }
     }
 
     #[cfg(feature = "host-runtime")]
@@ -240,13 +249,6 @@ impl Default for RuntimeConfig {
 }
 
 #[cfg(feature = "host-runtime")]
-fn driver_for_backend(backend: &'static str) -> crate::Result<&'static str> {
-    Backend::from_name(backend)
-        .map(Backend::default_driver)
-        .ok_or(crate::Error::UnsupportedBackend(backend))
-}
-
-#[cfg(feature = "host-runtime")]
 mod hosted {
     use alloc::{
         collections::BTreeMap,
@@ -257,7 +259,7 @@ mod hosted {
 
     use eerie::runtime::{DeviceSpec, Function, Program, Runtime, Value};
 
-    use super::{driver_for_backend, raw, RuntimeConfig};
+    use super::{raw, RuntimeConfig};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
     pub struct Engine {
@@ -277,16 +279,12 @@ mod hosted {
             })
         }
 
-        pub fn for_backend(backend: &'static str) -> crate::Result<Self> {
-            Self::new(RuntimeConfig::driver(driver_for_backend(backend)?))
-        }
-
-        pub fn for_backend_kind(backend: crate::Backend) -> crate::Result<Self> {
+        pub fn for_backend(backend: crate::Backend) -> crate::Result<Self> {
             Self::new(RuntimeConfig::backend(backend))
         }
 
         pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
-            Self::new(RuntimeConfig::driver(variant.driver))
+            Self::new(RuntimeConfig::driver_name_literal(variant.driver))
         }
 
         pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
@@ -419,11 +417,7 @@ mod hosted {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        pub fn for_backend(_backend: &'static str) -> crate::Result<Self> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub fn for_backend_kind(_backend: crate::Backend) -> crate::Result<Self> {
+        pub fn for_backend(_backend: crate::Backend) -> crate::Result<Self> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 

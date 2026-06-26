@@ -1,16 +1,16 @@
 error: arithmetic operators support numeric tensors only
  --> tests/ui/bool_arithmetic.rs:3:1
   |
-3 | #[knok::graph(backend = "llvm-cpu")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3 | #[knok::graph(backend = Backend::LlvmCpu)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   |
   = note: this error originates in the attribute macro `knok::graph` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: arithmetic operators support numeric tensors only
  --> tests/ui/bool_arithmetic.rs:8:1
   |
-8 | #[knok::graph(backend = "llvm-cpu")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+8 | #[knok::graph(backend = Backend::LlvmCpu)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   |
   = note: this error originates in the attribute macro `knok::graph` (in Nightly builds, run with -Z macro-backtrace for more info)
 

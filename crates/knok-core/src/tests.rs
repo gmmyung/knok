@@ -10,7 +10,7 @@ fn tensor(shape: &[usize]) -> TensorType {
 }
 
 fn parse(item: ItemFn) -> syn::Result<TypedGraph> {
-    parse_graph(quote!(backend = "llvm-cpu"), item)
+    parse_graph(quote!(backend = Backend::LlvmCpu), item)
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn destructures_multi_output_graph_call_in_let_binding() {
     )];
 
     let graph = parse_graph_with_signatures(
-        quote!(backend = "llvm-cpu"),
+        quote!(backend = Backend::LlvmCpu),
         parse_quote! {
             fn combine(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
                 let (sum, diff) = add_sub(x, y);
@@ -82,7 +82,7 @@ fn rejects_multi_output_let_destructuring_arity_mismatch() {
     )];
 
     let error = parse_graph_with_signatures(
-        quote!(backend = "llvm-cpu"),
+        quote!(backend = Backend::LlvmCpu),
         parse_quote! {
             fn combine(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
                 let (sum, diff, extra) = add_sub(x, y);
@@ -634,7 +634,7 @@ fn accepts_calls_to_earlier_graph_signatures() {
     )];
 
     let graph = parse_graph_with_signatures(
-        quote!(backend = "llvm-cpu"),
+        quote!(backend = Backend::LlvmCpu),
         parse_quote! {
             fn outer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
                 layer(x)
@@ -716,7 +716,7 @@ fn rejects_direct_recursion() {
         },
     )];
     let error = parse_graph_with_signatures(
-        quote!(backend = "llvm-cpu"),
+        quote!(backend = Backend::LlvmCpu),
         parse_quote! {
             fn outer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
                 outer(x)

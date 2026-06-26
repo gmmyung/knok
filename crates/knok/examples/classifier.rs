@@ -1,12 +1,12 @@
 use knok::prelude::*;
 use knok::{Engine, RuntimeConfig};
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn classifier_head(logits: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     softmax(logits)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn predicted_class(logits: Tensor1<f32, 4>) -> Tensor0<i64> {
     argmax(logits)
 }
