@@ -282,8 +282,33 @@ fn flatten4d(x: Tensor4<f32, 1, 2, 2, 1>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn square4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    square(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn square4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    square(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn reciprocal4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    reciprocal(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn reciprocal4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    reciprocal(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn exp4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     exp(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn exp_variants4(x: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (exp2(x), expm1(x))
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -292,8 +317,34 @@ fn log4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn log_variants4(
+    x: Tensor1<f32, 4>,
+    y: Tensor1<f32, 4>,
+    z: Tensor1<f32, 4>,
+) -> (Tensor1<f32, 4>, Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (log2(x), log10(y), log1p(z))
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sqrt4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     sqrt(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn rounding4(
+    x: Tensor1<f32, 4>,
+) -> (
+    Tensor1<f32, 4>,
+    Tensor1<f32, 4>,
+    Tensor1<f32, 4>,
+    Tensor1<f32, 4>,
+) {
+    (floor(x), ceil(x), round(x), rint(x))
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn trig4(x: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (sin(x), cos(x), tan(x))
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -1300,17 +1351,76 @@ fn rank3_and_rank4_tensors_run() {
 
 #[test]
 fn math_op_graphs_run() {
+    let square_output = square4(Tensor1::from_array([-2.0, -1.5, 0.5, 3.0])).unwrap();
+    assert_close(&square_output.into_vec(), &[4.0, 2.25, 0.25, 9.0]);
+
+    let square_i32_output = square4_i32(Tensor1::from_array([-2, -1, 3, 4])).unwrap();
+    assert_eq!(square_i32_output.into_vec(), vec![4, 1, 9, 16]);
+
+    let reciprocal_output = reciprocal4(Tensor1::from_array([1.0, 2.0, 4.0, -0.5])).unwrap();
+    assert_close(&reciprocal_output.into_vec(), &[1.0, 0.5, 0.25, -2.0]);
+
+    let reciprocal_i32_output = reciprocal4_i32(Tensor1::from_array([1, -1, 2, -2])).unwrap();
+    assert_eq!(reciprocal_i32_output.into_vec(), vec![1, -1, 0, 0]);
+
     let exp_output = exp4(Tensor1::from_array([0.0, 1.0, 2.0, 3.0])).unwrap();
     assert_close(
         &exp_output.into_vec(),
         &[1.0, core::f32::consts::E, 7.389056, 20.085537],
     );
 
+    let (exp2_output, expm1_output) =
+        exp_variants4(Tensor1::from_array([0.0, 1.0, 2.0, -1.0])).unwrap();
+    assert_close(&exp2_output.into_vec(), &[1.0, 2.0, 4.0, 0.5]);
+    assert_close(
+        &expm1_output.into_vec(),
+        &[0.0, 1.7182817, 6.389056, -0.63212055],
+    );
+
     let log_output = log4(Tensor1::from_array([1.0, core::f32::consts::E, 4.0, 8.0])).unwrap();
     assert_close(&log_output.into_vec(), &[0.0, 1.0, 1.3862944, 2.0794415]);
 
+    let (log2_output, log10_output, log1p_output) = log_variants4(
+        Tensor1::from_array([1.0, 2.0, 4.0, 8.0]),
+        Tensor1::from_array([1.0, 10.0, 100.0, 1000.0]),
+        Tensor1::from_array([0.0, 1.0, 3.0, 9.0]),
+    )
+    .unwrap();
+    assert_close(&log2_output.into_vec(), &[0.0, 1.0, 2.0, 3.0]);
+    assert_close(&log10_output.into_vec(), &[0.0, 1.0, 2.0, 3.0]);
+    assert_close(
+        &log1p_output.into_vec(),
+        &[
+            0.0,
+            core::f32::consts::LN_2,
+            core::f32::consts::LN_2 * 2.0,
+            core::f32::consts::LN_10,
+        ],
+    );
+
     let sqrt_output = sqrt4(Tensor1::from_array([1.0, 4.0, 9.0, 16.0])).unwrap();
     assert_close(&sqrt_output.into_vec(), &[1.0, 2.0, 3.0, 4.0]);
+
+    let (floor_output, ceil_output, round_output, rint_output) =
+        rounding4(Tensor1::from_array([-1.7, -0.5, 1.5, 2.3])).unwrap();
+    assert_close(&floor_output.into_vec(), &[-2.0, -1.0, 1.0, 2.0]);
+    assert_close(&ceil_output.into_vec(), &[-1.0, 0.0, 2.0, 3.0]);
+    assert_close(&round_output.into_vec(), &[-2.0, 0.0, 2.0, 2.0]);
+    assert_close(&rint_output.into_vec(), &[-2.0, 0.0, 2.0, 2.0]);
+
+    let (sin_output, cos_output, tan_output) = trig4(Tensor1::from_array([
+        0.0,
+        core::f32::consts::FRAC_PI_6,
+        core::f32::consts::FRAC_PI_4,
+        -core::f32::consts::FRAC_PI_4,
+    ]))
+    .unwrap();
+    assert_close(&sin_output.into_vec(), &[0.0, 0.5, 0.70710677, -0.70710677]);
+    assert_close(
+        &cos_output.into_vec(),
+        &[1.0, 0.8660254, 0.70710677, 0.70710677],
+    );
+    assert_close(&tan_output.into_vec(), &[0.0, 0.57735026, 1.0, -1.0]);
 
     let tanh_output = tanh4(Tensor1::from_array([0.0, 1.0, -1.0, 2.0])).unwrap();
     assert_close(

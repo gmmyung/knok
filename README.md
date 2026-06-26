@@ -235,14 +235,16 @@ They cover the recommended hosted workflow:
   broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
-  `pow`, `relu`, NumPy-style `matmul` for ranks 1-6, NHWC/HWCF `conv2d` with
-  static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
-  `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
+  `pow`, `square`, `reciprocal`, `relu`, NumPy-style `matmul` for ranks 1-6,
+  NHWC/HWCF `conv2d` with static `Pad<TOP, BOTTOM, LEFT, RIGHT>`,
+  `Stride<H, W>`, and `Dilation<H, W>`, and `Groups<N>` options, rank-2
+  `transpose`, explicit
   `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
   `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
   binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
   `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
-  `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+  `argmax`, `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`,
+  `floor`, `ceil`, `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
@@ -250,12 +252,13 @@ They cover the recommended hosted workflow:
   `Groups<N>` follows PyTorch-style grouped convolution shape rules: input
   channels and output channels must both be divisible by `N`, and kernel input
   channels must equal `input_channels / N`.
-- Floating-point classifier/math ops (`relu`, `mean`, `softmax`,
-  `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
-  element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
-  support arithmetic, `abs`, `minimum`, `maximum`, `clip`, reshape/broadcast,
-  sum, `argmax`, matmul, and conv lowering where IREE accepts the resulting
-  MLIR.
+- Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `pow`, `exp`,
+  `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `floor`, `ceil`,
+  `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`) require a
+  floating-point element type. Backend support for `f16`/`bf16` math can vary.
+  Integer tensors support arithmetic, `abs`, `square`, `reciprocal`,
+  `minimum`, `maximum`, `clip`, reshape/broadcast, sum, `argmax`, matmul, and
+  conv lowering where IREE accepts the resulting MLIR.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
 - The compiler, MLIR lowering, and hosted runtime wrappers support real bool
