@@ -9,9 +9,9 @@ pub struct Graph {
     pub name: String,
     pub backend: String,
     pub inputs: Vec<Input>,
-    pub output: TensorType,
+    pub outputs: Vec<TensorType>,
     pub lets: Vec<Let>,
-    pub body: Expr,
+    pub body: Vec<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct Input {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Let {
-    pub name: String,
+    pub names: Vec<String>,
     pub value: Expr,
 }
 
@@ -117,15 +117,21 @@ pub struct TypedGraph {
     pub name: String,
     pub backend: String,
     pub inputs: Vec<Input>,
-    pub output: TensorType,
+    pub outputs: Vec<TensorType>,
     pub lets: Vec<TypedLet>,
-    pub body: TypedExpr,
+    pub body: Vec<TypedExpr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypedLet {
-    pub name: String,
-    pub value: TypedExpr,
+    pub names: Vec<String>,
+    pub value: TypedValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypedValue {
+    pub kind: Expr,
+    pub tys: Vec<TensorType>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,7 +149,7 @@ pub struct TensorType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphSignature {
     pub inputs: Vec<TensorType>,
-    pub output: TensorType,
+    pub outputs: Vec<TensorType>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,12 +298,12 @@ fn parse_item_fn(item: ItemFn, backend: String) -> syn::Result<Graph> {
     for input in &item.sig.inputs {
         inputs.push(parse_input(input)?);
     }
-    let output = match &item.sig.output {
-        ReturnType::Type(_, ty) => parse_tensor_type(ty)?,
+    let outputs = match &item.sig.output {
+        ReturnType::Type(_, ty) => parse_output_types(ty)?,
         ReturnType::Default => {
             return Err(syn::Error::new(
                 item.sig.ident.span(),
-                "graph functions must return a Tensor type",
+                "graph functions must return a Tensor type or tuple of Tensor types",
             ));
         }
     };
@@ -307,7 +313,7 @@ fn parse_item_fn(item: ItemFn, backend: String) -> syn::Result<Graph> {
         name,
         backend,
         inputs,
-        output,
+        outputs,
         lets,
         body,
     })
@@ -388,6 +394,21 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     Ok(TensorType { elem, shape })
 }
 
+fn parse_output_types(ty: &Type) -> syn::Result<Vec<TensorType>> {
+    match ty {
+        Type::Tuple(tuple) => {
+            if tuple.elems.is_empty() {
+                return Err(syn::Error::new(
+                    tuple.span(),
+                    "graph output tuple must contain at least one Tensor type",
+                ));
+            }
+            tuple.elems.iter().map(parse_tensor_type).collect()
+        }
+        _ => Ok(vec![parse_tensor_type(ty)?]),
+    }
+}
+
 fn parse_element_type(arg: Option<&GenericArgument>) -> syn::Result<ElementType> {
     let Some(GenericArgument::Type(Type::Path(path))) = arg else {
         return Err(syn::Error::new(
@@ -442,18 +463,12 @@ fn parse_const_usize(arg: Option<&GenericArgument>) -> syn::Result<usize> {
     lit.base10_parse::<usize>()
 }
 
-fn parse_block(stmts: &[Stmt]) -> syn::Result<(Vec<Let>, Expr)> {
+fn parse_block(stmts: &[Stmt]) -> syn::Result<(Vec<Let>, Vec<Expr>)> {
     let mut lets = Vec::new();
     let mut body = None;
     for stmt in stmts {
         match stmt {
             Stmt::Local(local) => {
-                let Pat::Ident(PatIdent { ident, .. }) = &local.pat else {
-                    return Err(syn::Error::new(
-                        local.pat.span(),
-                        "let bindings must use simple identifiers",
-                    ));
-                };
                 let Some(init) = &local.init else {
                     return Err(syn::Error::new(
                         local.span(),
@@ -461,12 +476,12 @@ fn parse_block(stmts: &[Stmt]) -> syn::Result<(Vec<Let>, Expr)> {
                     ));
                 };
                 lets.push(Let {
-                    name: ident.to_string(),
+                    names: parse_let_names(&local.pat)?,
                     value: parse_expr(&init.expr)?,
                 });
             }
             Stmt::Expr(expr, None) => {
-                body = Some(parse_expr(expr)?);
+                body = Some(parse_body_expr(expr)?);
             }
             Stmt::Expr(_, Some(_)) => {
                 return Err(syn::Error::new(
@@ -485,10 +500,58 @@ fn parse_block(stmts: &[Stmt]) -> syn::Result<(Vec<Let>, Expr)> {
     let body = body.ok_or_else(|| {
         syn::Error::new(
             Span::call_site(),
-            "graph functions must end with a tensor expression",
+            "graph functions must end with a tensor expression or tuple of tensor expressions",
         )
     })?;
     Ok((lets, body))
+}
+
+fn parse_let_names(pat: &Pat) -> syn::Result<Vec<String>> {
+    match pat {
+        Pat::Ident(PatIdent { ident, .. }) => Ok(vec![ident.to_string()]),
+        Pat::Tuple(tuple) => {
+            if tuple.elems.is_empty() {
+                return Err(syn::Error::new(
+                    tuple.span(),
+                    "tuple let bindings must contain at least one identifier",
+                ));
+            }
+            tuple
+                .elems
+                .iter()
+                .map(|pat| {
+                    let Pat::Ident(PatIdent { ident, .. }) = pat else {
+                        return Err(syn::Error::new(
+                            pat.span(),
+                            "tuple let bindings must contain only simple identifiers",
+                        ));
+                    };
+                    Ok(ident.to_string())
+                })
+                .collect()
+        }
+        Pat::Paren(paren) => parse_let_names(&paren.pat),
+        _ => Err(syn::Error::new(
+            pat.span(),
+            "let bindings must use simple identifiers or tuple patterns of simple identifiers",
+        )),
+    }
+}
+
+fn parse_body_expr(expr: &SynExpr) -> syn::Result<Vec<Expr>> {
+    match expr {
+        SynExpr::Tuple(tuple) => {
+            if tuple.elems.is_empty() {
+                return Err(syn::Error::new(
+                    tuple.span(),
+                    "graph output tuple must contain at least one expression",
+                ));
+            }
+            tuple.elems.iter().map(parse_expr).collect()
+        }
+        SynExpr::Paren(paren) => parse_body_expr(&paren.expr),
+        _ => Ok(vec![parse_expr(expr)?]),
+    }
 }
 
 fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
@@ -950,20 +1013,37 @@ pub fn type_check(
         .collect::<Vec<_>>();
     let mut lets = Vec::new();
     for binding in graph.lets {
-        let value = type_expr(&binding.value, &env, graph_signatures, &graph.name)?;
-        env.push((binding.name.clone(), value.ty.clone()));
+        let value = type_let_value(&binding.value, &env, graph_signatures, &graph.name)?;
+        if binding.names.len() != value.tys.len() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "let pattern expects {} values, initializer produces {}",
+                    binding.names.len(),
+                    value.tys.len()
+                ),
+            ));
+        }
+        for (name, ty) in binding.names.iter().zip(&value.tys) {
+            env.push((name.clone(), ty.clone()));
+        }
         lets.push(TypedLet {
-            name: binding.name,
+            names: binding.names,
             value,
         });
     }
-    let body = type_expr(&graph.body, &env, graph_signatures, &graph.name)?;
-    if body.ty != graph.output {
+    let body = graph
+        .body
+        .iter()
+        .map(|expr| type_expr(expr, &env, graph_signatures, &graph.name))
+        .collect::<syn::Result<Vec<_>>>()?;
+    let body_tys = body.iter().map(|expr| expr.ty.clone()).collect::<Vec<_>>();
+    if body_tys != graph.outputs {
         return Err(syn::Error::new(
             Span::call_site(),
             format!(
                 "return type mismatch: inferred {:?}, declared {:?}",
-                body.ty, graph.output
+                body_tys, graph.outputs
             ),
         ));
     }
@@ -971,9 +1051,28 @@ pub fn type_check(
         name: graph.name,
         backend: graph.backend,
         inputs: graph.inputs,
-        output: graph.output,
+        outputs: graph.outputs,
         lets,
         body,
+    })
+}
+
+fn type_let_value(
+    expr: &Expr,
+    env: &[(String, TensorType)],
+    graph_signatures: &[(String, GraphSignature)],
+    current_graph: &str,
+) -> syn::Result<TypedValue> {
+    let tys = match expr {
+        Expr::Call {
+            op: CallOp::Graph(name),
+            args,
+        } => graph_call_output_types(name, args, env, graph_signatures, current_graph)?,
+        _ => vec![type_expr(expr, env, graph_signatures, current_graph)?.ty],
+    };
+    Ok(TypedValue {
+        kind: expr.clone(),
+        tys,
     })
 }
 
@@ -1453,48 +1552,69 @@ fn call_result_type(
             where_result_type(&condition, &lhs, &rhs)
         }
         CallOp::Graph(name) => {
-            if name == current_graph {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    format!("recursive graph call `{name}` is not supported"),
-                ));
-            }
-            let signature = graph_signatures
-                .iter()
-                .rev()
-                .find_map(|(candidate, signature)| (candidate == name).then_some(signature))
-                .ok_or_else(|| {
-                    syn::Error::new(
-                        Span::call_site(),
-                        format!(
-                            "unknown graph call `{name}`; graph calls must refer to earlier #[knok::graph] functions"
-                        ),
-                    )
-                })?;
-            if args.len() != signature.inputs.len() {
+            let outputs =
+                graph_call_output_types(name, args, env, graph_signatures, current_graph)?;
+            if outputs.len() != 1 {
                 return Err(syn::Error::new(
                     Span::call_site(),
                     format!(
-                        "graph `{name}` expects {} arguments, got {}",
-                        signature.inputs.len(),
-                        args.len()
+                        "graph `{name}` returns {} values and cannot be used as a tensor expression yet",
+                        outputs.len()
                     ),
                 ));
             }
-            for (index, (arg, expected)) in args.iter().zip(&signature.inputs).enumerate() {
-                let actual = type_expr(arg, env, graph_signatures, current_graph)?.ty;
-                if &actual != expected {
-                    return Err(syn::Error::new(
-                        Span::call_site(),
-                        format!(
-                            "graph `{name}` argument {index} type mismatch: expected {expected:?}, got {actual:?}"
-                        ),
-                    ));
-                }
-            }
-            Ok(signature.output.clone())
+            Ok(outputs[0].clone())
         }
     }
+}
+
+fn graph_call_output_types(
+    name: &str,
+    args: &[Expr],
+    env: &[(String, TensorType)],
+    graph_signatures: &[(String, GraphSignature)],
+    current_graph: &str,
+) -> syn::Result<Vec<TensorType>> {
+    if name == current_graph {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("recursive graph call `{name}` is not supported"),
+        ));
+    }
+    let signature = graph_signatures
+        .iter()
+        .rev()
+        .find_map(|(candidate, signature)| (candidate == name).then_some(signature))
+        .ok_or_else(|| {
+            syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "unknown graph call `{name}`; graph calls must refer to earlier #[knok::graph] functions"
+                ),
+            )
+        })?;
+    if args.len() != signature.inputs.len() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "graph `{name}` expects {} arguments, got {}",
+                signature.inputs.len(),
+                args.len()
+            ),
+        ));
+    }
+    for (index, (arg, expected)) in args.iter().zip(&signature.inputs).enumerate() {
+        let actual = type_expr(arg, env, graph_signatures, current_graph)?.ty;
+        if &actual != expected {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "graph `{name}` argument {index} type mismatch: expected {expected:?}, got {actual:?}"
+                ),
+            ));
+        }
+    }
+    Ok(signature.outputs.clone())
 }
 
 fn element_count(ty: &TensorType) -> usize {
@@ -1821,8 +1941,75 @@ mod tests {
         assert_eq!(graph.name, "add");
         assert_eq!(graph.backend, "llvm-cpu");
         assert_eq!(graph.inputs.len(), 2);
-        assert_eq!(graph.output, tensor(&[4]));
-        assert_eq!(graph.body.ty, tensor(&[4]));
+        assert_eq!(graph.outputs[0], tensor(&[4]));
+        assert_eq!(graph.body[0].ty, tensor(&[4]));
+    }
+
+    #[test]
+    fn parses_and_types_multi_output_graph() {
+        let graph = parse(parse_quote! {
+            fn add_sub(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
+                (x + y, x - y)
+            }
+        })
+        .unwrap();
+
+        assert_eq!(graph.outputs, vec![tensor(&[4]), tensor(&[4])]);
+        assert_eq!(graph.body.len(), 2);
+        assert_eq!(graph.body[0].ty, tensor(&[4]));
+        assert_eq!(graph.body[1].ty, tensor(&[4]));
+    }
+
+    #[test]
+    fn destructures_multi_output_graph_call_in_let_binding() {
+        let signatures = [(
+            "add_sub".to_string(),
+            GraphSignature {
+                inputs: vec![tensor(&[4]), tensor(&[4])],
+                outputs: vec![tensor(&[4]), tensor(&[4])],
+            },
+        )];
+
+        let graph = parse_graph_with_signatures(
+            quote!(backend = "llvm-cpu"),
+            parse_quote! {
+                fn combine(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    let (sum, diff) = add_sub(x, y);
+                    sum * diff
+                }
+            },
+            &signatures,
+        )
+        .unwrap();
+
+        assert_eq!(graph.lets[0].names, vec!["sum", "diff"]);
+        assert_eq!(graph.lets[0].value.tys, vec![tensor(&[4]), tensor(&[4])]);
+        assert_eq!(graph.body[0].ty, tensor(&[4]));
+    }
+
+    #[test]
+    fn rejects_multi_output_let_destructuring_arity_mismatch() {
+        let signatures = [(
+            "add_sub".to_string(),
+            GraphSignature {
+                inputs: vec![tensor(&[4]), tensor(&[4])],
+                outputs: vec![tensor(&[4]), tensor(&[4])],
+            },
+        )];
+
+        let error = parse_graph_with_signatures(
+            quote!(backend = "llvm-cpu"),
+            parse_quote! {
+                fn combine(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    let (sum, diff, extra) = add_sub(x, y);
+                    sum + diff + extra
+                }
+            },
+            &signatures,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("let pattern expects 3 values"));
     }
 
     #[cfg(feature = "half")]
@@ -1834,7 +2021,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(f16_graph.output.elem, ElementType::F16);
+        assert_eq!(f16_graph.outputs[0].elem, ElementType::F16);
 
         let bf16_graph = parse(parse_quote! {
             fn identity(x: Tensor1<knok::half::bf16, 4>) -> Tensor1<knok::half::bf16, 4> {
@@ -1842,7 +2029,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(bf16_graph.output.elem, ElementType::BF16);
+        assert_eq!(bf16_graph.outputs[0].elem, ElementType::BF16);
     }
 
     #[test]
@@ -1854,7 +2041,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(graph.body.ty, tensor(&[2, 3]));
+        assert_eq!(graph.body[0].ty, tensor(&[2, 3]));
     }
 
     #[test]
@@ -1866,8 +2053,8 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(graph.output, tensor(&[2, 4]));
-        assert_eq!(graph.body.ty, tensor(&[2, 4]));
+        assert_eq!(graph.outputs[0], tensor(&[2, 4]));
+        assert_eq!(graph.body[0].ty, tensor(&[2, 4]));
     }
 
     #[test]
@@ -1878,7 +2065,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(reshape.body.ty, tensor(&[2, 2]));
+        assert_eq!(reshape.body[0].ty, tensor(&[2, 2]));
 
         let broadcast = parse(parse_quote! {
             fn broadcast4(x: Tensor1<f32, 1>) -> Tensor1<f32, 4> {
@@ -1886,7 +2073,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(broadcast.body.ty, tensor(&[4]));
+        assert_eq!(broadcast.body[0].ty, tensor(&[4]));
 
         let sum = parse(parse_quote! {
             fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
@@ -1894,7 +2081,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(sum.body.ty, tensor(&[1]));
+        assert_eq!(sum.body[0].ty, tensor(&[1]));
 
         let axis_sum = parse(parse_quote! {
             fn sum_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
@@ -1902,7 +2089,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(axis_sum.body.ty, tensor(&[2]));
+        assert_eq!(axis_sum.body[0].ty, tensor(&[2]));
 
         let axis_mean = parse(parse_quote! {
             fn mean_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
@@ -1910,7 +2097,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(axis_mean.body.ty, tensor(&[3]));
+        assert_eq!(axis_mean.body[0].ty, tensor(&[3]));
     }
 
     #[test]
@@ -1948,7 +2135,7 @@ mod tests {
             },
         ] {
             let graph = parse(item).unwrap();
-            assert_eq!(graph.body.ty, graph.output);
+            assert_eq!(graph.body[0].ty, graph.outputs[0]);
         }
     }
 
@@ -1960,7 +2147,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(reshape.body.ty, tensor(&[2, 2, 2]));
+        assert_eq!(reshape.body[0].ty, tensor(&[2, 2, 2]));
 
         let batch_mm = parse(parse_quote! {
             fn batch_mm(x: Tensor3<f32, 1, 2, 3>, y: Tensor3<f32, 1, 3, 2>) -> Tensor3<f32, 1, 2, 2> {
@@ -1968,7 +2155,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(batch_mm.body.ty, tensor(&[1, 2, 2]));
+        assert_eq!(batch_mm.body[0].ty, tensor(&[1, 2, 2]));
 
         let conv = parse(parse_quote! {
             fn conv(x: Tensor4<f32, 1, 4, 4, 3>, k: Tensor4<f32, 3, 3, 3, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
@@ -1976,7 +2163,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(conv.body.ty, tensor(&[1, 2, 2, 8]));
+        assert_eq!(conv.body[0].ty, tensor(&[1, 2, 2, 8]));
     }
 
     #[test]
@@ -2008,7 +2195,7 @@ mod tests {
             },
         ] {
             let graph = parse(item).unwrap();
-            assert_eq!(graph.body.ty, graph.output);
+            assert_eq!(graph.body[0].ty, graph.outputs[0]);
         }
 
         let mean = parse(parse_quote! {
@@ -2017,7 +2204,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(mean.body.ty, tensor(&[1]));
+        assert_eq!(mean.body[0].ty, tensor(&[1]));
 
         let argmax = parse(parse_quote! {
             fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
@@ -2025,7 +2212,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(argmax.body.ty, tensor(&[1]));
+        assert_eq!(argmax.body[0].ty, tensor(&[1]));
     }
 
     #[test]
@@ -2053,7 +2240,7 @@ mod tests {
             },
         ] {
             let graph = parse(item).unwrap();
-            assert_eq!(graph.body.ty, graph.output);
+            assert_eq!(graph.body[0].ty, graph.outputs[0]);
         }
     }
 
@@ -2097,7 +2284,7 @@ mod tests {
             },
         ] {
             let graph = parse(item).unwrap();
-            assert_eq!(graph.body.ty, graph.output);
+            assert_eq!(graph.body[0].ty, graph.outputs[0]);
         }
 
         let selected = parse(parse_quote! {
@@ -2110,7 +2297,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(selected.body.ty, tensor(&[4]));
+        assert_eq!(selected.body[0].ty, tensor(&[4]));
 
         let selected_from_predicate = parse(parse_quote! {
             fn select_from_predicate(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
@@ -2118,7 +2305,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(selected_from_predicate.body.ty, tensor(&[4]));
+        assert_eq!(selected_from_predicate.body[0].ty, tensor(&[4]));
 
         let comparison = parse(parse_quote! {
             fn less_broadcast(x: Tensor2<i32, 2, 3>, y: Tensor1<i32, 3>) -> Tensor2<bool, 2, 3> {
@@ -2126,7 +2313,7 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(comparison.body.ty, bool_tensor(&[2, 3]));
+        assert_eq!(comparison.body[0].ty, bool_tensor(&[2, 3]));
     }
 
     #[test]
@@ -2135,7 +2322,7 @@ mod tests {
             "layer".to_string(),
             GraphSignature {
                 inputs: vec![tensor(&[4])],
-                output: tensor(&[4]),
+                outputs: vec![tensor(&[4])],
             },
         )];
 
@@ -2150,7 +2337,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(graph.body.ty, tensor(&[4]));
+        assert_eq!(graph.body[0].ty, tensor(&[4]));
     }
 
     #[test]
@@ -2218,7 +2405,7 @@ mod tests {
             "outer".to_string(),
             GraphSignature {
                 inputs: vec![tensor(&[4])],
-                output: tensor(&[4]),
+                outputs: vec![tensor(&[4])],
             },
         )];
         let error = parse_graph_with_signatures(

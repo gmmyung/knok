@@ -50,6 +50,23 @@ let output = forward_run(&engine, x, y)?;
 let cpu_engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
 ```
 
+Graphs can return multiple tensors by returning a Rust tuple:
+
+```rust
+#[knok::graph(backend = "llvm-cpu")]
+fn add_sub(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (x + y, x - y)
+}
+
+let (sum, diff) = add_sub_run(&engine, x, y)?;
+
+#[knok::graph(backend = "llvm-cpu")]
+fn combine(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    let (sum, diff) = add_sub(x, y);
+    sum * diff
+}
+```
+
 Graphs can also embed multiple IREE backend variants. The runtime selects the
 variant whose driver matches the engine:
 
@@ -79,8 +96,9 @@ let output = imported_add4::invoke(x, y)?;
 ```
 
 Typed MLIR imports also expose `invoke_run(&engine, ...)` for reusable
-execution. MLIR imports without a declared signature still expose `artifact()`,
-but no raw public invocation wrapper.
+execution. Multi-output MLIR imports use `outputs: [...]` and return a tuple.
+MLIR imports without a declared signature still expose `artifact()`; use
+`Engine::invoke` with `RuntimeInput` values when you need raw runtime execution.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
