@@ -51,7 +51,7 @@ pub mod prelude {
     pub use crate::{Backend, Driver};
 }
 
-pub use artifact::{GraphArtifact, GraphArtifactVariant};
+pub use artifact::{DType, GraphArtifact, GraphArtifactVariant, TensorDesc};
 pub use backend::{Backend, Driver, SUPPORTED_BACKENDS};
 pub use runtime::{Engine, RuntimeConfig};
 
@@ -64,6 +64,15 @@ pub enum Error {
     Shape {
         expected: &'static [usize],
         actual: alloc::vec::Vec<usize>,
+    },
+    InputCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    InputDTypeMismatch {
+        index: usize,
+        expected: DType,
+        actual: DType,
     },
     UnsupportedBackend(&'static str),
     MissingArtifactVariant {
@@ -106,6 +115,22 @@ impl core::fmt::Display for Error {
                 write!(
                     formatter,
                     "tensor shape mismatch: expected {expected:?}, got {actual:?}"
+                )
+            }
+            Self::InputCountMismatch { expected, actual } => {
+                write!(
+                    formatter,
+                    "runtime input count mismatch: expected {expected}, got {actual}"
+                )
+            }
+            Self::InputDTypeMismatch {
+                index,
+                expected,
+                actual,
+            } => {
+                write!(
+                    formatter,
+                    "runtime input {index} dtype mismatch: expected {expected:?}, got {actual:?}"
                 )
             }
             Self::UnsupportedBackend(backend) => {

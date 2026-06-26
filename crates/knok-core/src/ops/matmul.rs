@@ -1,6 +1,6 @@
 use proc_macro2::Span;
 
-use crate::typecheck::{broadcast_shape_slices, expect_numeric_element};
+use super::{broadcast_shape_slices, expect_numeric_element};
 use crate::TensorType;
 
 const MAX_TENSOR_RANK: usize = 6;

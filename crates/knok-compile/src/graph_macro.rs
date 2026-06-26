@@ -5,7 +5,10 @@ use syn::{parse2, ItemFn, ReturnType};
 
 use crate::{
     backend::parse_backend_specs,
-    common::{input_name, parse_return_output_types, runtime_input_variant, rust_element_type},
+    common::{
+        input_name, parse_return_output_types, runtime_input_variant, rust_element_type,
+        tensor_desc_expr,
+    },
     compile::compile_graph_variants_with_registry,
     registry::{register_graph, registered_graphs, registered_signatures},
 };
@@ -41,7 +44,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
                 format!("failed to compile knok graph `{}`: {error}", graph.name),
             )
         })?;
-    register_graph(graph.clone());
+    register_graph(graph.clone())?;
 
     let name = &signature.ident;
     let inputs = signature.inputs.iter().collect::<Vec<_>>();
@@ -53,10 +56,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
     let function_name = format!("knok.{}", graph.name);
     let artifact_name = format_ident!("{}_artifact", name);
     let run_name = format_ident!("{}_run", name);
-    let output_shapes = graph.outputs.iter().map(|output| {
-        let dims = output.shape.iter().copied();
-        quote!(&[#(#dims),*])
-    });
+    let output_descs = graph.outputs.iter().map(tensor_desc_expr);
     let runtime_inputs = graph
         .inputs
         .iter()
@@ -69,10 +69,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
             let variant = runtime_input_variant(input.ty.elem);
             quote!(::knok::runtime::raw::Input::#variant(#shape, #arg_name.as_slice()))
         });
-    let artifact_input_shapes = graph.inputs.iter().map(|input| {
-        let dims = input.ty.shape.iter().copied();
-        quote!(&[#(#dims),*])
-    });
+    let artifact_input_descs = graph.inputs.iter().map(|input| tensor_desc_expr(&input.ty));
     let variant_statics = compiled.iter().enumerate().map(|(index, variant)| {
         let vmfb_name = format_ident!("VMFB_{index}");
         let flags_name = format_ident!("COMPILE_FLAGS_{index}");
@@ -125,12 +122,12 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
         #visibility fn #artifact_name() -> ::knok::GraphArtifact {
             #(#variant_statics)*
             static VARIANTS: &[::knok::GraphArtifactVariant] = &[#(#variants),*];
-            static INPUT_SHAPES: &[&[usize]] = &[#(#artifact_input_shapes),*];
-            static OUTPUT_SHAPES: &[&[usize]] = &[#(#output_shapes),*];
+            static INPUT_DESCS: &[::knok::TensorDesc] = &[#(#artifact_input_descs),*];
+            static OUTPUT_DESCS: &[::knok::TensorDesc] = &[#(#output_descs),*];
             ::knok::GraphArtifact {
                 function_name: #function_name,
-                input_shapes: INPUT_SHAPES,
-                output_shapes: OUTPUT_SHAPES,
+                input_descs: INPUT_DESCS,
+                output_descs: OUTPUT_DESCS,
                 variants: VARIANTS,
             }
         }

@@ -5,8 +5,8 @@ use syn::{
 };
 
 use crate::{
-    type_check, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
-    Let, Padding2d, TensorType, TypedGraph, UnaryOp,
+    type_check, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph,
+    GraphSignature, Input, Let, Padding2d, TensorType, TypedGraph, UnaryOp,
 };
 
 pub fn parse_graph(attr: proc_macro2::TokenStream, item: ItemFn) -> syn::Result<TypedGraph> {
@@ -721,10 +721,10 @@ fn optional_axis(
     generics: &CallGenerics,
     path: &syn::Path,
     op_name: &str,
-) -> syn::Result<Option<usize>> {
+) -> syn::Result<AxisSpec> {
     match generics.consts.as_slice() {
-        [] => Ok(None),
-        [axis] => Ok(Some(*axis)),
+        [] => Ok(AxisSpec::All),
+        [axis] => Ok(AxisSpec::One(*axis)),
         _ => Err(syn::Error::new(
             path.span(),
             format!("{op_name} accepts at most one axis const generic"),

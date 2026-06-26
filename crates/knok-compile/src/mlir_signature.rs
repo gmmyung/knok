@@ -100,11 +100,11 @@ fn starts_mlir_keyword(input: &str, index: usize, keyword: &str) -> bool {
     let before_boundary = input[..index]
         .chars()
         .next_back()
-        .map_or(true, |ch| ch.is_whitespace());
+        .is_none_or(|ch| ch.is_whitespace());
     let after_boundary = tail[keyword.len()..]
         .chars()
         .next()
-        .map_or(true, |ch| ch.is_whitespace() || ch == '{');
+        .is_none_or(|ch| ch.is_whitespace() || ch == '{');
     before_boundary && after_boundary
 }
 

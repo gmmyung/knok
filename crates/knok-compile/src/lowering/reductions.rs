@@ -1,4 +1,4 @@
-use knok_core::{ElementType, TensorType};
+use knok_core::{AxisSpec, ElementType, TensorType};
 
 use super::lowerer::{Lowerer, Value};
 use super::shape::{
@@ -6,22 +6,24 @@ use super::shape::{
 };
 
 impl Lowerer<'_> {
-    pub(super) fn mean(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+    pub(super) fn mean(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         ensure_non_empty_reduction(&input.ty, axis, "mean")?;
-        let count = axis.map_or_else(|| element_count(&input.ty), |axis| input.ty.shape[axis]);
+        let count = axis
+            .index()
+            .map_or_else(|| element_count(&input.ty), |axis| input.ty.shape[axis]);
         let elem = input.ty.elem;
         let sum = self.sum(input, axis)?;
         let scale = self.constant(&format!("{count}.0"), elem)?;
         self.emit_binary("arith.divf", sum, scale)
     }
 
-    pub(super) fn softmax(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+    pub(super) fn softmax(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         ensure_non_empty_reduction(&input.ty, axis, "softmax")?;
-        if let Some(axis) = axis {
+        if let Some(axis) = axis.index() {
             return self.axis_softmax(input, axis);
         }
         let max = self.max(input.clone(), axis, false)?;
-        let max = if let Some(axis) = axis {
+        let max = if let Some(axis) = axis.index() {
             self.broadcast_along_axis(max, &input.ty, axis)?
         } else {
             self.broadcast(max, &input.ty)?
@@ -35,7 +37,7 @@ impl Lowerer<'_> {
             axis,
             false,
         )?;
-        let denominator = if let Some(axis) = axis {
+        let denominator = if let Some(axis) = axis.index() {
             self.broadcast_along_axis(denominator, &exp.ty, axis)?
         } else {
             self.broadcast(denominator, &exp.ty)?
@@ -69,7 +71,7 @@ impl Lowerer<'_> {
         self.emit_binary("arith.divf", one, denominator)
     }
 
-    pub(super) fn argmax(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+    pub(super) fn argmax(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         ensure_non_empty_reduction(&input.ty, axis, "argmax")?;
         let index_ty = TensorType {
             elem: ElementType::I64,
@@ -197,8 +199,8 @@ impl Lowerer<'_> {
         })
     }
 
-    fn argmax_candidate_index(&mut self, input: &TensorType, axis: Option<usize>) -> String {
-        let index = if let Some(axis) = axis {
+    fn argmax_candidate_index(&mut self, input: &TensorType, axis: AxisSpec) -> String {
+        let index = if let Some(axis) = axis.index() {
             let index = self.fresh();
             self.lines
                 .push(format!("      {index} = linalg.index {axis} : index"));
@@ -236,7 +238,7 @@ impl Lowerer<'_> {
         index_i64
     }
 
-    pub(super) fn sum(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+    pub(super) fn sum(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         let reducer_op = if input.ty.elem.is_float() {
             "arith.addf"
         } else {
@@ -246,15 +248,15 @@ impl Lowerer<'_> {
         self.reduce(input, initial_value, reducer_op, axis, false)
     }
 
-    pub(super) fn all(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+    pub(super) fn all(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         self.reduce(input, "1", "arith.andi", axis, false)
     }
 
-    pub(super) fn any(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+    pub(super) fn any(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         self.reduce(input, "0", "arith.ori", axis, false)
     }
 
-    fn max(&mut self, input: Value, axis: Option<usize>, keep_dims: bool) -> anyhow::Result<Value> {
+    fn max(&mut self, input: Value, axis: AxisSpec, keep_dims: bool) -> anyhow::Result<Value> {
         self.reduce(
             input.clone(),
             min_float_literal(input.ty.elem),
@@ -269,7 +271,7 @@ impl Lowerer<'_> {
         input: Value,
         initial_value: &str,
         reducer_op: &str,
-        axis: Option<usize>,
+        axis: AxisSpec,
         keep_dims: bool,
     ) -> anyhow::Result<Value> {
         let ty = TensorType {
@@ -334,10 +336,10 @@ impl Lowerer<'_> {
     }
 }
 
-fn reduction_iterator_types(rank: usize, axis: Option<usize>) -> String {
+fn reduction_iterator_types(rank: usize, axis: AxisSpec) -> String {
     (0..rank)
         .map(|index| {
-            if axis.is_none() || axis == Some(index) {
+            if matches!(axis, AxisSpec::All) || axis.index() == Some(index) {
                 "\"reduction\""
             } else {
                 "\"parallel\""
@@ -361,24 +363,24 @@ fn min_numeric_literal(elem: ElementType) -> &'static str {
 
 fn ensure_non_empty_reduction(
     input: &TensorType,
-    axis: Option<usize>,
+    axis: AxisSpec,
     op_name: &str,
 ) -> anyhow::Result<()> {
     match axis {
-        Some(axis) if axis >= input.rank() => {
+        AxisSpec::One(axis) if axis >= input.rank() => {
             anyhow::bail!(
                 "{op_name} axis {axis} is out of bounds for rank-{} tensor {:?}",
                 input.rank(),
                 input.shape
             );
         }
-        Some(axis) if input.shape[axis] == 0 => {
+        AxisSpec::One(axis) if input.shape[axis] == 0 => {
             anyhow::bail!(
                 "{op_name} cannot reduce empty axis {axis} for tensor shape {:?}",
                 input.shape
             );
         }
-        None if element_count(input) == 0 => {
+        AxisSpec::All if element_count(input) == 0 => {
             anyhow::bail!(
                 "{op_name} cannot reduce empty tensor shape {:?}",
                 input.shape

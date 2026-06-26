@@ -15,6 +15,24 @@ pub(crate) fn rust_element_type(elem: ElementType) -> TokenStream {
     }
 }
 
+pub(crate) fn dtype_expr(elem: ElementType) -> TokenStream {
+    match elem {
+        ElementType::Bool => quote!(::knok::DType::Bool),
+        ElementType::F32 => quote!(::knok::DType::F32),
+        ElementType::F64 => quote!(::knok::DType::F64),
+        ElementType::F16 => quote!(::knok::DType::F16),
+        ElementType::BF16 => quote!(::knok::DType::BF16),
+        ElementType::I32 => quote!(::knok::DType::I32),
+        ElementType::I64 => quote!(::knok::DType::I64),
+    }
+}
+
+pub(crate) fn tensor_desc_expr(ty: &TensorType) -> TokenStream {
+    let elem = dtype_expr(ty.elem);
+    let dims = ty.shape.iter().copied();
+    quote!(::knok::TensorDesc::new(#elem, &[#(#dims),*]))
+}
+
 pub(crate) fn parse_return_output_types(output: &ReturnType) -> syn::Result<Vec<Type>> {
     match output {
         ReturnType::Type(_, ty) => parse_output_types(ty),

@@ -451,6 +451,7 @@ impl<
         })
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn from_array(data: [[[[[[T; D5]; D4]; D3]; D2]; D1]; D0]) -> Self {
         Self {
             storage: TensorData {

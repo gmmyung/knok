@@ -1,4 +1,4 @@
-use knok_core::{ElementType, TensorType};
+use knok_core::{AxisSpec, ElementType, TensorType};
 
 pub(super) fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
@@ -250,31 +250,27 @@ fn dim_from_trailing(shape: &[usize], rank: usize, offset: usize) -> Option<usiz
 
 pub(super) fn reduction_output_shape(
     input_shape: &[usize],
-    axis: Option<usize>,
+    axis: AxisSpec,
     keep_dims: bool,
 ) -> Vec<usize> {
     match axis {
-        Some(axis) if keep_dims => input_shape
+        AxisSpec::One(axis) if keep_dims => input_shape
             .iter()
             .enumerate()
             .map(|(index, dim)| if index == axis { 1 } else { *dim })
             .collect(),
-        Some(axis) => {
+        AxisSpec::One(axis) => {
             let mut shape = input_shape.to_vec();
             shape.remove(axis);
             shape
         }
-        None => Vec::new(),
+        AxisSpec::All => Vec::new(),
     }
 }
 
-pub(super) fn reduction_output_map(
-    input_rank: usize,
-    axis: Option<usize>,
-    keep_dims: bool,
-) -> String {
+pub(super) fn reduction_output_map(input_rank: usize, axis: AxisSpec, keep_dims: bool) -> String {
     match axis {
-        Some(axis) if keep_dims => {
+        AxisSpec::One(axis) if keep_dims => {
             let dims = (0..input_rank)
                 .map(|index| {
                     if index == axis {
@@ -287,8 +283,8 @@ pub(super) fn reduction_output_map(
                 .join(", ");
             format!("({dims})")
         }
-        Some(_) if input_rank == 1 => "()".to_string(),
-        Some(axis) => {
+        AxisSpec::One(_) if input_rank == 1 => "()".to_string(),
+        AxisSpec::One(axis) => {
             let dims = (0..input_rank)
                 .filter(|index| *index != axis)
                 .map(|index| format!("d{index}"))
@@ -300,7 +296,7 @@ pub(super) fn reduction_output_map(
                 format!("({dims})")
             }
         }
-        None => "()".to_string(),
+        AxisSpec::All => "()".to_string(),
     }
 }
 

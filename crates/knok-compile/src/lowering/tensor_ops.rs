@@ -248,7 +248,7 @@ impl Lowerer<'_> {
             return self.splat(input, ty);
         }
         if input.ty.rank() == 0 || element_count(&input.ty) == 1 {
-            let scalar = self.to_scalar(input)?;
+            let scalar = self.coerce_to_scalar(input)?;
             return self.splat(scalar, ty);
         }
         ensure_axis_broadcastable(&input.ty, ty, axis)?;
