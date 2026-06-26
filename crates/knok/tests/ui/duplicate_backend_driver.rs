@@ -1,6 +1,6 @@
 #[knok::graph(backends = [
-    backend("llvm-cpu", driver = "local-task"),
-    backend("llvm-cpu", driver = "local-task"),
+    backend(Backend::LlvmCpu, driver = Driver::LocalTask),
+    backend(Backend::LlvmCpu, driver = Driver::LocalTask),
 ])]
 fn add4(
     x: knok::tensor::Tensor1<f32, 4>,

@@ -1,0 +1,13 @@
+error: unsupported driver path; expected Driver::LocalTask or Driver::Metal
+ --> tests/ui/invalid_driver_path.rs:4:40
+  |
+4 |     backend(Backend::LlvmCpu, driver = fake::Driver::LocalTask),
+  |                                        ^^^^
+
+warning: unused import: `knok::prelude::*`
+ --> tests/ui/invalid_driver_path.rs:1:5
+  |
+1 | use knok::prelude::*;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

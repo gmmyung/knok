@@ -1,17 +1,17 @@
 use knok::prelude::*;
 use knok::{Engine, RuntimeConfig};
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4_f64(x: Tensor1<f64, 4>, y: Tensor1<f64, 4>) -> Tensor1<f64, 4> {
     x + y
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn arithmetic4_i32(x: Tensor1<i32, 4>, y: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
     ((x - y) * 2i32) / 4i32
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4_i64(x: Tensor1<i64, 4>, y: Tensor1<i64, 4>) -> Tensor1<i64, 4> {
     x + y
 }

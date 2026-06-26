@@ -1,7 +1,7 @@
 use knok::prelude::*;
 use knok::{Engine, RuntimeConfig};
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn mlp_block(
     x: Tensor2<f32, 1, 3>,
     w: Tensor2<f32, 3, 2>,

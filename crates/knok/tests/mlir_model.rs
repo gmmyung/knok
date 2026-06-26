@@ -5,7 +5,7 @@ use knok::{Engine, Error, RuntimeConfig};
 knok::mlir_model! {
     name: imported_add4,
     path: "tests/fixtures/add4.mlir",
-    backend: "llvm-cpu",
+    backend: Backend::LlvmCpu,
     function: "imported.add4",
     inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
     output: Tensor1<f32, 4>,
@@ -14,7 +14,7 @@ knok::mlir_model! {
 knok::mlir_model! {
     name: imported_add4_bundle,
     path: "tests/fixtures/add4.mlir",
-    backends: [backend("llvm-cpu", driver = "local-task")],
+    backends: [backend(Backend::LlvmCpu, driver = Driver::LocalTask)],
     function: "imported.add4",
     inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
     output: Tensor1<f32, 4>,
@@ -23,7 +23,7 @@ knok::mlir_model! {
 knok::mlir_model! {
     name: imported_add4_i32,
     path: "tests/fixtures/add4_i32.mlir",
-    backend: "llvm-cpu",
+    backend: Backend::LlvmCpu,
     function: "imported.add4",
     inputs: [Tensor1<i32, 4>, Tensor1<i32, 4>],
     output: Tensor1<i32, 4>,
@@ -32,7 +32,7 @@ knok::mlir_model! {
 knok::mlir_model! {
     name: imported_add_sub4,
     path: "tests/fixtures/add_sub4.mlir",
-    backend: "llvm-cpu",
+    backend: Backend::LlvmCpu,
     function: "imported.add_sub4",
     inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
     outputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],

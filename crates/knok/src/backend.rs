@@ -4,6 +4,12 @@ pub enum Backend {
     MetalSpirv,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Driver {
+    LocalTask,
+    Metal,
+}
+
 impl Backend {
     pub const fn name(self) -> &'static str {
         match self {
@@ -14,8 +20,8 @@ impl Backend {
 
     pub const fn default_driver(self) -> &'static str {
         match self {
-            Self::LlvmCpu => "local-task",
-            Self::MetalSpirv => "metal",
+            Self::LlvmCpu => Driver::LocalTask.name(),
+            Self::MetalSpirv => Driver::Metal.name(),
         }
     }
 
@@ -27,9 +33,26 @@ impl Backend {
         }
     }
 
-    pub fn supports_driver(self, driver: &str) -> bool {
-        self.default_driver() == driver
+    pub fn supports_driver(self, driver: Driver) -> bool {
+        self.default_driver() == driver.name()
     }
 }
 
 pub const SUPPORTED_BACKENDS: &[Backend] = &[Backend::LlvmCpu, Backend::MetalSpirv];
+
+impl Driver {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::LocalTask => "local-task",
+            Self::Metal => "metal",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "local-task" => Some(Self::LocalTask),
+            "metal" => Some(Self::Metal),
+            _ => None,
+        }
+    }
+}

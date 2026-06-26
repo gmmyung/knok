@@ -2,182 +2,182 @@ use knok::prelude::*;
 use knok::runtime::raw;
 use knok::{Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig};
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_sub4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
     (x + y, x - y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_sub4_product(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     let (sum, diff) = add_sub4(x, y);
     sum * diff
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4_f64(x: Tensor1<f64, 4>, y: Tensor1<f64, 4>) -> Tensor1<f64, 4> {
     x + y
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn arithmetic4_i32(x: Tensor1<i32, 4>, y: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
     ((x - y) * 2i32) / 4i32
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4_i64(x: Tensor1<i64, 4>, y: Tensor1<i64, 4>) -> Tensor1<i64, 4> {
     x + y
 }
 
 #[cfg(feature = "half")]
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add4_f16(x: Tensor1<f16, 4>, y: Tensor1<f16, 4>) -> Tensor1<f16, 4> {
     x + y
 }
 
 #[cfg(feature = "half")]
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn identity4_bf16(x: Tensor1<bf16, 4>) -> Tensor1<bf16, 4> {
     x
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
     sum(x)
 }
 
-#[knok::graph(backends = [backend("llvm-cpu", driver = "local-task")])]
+#[knok::graph(backends = [backend(Backend::LlvmCpu, driver = Driver::LocalTask)])]
 fn add4_bundle(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     x + y
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn arithmetic4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     ((x - y) * 2.0) / 4.0
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn neg4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     -x
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn let_chain4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     let sum = x + y;
     let shifted = sum - 1.0;
     relu(shifted)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn relu4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn abs4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     abs(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn abs4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
     abs(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn minimum4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     minimum(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn maximum4_i32(x: Tensor1<i32, 4>, y: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
     maximum(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn clip4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     clip(x, 0.0, 2.0)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn pow4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     pow(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn mm2x2(x: Tensor2<f32, 2, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 2> {
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn transpose2x3(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 3, 2> {
     transpose(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn reshape2x2(x: Tensor1<f32, 4>) -> Tensor2<f32, 2, 2> {
     reshape::<Tensor2<f32, 2, 2>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn flatten2x2(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 4> {
     reshape::<Tensor1<f32, 4>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn broadcast1to4(x: Tensor1<f32, 1>) -> Tensor1<f32, 4> {
     broadcast::<Tensor1<f32, 4>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
     sum(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum2x2(x: Tensor2<f32, 2, 2>) -> Tensor0<f32> {
     sum(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
     sum::<0>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     sum::<1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn mean2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     mean::<1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn softmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> {
     softmax::<1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_bias2x3(x: Tensor2<f32, 2, 3>, bias: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
     x + bias
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn broadcast_bias2x3(bias: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
     broadcast::<Tensor2<f32, 2, 3>>(bias)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_column2x3(x: Tensor2<f32, 2, 3>, column: Tensor2<f32, 2, 1>) -> Tensor2<f32, 2, 3> {
     x + column
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_channel_bias4d(
     x: Tensor4<f32, 1, 2, 2, 3>,
     bias: Tensor1<f32, 3>,
@@ -185,67 +185,67 @@ fn add_channel_bias4d(
     x + bias
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
     sum::<3>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn mean4d_axis2(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
     mean::<2>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<i64, 1, 2, 2> {
     argmax::<3>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn slice2x4_to2x2(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
     slice::<Tensor2<f32, 2, 2>, 0, 1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn slice4d_middle(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<f32, 1, 1, 2, 2> {
     slice::<Tensor4<f32, 1, 1, 2, 2>, 0, 1, 0, 1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn take2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
     take::<0, 1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn take2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     take::<1, 2>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
     take::<3, 1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn squeeze1x2x1x3(x: Tensor4<f32, 1, 2, 1, 3>) -> Tensor2<f32, 2, 3> {
     squeeze::<Tensor2<f32, 2, 3>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn unsqueeze2x3(x: Tensor2<f32, 2, 3>) -> Tensor4<f32, 1, 2, 1, 3> {
     unsqueeze::<Tensor4<f32, 1, 2, 1, 3>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn concat_rows2x2(x: Tensor2<f32, 1, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 3, 2> {
     concat::<0>(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn concat_cols2x2(x: Tensor2<f32, 2, 1>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 3> {
     concat::<1>(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn concat4d_channels(
     x: Tensor4<f32, 1, 1, 1, 1>,
     y: Tensor4<f32, 1, 1, 1, 2>,
@@ -253,107 +253,107 @@ fn concat4d_channels(
     concat::<3>(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn stack_vectors(x: Tensor1<f32, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
     stack::<0>(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn reshape1_to_3d(x: Tensor1<f32, 8>) -> Tensor3<f32, 2, 2, 2> {
     reshape::<Tensor3<f32, 2, 2, 2>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn flatten4d(x: Tensor4<f32, 1, 2, 2, 1>) -> Tensor1<f32, 4> {
     reshape::<Tensor1<f32, 4>>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn exp4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     exp(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn log4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     log(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sqrt4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     sqrt(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn tanh4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     tanh(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sigmoid4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     sigmoid(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn softmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     softmax(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn mean4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
     mean(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax4(x: Tensor1<f32, 4>) -> Tensor0<i64> {
     argmax(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i64> {
     argmax(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor0<i64> {
     argmax(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
     argmax::<1>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn batch_mm(x: Tensor3<f32, 1, 2, 3>, y: Tensor3<f32, 1, 3, 2>) -> Tensor3<f32, 1, 2, 2> {
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn scalar_add(x: Tensor0<f32>, y: Tensor0<f32>) -> Tensor0<f32> {
     x + y
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum4_axis0(x: Tensor1<f32, 4>) -> Tensor0<f32> {
     sum::<0>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn dot4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor0<f32> {
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn matvec2x3(x: Tensor2<f32, 2, 3>, y: Tensor1<f32, 3>) -> Tensor1<f32, 2> {
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn vecmat3x2(x: Tensor1<f32, 3>, y: Tensor2<f32, 3, 2>) -> Tensor1<f32, 2> {
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn broadcast_batch_mm(
     x: Tensor4<f32, 2, 1, 2, 3>,
     y: Tensor3<f32, 3, 3, 2>,
@@ -361,12 +361,12 @@ fn broadcast_batch_mm(
     matmul(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn permute4d(x: Tensor4<f32, 1, 2, 3, 4>) -> Tensor4<f32, 1, 3, 2, 4> {
     permute::<Tensor4<f32, 1, 3, 2, 4>, 0, 2, 1, 3>(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn conv2d_1x1(
     x: Tensor4<f32, 1, 2, 2, 1>,
     k: Tensor4<f32, 1, 1, 1, 1>,
@@ -374,7 +374,7 @@ fn conv2d_1x1(
     conv2d(x, k)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn conv2d_pad_stride(
     x: Tensor4<f32, 1, 3, 3, 1>,
     k: Tensor4<f32, 2, 2, 1, 1>,
@@ -382,7 +382,7 @@ fn conv2d_pad_stride(
     conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn conv2d_dilated(
     x: Tensor4<f32, 1, 3, 3, 1>,
     k: Tensor4<f32, 2, 2, 1, 1>,
@@ -390,7 +390,7 @@ fn conv2d_dilated(
     conv2d::<Dilation<2, 2>>(x, k)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn conv2d_groups2(
     x: Tensor4<f32, 1, 1, 1, 4>,
     k: Tensor4<f32, 1, 1, 2, 4>,
@@ -398,33 +398,33 @@ fn conv2d_groups2(
     conv2d::<Groups<2>>(x, k)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn layer4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn composed4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     layer4(x + y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn composed_twice4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     let first = composed4(x, y);
     layer4(first - 2.0)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn select_positive4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     r#where(greater(x, 0.0), x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn select_positive_literals4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     r#where(greater(x, 0.0), 1.0, 0.0)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn select_with_bool_input4(
     condition: Tensor1<bool, 4>,
     x: Tensor1<f32, 4>,
@@ -433,77 +433,77 @@ fn select_with_bool_input4(
     r#where(condition, x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn compare_greater4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     greater(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn compare_greater_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     greater_equal(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn compare_less4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     less(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn compare_less_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     less_equal(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn compare_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     equal(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn compare_not_equal4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     not_equal(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn bool_equal4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
     equal(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn bool_not_equal4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
     not_equal(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn logical_from_comparisons4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<bool, 4> {
     logical_xor(greater(x, 0.0), less_equal(y, 2.0))
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn logical_and_input4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
     logical_and(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn logical_or_input4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
     logical_or(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn logical_xor_input4(x: Tensor1<bool, 4>, y: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
     logical_xor(x, y)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn logical_not_input4(x: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
     logical_not(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn all_positive4(x: Tensor1<f32, 4>) -> Tensor0<bool> {
     all(greater(x, 0.0))
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn any_nan4(x: Tensor1<f32, 4>) -> Tensor0<bool> {
     any(isnan(x))
 }

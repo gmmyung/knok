@@ -4,7 +4,7 @@ error: mlir_model inputs do not match MLIR function `imported.add4`: declared [T
 1 | / knok::mlir_model! {
 2 | |     name: imported_add4,
 3 | |     path: "../../../../crates/knok/tests/fixtures/add4.mlir",
-4 | |     backend: "llvm-cpu",
+4 | |     backend: Backend::LlvmCpu,
 ... |
 7 | |     output: knok::tensor::Tensor1<f32, 4>,
 8 | | }

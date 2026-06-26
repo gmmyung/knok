@@ -1,11 +1,11 @@
 error: unsupported backend path; expected Backend::LlvmCpu or Backend::MetalSpirv
- --> tests/ui/unsupported_backend.rs:3:25
+ --> tests/ui/invalid_backend_path.rs:4:13
   |
-3 | #[knok::graph(backend = Backend::VulkanSpirv)]
-  |                         ^^^^^^^
+4 |     backend(fake::Backend::LlvmCpu),
+  |             ^^^^
 
 warning: unused import: `knok::prelude::*`
- --> tests/ui/unsupported_backend.rs:1:5
+ --> tests/ui/invalid_backend_path.rs:1:5
   |
 1 | use knok::prelude::*;
   |     ^^^^^^^^^^^^^^^^

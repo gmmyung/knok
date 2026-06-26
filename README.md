@@ -23,7 +23,7 @@ The recommended hosted API is:
 ```rust
 use knok::prelude::*;
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x + y)
 }
@@ -53,14 +53,14 @@ let cpu_engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
 Graphs can return multiple tensors by returning a Rust tuple:
 
 ```rust
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_sub(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
     (x + y, x - y)
 }
 
 let (sum, diff) = add_sub_run(&engine, x, y)?;
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn combine(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     let (sum, diff) = add_sub(x, y);
     sum * diff
@@ -72,8 +72,8 @@ variant whose driver matches the engine:
 
 ```rust
 #[knok::graph(backends = [
-    backend("llvm-cpu", driver = "local-task"),
-    backend("metal-spirv", driver = "metal"),
+    backend(Backend::LlvmCpu, driver = Driver::LocalTask),
+    backend(Backend::MetalSpirv, driver = Driver::Metal),
 ])]
 fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x + y)
@@ -86,7 +86,7 @@ Local MLIR files can also be compiled into embedded artifacts:
 knok::mlir_model! {
     name: imported_add4,
     path: "tests/fixtures/add4.mlir",
-    backend: "llvm-cpu",
+    backend: Backend::LlvmCpu,
     function: "imported.add4",
     inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
     output: Tensor1<f32, 4>,
@@ -105,12 +105,12 @@ Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
 
 ```rust
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn layer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x)
 }
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn model(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     layer(x + y)
 }
@@ -226,8 +226,8 @@ They cover the recommended hosted workflow:
 - Static rank-0 through rank-4 shapes only.
 - Host tensors are contiguous row-major value containers. Graph operations are
   value operations, not NumPy-style host views.
-- Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
-  `backends = [backend("...", driver = "...")]`.
+- Explicit `backend = Backend::LlvmCpu` or `backend = Backend::MetalSpirv`, or
+  `backends = [backend(Backend::..., driver = Driver::...)]`.
   Backend names and driver compatibility are validated at macro expansion time.
 - Supported graph operations: `+`, `-`, `*`, `/`, unary `-`, trailing
   broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,

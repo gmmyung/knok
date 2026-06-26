@@ -1,0 +1,13 @@
+error: backend must be a path such as Backend::LlvmCpu or knok::Backend::LlvmCpu
+ --> tests/ui/string_backend.rs:3:25
+  |
+3 | #[knok::graph(backend = "llvm-cpu")]
+  |                         ^^^^^^^^^^
+
+warning: unused import: `knok::prelude::*`
+ --> tests/ui/string_backend.rs:1:5
+  |
+1 | use knok::prelude::*;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

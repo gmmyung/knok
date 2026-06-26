@@ -1,5 +1,5 @@
 #[knok::graph(backends = [
-    backend("llvm-cpu", device = "default"),
+    backend(Backend::LlvmCpu, device = "default"),
 ])]
 fn add4(
     x: knok::tensor::Tensor1<f32, 4>,

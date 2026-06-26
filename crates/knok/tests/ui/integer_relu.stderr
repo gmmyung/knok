@@ -1,8 +1,8 @@
 error: Relu supports floating-point tensors only
  --> tests/ui/integer_relu.rs:3:1
   |
-3 | #[knok::graph(backend = "llvm-cpu")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3 | #[knok::graph(backend = Backend::LlvmCpu)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   |
   = note: this error originates in the attribute macro `knok::graph` (in Nightly builds, run with -Z macro-backtrace for more info)
 

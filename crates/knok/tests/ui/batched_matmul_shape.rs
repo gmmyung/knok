@@ -1,6 +1,6 @@
 use knok::prelude::*;
 
-#[knok::graph(backend = "llvm-cpu")]
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn bad_batch_mm(
     x: Tensor3<f32, 2, 2, 3>,
     y: Tensor3<f32, 3, 3, 2>,
