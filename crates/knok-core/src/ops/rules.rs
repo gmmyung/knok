@@ -1,7 +1,7 @@
 use proc_macro2::Span;
 
 use super::{conv2d_result_type, matmul_result_type, validate_permute};
-use crate::{AxisSpec, CallOp, ElementType, TensorType};
+use crate::{static_eye_literals, AxisSpec, CallOp, ElementType, TensorType};
 
 pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
     match op {
@@ -64,6 +64,31 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
         CallOp::Equal | CallOp::NotEqual => {
             expect_arity(op, args, 2)?;
             equality_result_type(&args[0], &args[1])
+        }
+        CallOp::Eye(target) => {
+            expect_arity(op, args, 0)?;
+            static_eye_literals(target)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            Ok(target.clone())
+        }
+        CallOp::FullLike => {
+            expect_arity(op, args, 2)?;
+            if args[1].rank() != 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!("full_like fill value must be rank-0, got {:?}", args[1]),
+                ));
+            }
+            if args[0].elem != args[1].elem {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "full_like input and fill element types must match, got {:?} and {:?}",
+                        args[0], args[1]
+                    ),
+                ));
+            }
+            Ok(args[0].clone())
         }
         CallOp::LogicalAnd | CallOp::LogicalOr | CallOp::LogicalXor => {
             expect_arity(op, args, 2)?;
@@ -212,6 +237,24 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 2)?;
             conv2d_result_type(&args[0], &args[1], options)
         }
+        CallOp::Arange(target) => {
+            if !target.elem.is_numeric() || target.rank() != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "arange target must be a rank-1 numeric tensor",
+                ));
+            }
+            Ok(target.clone())
+        }
+        CallOp::Linspace(target) => {
+            if !target.elem.is_numeric() || target.rank() != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "linspace target must be a rank-1 numeric tensor",
+                ));
+            }
+            Ok(target.clone())
+        }
         CallOp::Unsqueeze(target) => {
             expect_arity(op, args, 1)?;
             validate_unsqueeze(&args[0], target)?;
@@ -220,6 +263,10 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
         CallOp::Where => {
             expect_arity(op, args, 3)?;
             where_result_type(&args[0], &args[1], &args[2])
+        }
+        CallOp::OnesLike | CallOp::ZerosLike => {
+            expect_arity(op, args, 1)?;
+            Ok(args[0].clone())
         }
         CallOp::Graph(_) => Err(syn::Error::new(
             Span::call_site(),

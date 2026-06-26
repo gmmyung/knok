@@ -431,9 +431,21 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Concat(expect_one_const(&generics, &path.path, "concat")?)
                 }
                 "conv2d" => CallOp::Conv2d(parse_conv2d_options(&generics, &path.path)?),
+                "arange" => {
+                    reject_consts(&generics, &path.path, "arange")?;
+                    CallOp::Arange(expect_target_type(&generics, &path.path, "arange")?)
+                }
+                "eye" | "identity" => {
+                    reject_consts(&generics, &path.path, "eye")?;
+                    CallOp::Eye(expect_target_type(&generics, &path.path, "eye")?)
+                }
                 "exp" => {
                     reject_any_generics(&generics, &path.path, "exp")?;
                     CallOp::Exp
+                }
+                "full_like" => {
+                    reject_any_generics(&generics, &path.path, "full_like")?;
+                    CallOp::FullLike
                 }
                 "greater" => {
                     reject_any_generics(&generics, &path.path, "greater")?;
@@ -454,6 +466,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "less_equal" => {
                     reject_any_generics(&generics, &path.path, "less_equal")?;
                     CallOp::LessEqual
+                }
+                "linspace" => {
+                    reject_consts(&generics, &path.path, "linspace")?;
+                    CallOp::Linspace(expect_target_type(&generics, &path.path, "linspace")?)
                 }
                 "log" => {
                     reject_any_generics(&generics, &path.path, "log")?;
@@ -494,6 +510,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "pow" => {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
+                }
+                "ones_like" => {
+                    reject_any_generics(&generics, &path.path, "ones_like")?;
+                    CallOp::OnesLike
                 }
                 "permute" => {
                     let target = expect_target_type(&generics, &path.path, "permute")?;
@@ -572,6 +592,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "where" | "r#where" => {
                     reject_any_generics(&generics, &path.path, "where")?;
                     CallOp::Where
+                }
+                "zeros_like" => {
+                    reject_any_generics(&generics, &path.path, "zeros_like")?;
+                    CallOp::ZerosLike
                 }
                 "unsqueeze" => {
                     reject_consts(&generics, &path.path, "unsqueeze")?;
