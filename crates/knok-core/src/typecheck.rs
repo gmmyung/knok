@@ -254,7 +254,7 @@ fn call_result_type(
         CallOp::Argmax => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
-            expect_float(op, input.elem)?;
+            expect_numeric_element(input.elem, "argmax")?;
             if input.rank() != 1 {
                 return Err(syn::Error::new(
                     Span::call_site(),
@@ -262,7 +262,7 @@ fn call_result_type(
                 ));
             }
             Ok(TensorType {
-                elem: input.elem,
+                elem: ElementType::I64,
                 shape: vec![1],
             })
         }

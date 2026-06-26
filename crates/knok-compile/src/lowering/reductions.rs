@@ -76,7 +76,7 @@ impl Lowerer<'_> {
             anyhow::bail!("argmax lowering expects a non-empty tensor");
         }
         let ty = TensorType {
-            elem: input.ty.elem,
+            elem: ElementType::I64,
             shape: vec![1],
         };
         let zero = self.fresh();
@@ -100,6 +100,16 @@ impl Lowerer<'_> {
         let better = self.fresh();
         let selected_index = self.fresh();
         let selected_value = self.fresh();
+        let compare_op = if input.ty.elem.is_float() {
+            "arith.cmpf"
+        } else {
+            "arith.cmpi"
+        };
+        let compare_predicate = if input.ty.elem.is_float() {
+            "ogt"
+        } else {
+            "sgt"
+        };
         self.lines.push(format!(
             "    {best_index}, {best_value} = scf.for %i = {one} to {upper} step {one} iter_args(%best_i = {zero}, %best_v = {first}) -> (index, {}) {{",
             input.ty.elem.mlir_type()
@@ -110,7 +120,7 @@ impl Lowerer<'_> {
             input.ty.mlir_type()
         ));
         self.lines.push(format!(
-            "      {better} = arith.cmpf ogt, {next_value}, %best_v : {}",
+            "      {better} = {compare_op} {compare_predicate}, {next_value}, %best_v : {}",
             input.ty.elem.mlir_type()
         ));
         self.lines.push(format!(
@@ -129,23 +139,12 @@ impl Lowerer<'_> {
         self.lines.push(format!(
             "    {index_i64} = arith.index_cast {best_index} : index to i64"
         ));
-        let index_value = self.fresh();
-        let conversion_op = match input.ty.elem {
-            ElementType::Bool => "arith.index_cast",
-            ElementType::F32 | ElementType::F64 => "arith.uitofp",
-            ElementType::F16 | ElementType::BF16 => "arith.uitofp",
-            ElementType::I32 | ElementType::I64 => "arith.index_cast",
-        };
-        self.lines.push(format!(
-            "    {index_value} = {conversion_op} {index_i64} : i64 to {}",
-            input.ty.elem.mlir_type()
-        ));
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let name = self.fresh();
         self.lines.push(format!(
-            "    {name} = tensor.insert {index_value} into {empty}[{zero}] : {}",
+            "    {name} = tensor.insert {index_i64} into {empty}[{zero}] : {}",
             ty.mlir_type()
         ));
         Ok(Value { name, ty })

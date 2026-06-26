@@ -263,7 +263,12 @@ fn mean4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
+    argmax(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
     argmax(x)
 }
 
@@ -850,7 +855,10 @@ fn reduction_and_classifier_op_graphs_run() {
     assert_close(&mean_output.into_vec(), &[2.5]);
 
     let argmax_output = argmax4(Tensor1::from_array([1.0, 10.0, 3.0, 4.0])).unwrap();
-    assert_eq!(argmax_output.into_vec(), vec![1.0]);
+    assert_eq!(argmax_output.into_vec(), vec![1i64]);
+
+    let integer_argmax_output = argmax4_i32(Tensor1::from_array([1i32, 10, 3, 4])).unwrap();
+    assert_eq!(integer_argmax_output.into_vec(), vec![1i64]);
 }
 
 #[test]

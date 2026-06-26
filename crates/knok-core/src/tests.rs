@@ -291,12 +291,26 @@ fn infers_scalar_classifier_op_shapes() {
     assert_eq!(mean.body[0].ty, tensor(&[1]));
 
     let argmax = parse(parse_quote! {
-        fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+        fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
             argmax(x)
         }
     })
     .unwrap();
-    assert_eq!(argmax.body[0].ty, tensor(&[1]));
+    assert_eq!(
+        argmax.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![1]
+        }
+    );
+
+    let integer_argmax = parse(parse_quote! {
+        fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
+            argmax(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(integer_argmax.body[0].ty, argmax.body[0].ty);
 }
 
 #[test]
