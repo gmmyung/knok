@@ -66,6 +66,31 @@ pub struct Tensor4<T, const D0: usize, const D1: usize, const D2: usize, const D
     storage: TensorData<T>,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct Tensor5<
+    T,
+    const D0: usize,
+    const D1: usize,
+    const D2: usize,
+    const D3: usize,
+    const D4: usize,
+> {
+    storage: TensorData<T>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Tensor6<
+    T,
+    const D0: usize,
+    const D1: usize,
+    const D2: usize,
+    const D3: usize,
+    const D4: usize,
+    const D5: usize,
+> {
+    storage: TensorData<T>,
+}
+
 impl<T> TensorData<T> {
     fn from_vec<const R: usize>(data: Vec<T>, shape: &'static [usize; R]) -> crate::Result<Self> {
         let expected_len: usize = shape.iter().product();
@@ -344,6 +369,153 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
     }
 }
 
+impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize, const D4: usize>
+    Tensor5<T, D0, D1, D2, D3, D4>
+{
+    pub const SHAPE: &'static [usize] = &[D0, D1, D2, D3, D4];
+
+    pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
+        Ok(Self {
+            storage: TensorData::from_vec(data, &[D0, D1, D2, D3, D4])?,
+        })
+    }
+
+    pub fn from_array(data: [[[[[T; D4]; D3]; D2]; D1]; D0]) -> Self {
+        Self {
+            storage: TensorData {
+                data: data
+                    .into_iter()
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn filled(value: T) -> Self
+    where
+        T: Clone,
+    {
+        Self {
+            storage: TensorData::filled(value, &[D0, D1, D2, D3, D4]),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        self.storage.as_slice()
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.storage.data
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.storage.into_vec()
+    }
+
+    pub fn get(&self, d0: usize, d1: usize, d2: usize, d3: usize, d4: usize) -> Option<&T> {
+        (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3 && d4 < D4)
+            .then(|| &self.storage.data[(((d0 * D1 + d1) * D2 + d2) * D3 + d3) * D4 + d4])
+    }
+
+    pub fn get_mut(
+        &mut self,
+        d0: usize,
+        d1: usize,
+        d2: usize,
+        d3: usize,
+        d4: usize,
+    ) -> Option<&mut T> {
+        (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3 && d4 < D4)
+            .then(|| &mut self.storage.data[(((d0 * D1 + d1) * D2 + d2) * D3 + d3) * D4 + d4])
+    }
+}
+
+impl<
+        T,
+        const D0: usize,
+        const D1: usize,
+        const D2: usize,
+        const D3: usize,
+        const D4: usize,
+        const D5: usize,
+    > Tensor6<T, D0, D1, D2, D3, D4, D5>
+{
+    pub const SHAPE: &'static [usize] = &[D0, D1, D2, D3, D4, D5];
+
+    pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
+        Ok(Self {
+            storage: TensorData::from_vec(data, &[D0, D1, D2, D3, D4, D5])?,
+        })
+    }
+
+    pub fn from_array(data: [[[[[[T; D5]; D4]; D3]; D2]; D1]; D0]) -> Self {
+        Self {
+            storage: TensorData {
+                data: data
+                    .into_iter()
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .flat_map(IntoIterator::into_iter)
+                    .collect(),
+            },
+        }
+    }
+
+    pub fn filled(value: T) -> Self
+    where
+        T: Clone,
+    {
+        Self {
+            storage: TensorData::filled(value, &[D0, D1, D2, D3, D4, D5]),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        self.storage.as_slice()
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.storage.data
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.storage.into_vec()
+    }
+
+    pub fn get(
+        &self,
+        d0: usize,
+        d1: usize,
+        d2: usize,
+        d3: usize,
+        d4: usize,
+        d5: usize,
+    ) -> Option<&T> {
+        (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3 && d4 < D4 && d5 < D5).then(|| {
+            &self.storage.data[((((d0 * D1 + d1) * D2 + d2) * D3 + d3) * D4 + d4) * D5 + d5]
+        })
+    }
+
+    pub fn get_mut(
+        &mut self,
+        d0: usize,
+        d1: usize,
+        d2: usize,
+        d3: usize,
+        d4: usize,
+        d5: usize,
+    ) -> Option<&mut T> {
+        (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3 && d4 < D4 && d5 < D5).then(|| {
+            &mut self.storage.data[((((d0 * D1 + d1) * D2 + d2) * D3 + d3) * D4 + d4) * D5 + d5]
+        })
+    }
+}
+
 impl<T: TensorElement> Tensor0<T> {
     pub fn zeros() -> Self {
         Self::filled(T::ZERO)
@@ -396,6 +568,43 @@ impl<T: TensorElement, const D0: usize, const D1: usize, const D2: usize, const 
     }
 }
 
+impl<
+        T: TensorElement,
+        const D0: usize,
+        const D1: usize,
+        const D2: usize,
+        const D3: usize,
+        const D4: usize,
+    > Tensor5<T, D0, D1, D2, D3, D4>
+{
+    pub fn zeros() -> Self {
+        Self::filled(T::ZERO)
+    }
+
+    pub fn ones() -> Self {
+        Self::filled(T::ONE)
+    }
+}
+
+impl<
+        T: TensorElement,
+        const D0: usize,
+        const D1: usize,
+        const D2: usize,
+        const D3: usize,
+        const D4: usize,
+        const D5: usize,
+    > Tensor6<T, D0, D1, D2, D3, D4, D5>
+{
+    pub fn zeros() -> Self {
+        Self::filled(T::ZERO)
+    }
+
+    pub fn ones() -> Self {
+        Self::filled(T::ONE)
+    }
+}
+
 impl<T> TryFrom<Vec<T>> for Tensor0<T> {
     type Error = crate::Error;
 
@@ -432,6 +641,33 @@ impl<T, const D0: usize, const D1: usize, const D2: usize> TryFrom<Vec<T>>
 
 impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize> TryFrom<Vec<T>>
     for Tensor4<T, D0, D1, D2, D3>
+{
+    type Error = crate::Error;
+
+    fn try_from(data: Vec<T>) -> crate::Result<Self> {
+        Self::from_vec(data)
+    }
+}
+
+impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize, const D4: usize>
+    TryFrom<Vec<T>> for Tensor5<T, D0, D1, D2, D3, D4>
+{
+    type Error = crate::Error;
+
+    fn try_from(data: Vec<T>) -> crate::Result<Self> {
+        Self::from_vec(data)
+    }
+}
+
+impl<
+        T,
+        const D0: usize,
+        const D1: usize,
+        const D2: usize,
+        const D3: usize,
+        const D4: usize,
+        const D5: usize,
+    > TryFrom<Vec<T>> for Tensor6<T, D0, D1, D2, D3, D4, D5>
 {
     type Error = crate::Error;
 
@@ -488,6 +724,43 @@ impl<T: fmt::Debug, const D0: usize, const D1: usize, const D2: usize, const D3:
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Tensor4")
+            .field("shape", &Self::SHAPE)
+            .field("data", &self.storage.data)
+            .finish()
+    }
+}
+
+impl<
+        T: fmt::Debug,
+        const D0: usize,
+        const D1: usize,
+        const D2: usize,
+        const D3: usize,
+        const D4: usize,
+    > fmt::Debug for Tensor5<T, D0, D1, D2, D3, D4>
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Tensor5")
+            .field("shape", &Self::SHAPE)
+            .field("data", &self.storage.data)
+            .finish()
+    }
+}
+
+impl<
+        T: fmt::Debug,
+        const D0: usize,
+        const D1: usize,
+        const D2: usize,
+        const D3: usize,
+        const D4: usize,
+        const D5: usize,
+    > fmt::Debug for Tensor6<T, D0, D1, D2, D3, D4, D5>
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Tensor6")
             .field("shape", &Self::SHAPE)
             .field("data", &self.storage.data)
             .finish()

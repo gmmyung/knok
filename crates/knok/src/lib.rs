@@ -43,7 +43,9 @@ pub mod tensor;
 pub mod prelude {
     #[cfg(feature = "half")]
     pub use crate::half::{bf16, f16};
-    pub use crate::tensor::{Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, TensorElement};
+    pub use crate::tensor::{
+        Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6, TensorElement,
+    };
     #[cfg(feature = "macros")]
     pub use crate::{graph, mlir_model};
     pub use crate::{Backend, Driver};

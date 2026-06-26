@@ -178,6 +178,14 @@ fn add_column2x3(x: Tensor2<f32, 2, 3>, column: Tensor2<f32, 2, 1>) -> Tensor2<f
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn add_bias6d(
+    x: Tensor6<f32, 1, 1, 1, 1, 1, 3>,
+    bias: Tensor1<f32, 3>,
+) -> Tensor6<f32, 1, 1, 1, 1, 1, 3> {
+    x + bias
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn add_channel_bias4d(
     x: Tensor4<f32, 1, 2, 2, 3>,
     bias: Tensor1<f32, 3>,
@@ -198,6 +206,11 @@ fn mean4d_axis2(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<i64, 1, 2, 2> {
     argmax::<3>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn sum6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 1, 3>) -> Tensor5<f32, 1, 1, 1, 1, 1> {
+    sum::<5>(x)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -358,6 +371,14 @@ fn broadcast_batch_mm(
     x: Tensor4<f32, 2, 1, 2, 3>,
     y: Tensor3<f32, 3, 3, 2>,
 ) -> Tensor4<f32, 2, 3, 2, 2> {
+    matmul(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn batch_mm5d(
+    x: Tensor5<f32, 1, 1, 2, 2, 3>,
+    y: Tensor5<f32, 1, 1, 2, 3, 2>,
+) -> Tensor5<f32, 1, 1, 2, 2, 2> {
     matmul(x, y)
 }
 
@@ -795,6 +816,13 @@ fn expanded_matmul_graphs_run() {
     let broadcast =
         broadcast_batch_mm(Tensor4::filled(1.0), Tensor3::<f32, 3, 3, 2>::filled(2.0)).unwrap();
     assert_eq!(broadcast.into_vec(), vec![6.0; 24]);
+
+    let rank5_batch = batch_mm5d(
+        Tensor5::<f32, 1, 1, 2, 2, 3>::filled(1.0),
+        Tensor5::<f32, 1, 1, 2, 3, 2>::filled(2.0),
+    )
+    .unwrap();
+    assert_eq!(rank5_batch.into_vec(), vec![6.0; 8]);
 }
 
 #[test]
@@ -878,6 +906,9 @@ fn axis_reduction_graphs_run() {
 
     let mean4d = mean4d_axis2(x4).unwrap();
     assert_eq!(mean4d.into_vec(), vec![2.5, 3.5, 4.5, 8.5, 9.5, 10.5]);
+
+    let sum6d = sum6d_axis5(Tensor6::from_array([[[[[[1.0, 2.0, 3.0]]]]]])).unwrap();
+    assert_eq!(sum6d.into_vec(), vec![6.0]);
 }
 
 #[test]
@@ -922,6 +953,13 @@ fn rank_broadcasting_graphs_run() {
         added.into_vec(),
         vec![101.0, 102.0, 103.0, 210.0, 220.0, 230.0]
     );
+
+    let rank6_added = add_bias6d(
+        Tensor6::from_array([[[[[[1.0, 2.0, 3.0]]]]]]),
+        Tensor1::from_array([10.0, 20.0, 30.0]),
+    )
+    .unwrap();
+    assert_eq!(rank6_added.into_vec(), vec![11.0, 22.0, 33.0]);
 
     let x4 = Tensor4::from_array([[
         [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
