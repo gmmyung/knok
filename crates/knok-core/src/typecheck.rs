@@ -261,7 +261,7 @@ fn call_result_type(
                     "argmax expects a tensor input",
                 ));
             }
-            expect_non_empty_argmax_reduction(&input, *axis)?;
+            expect_non_empty_reduction(&input, *axis, "argmax")?;
             let mut output = reduction_output_type(&input, *axis)?;
             output.elem = ElementType::I64;
             Ok(output)
@@ -346,9 +346,13 @@ fn call_result_type(
             expect_arity(op, args, 1)?;
             let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             expect_float(op, ty.elem)?;
-            if let Some(axis) = axis {
-                expect_axis(&ty, *axis)?;
+            if ty.rank() == 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "softmax expects a tensor input",
+                ));
             }
+            expect_non_empty_reduction(&ty, *axis, "softmax")?;
             Ok(ty)
         }
         CallOp::Transpose => {
@@ -441,6 +445,7 @@ fn call_result_type(
                     "mean expects a tensor input",
                 ));
             }
+            expect_non_empty_reduction(&input, *axis, "mean")?;
             Ok(reduction_output_type(&input, *axis)?)
         }
         CallOp::Take { axis, index } => {
@@ -846,7 +851,11 @@ fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result
     })
 }
 
-fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) -> syn::Result<()> {
+fn expect_non_empty_reduction(
+    input: &TensorType,
+    axis: Option<usize>,
+    op_name: &str,
+) -> syn::Result<()> {
     match axis {
         Some(axis) => {
             expect_axis(input, axis)?;
@@ -854,7 +863,7 @@ fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) ->
                 return Err(syn::Error::new(
                     Span::call_site(),
                     format!(
-                        "argmax cannot reduce empty axis {axis} for tensor shape {:?}",
+                        "{op_name} cannot reduce empty axis {axis} for tensor shape {:?}",
                         input.shape
                     ),
                 ));
@@ -863,7 +872,10 @@ fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) ->
         None if element_count(input) == 0 => {
             return Err(syn::Error::new(
                 Span::call_site(),
-                format!("argmax cannot reduce empty tensor shape {:?}", input.shape),
+                format!(
+                    "{op_name} cannot reduce empty tensor shape {:?}",
+                    input.shape
+                ),
             ));
         }
         None => {}

@@ -7,6 +7,7 @@ use super::shape::{
 
 impl Lowerer<'_> {
     pub(super) fn mean(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        ensure_non_empty_reduction(&input.ty, axis, "mean")?;
         let count = axis.map_or_else(|| element_count(&input.ty), |axis| input.ty.shape[axis]);
         let elem = input.ty.elem;
         let sum = self.sum(input, axis)?;
@@ -15,6 +16,7 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn softmax(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        ensure_non_empty_reduction(&input.ty, axis, "softmax")?;
         if let Some(axis) = axis {
             return self.axis_softmax(input, axis);
         }
@@ -68,7 +70,7 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn argmax(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
-        ensure_non_empty_argmax_reduction(&input.ty, axis)?;
+        ensure_non_empty_reduction(&input.ty, axis, "argmax")?;
         let index_ty = TensorType {
             elem: ElementType::I64,
             shape: reduction_output_shape(&input.ty.shape, axis, false),
@@ -82,69 +84,16 @@ impl Lowerer<'_> {
             shape: index_ty.shape.clone(),
         };
 
-        let empty_index = self.fresh();
-        self.lines.push(format!(
-            "    {empty_index} = tensor.empty() : {}",
-            index_ty.mlir_type()
-        ));
-        let zero_i64 = self.fresh();
-        self.lines
-            .push(format!("    {zero_i64} = arith.constant 0 : i64"));
-        let init_index = self.fresh();
-        self.lines.push(format!(
-            "    {init_index} = linalg.fill ins({zero_i64} : i64) outs({empty_index} : {}) -> {}",
-            index_ty.mlir_type(),
-            index_ty.mlir_type()
-        ));
-
-        let empty_value = self.fresh();
-        self.lines.push(format!(
-            "    {empty_value} = tensor.empty() : {}",
-            value_ty.mlir_type()
-        ));
-        let min_value = self.fresh();
-        self.lines.push(format!(
-            "    {min_value} = arith.constant {} : {}",
-            min_numeric_literal(input.ty.elem),
-            input.ty.elem.mlir_type()
-        ));
-        let init_value = self.fresh();
-        self.lines.push(format!(
-            "    {init_value} = linalg.fill ins({min_value} : {}) outs({empty_value} : {}) -> {}",
-            input.ty.elem.mlir_type(),
-            value_ty.mlir_type(),
-            value_ty.mlir_type()
-        ));
-
-        let empty_valid = self.fresh();
-        self.lines.push(format!(
-            "    {empty_valid} = tensor.empty() : {}",
-            valid_ty.mlir_type()
-        ));
-        let false_value = self.fresh();
-        self.lines
-            .push(format!("    {false_value} = arith.constant 0 : i1"));
-        let init_valid = self.fresh();
-        self.lines.push(format!(
-            "    {init_valid} = linalg.fill ins({false_value} : i1) outs({empty_valid} : {}) -> {}",
-            valid_ty.mlir_type(),
-            valid_ty.mlir_type()
-        ));
+        let init_index = self.fill_tensor(&index_ty, "0", ElementType::I64);
+        let init_value =
+            self.fill_tensor(&value_ty, min_numeric_literal(input.ty.elem), input.ty.elem);
+        let init_valid = self.fill_tensor(&valid_ty, "0", ElementType::Bool);
 
         let rank = input.ty.rank();
         let dims = format_dim_list(rank);
         let input_map = format!("({dims})");
         let output_map = reduction_output_map(rank, axis, false);
-        let iterator_types = (0..rank)
-            .map(|index| {
-                if axis.is_none() || axis == Some(index) {
-                    "\"reduction\""
-                } else {
-                    "\"parallel\""
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        let iterator_types = reduction_iterator_types(rank, axis);
         let result = self.fresh();
         self.lines
             .push(format!("    {result}:3 = linalg.generic {{"));
@@ -326,35 +275,12 @@ impl Lowerer<'_> {
             elem: input.ty.elem,
             shape: reduction_output_shape(&input.ty.shape, axis, keep_dims),
         };
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {initial_value} : {}",
-            ty.elem.mlir_type()
-        ));
-        let init = self.fresh();
-        self.lines.push(format!(
-            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
-            ty.elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
+        let init = self.fill_tensor(&ty, initial_value, ty.elem);
 
         let rank = input.ty.rank();
         let dims = format_dim_list(rank);
         let input_map = format!("({dims})");
-        let iterator_types = (0..rank)
-            .map(|index| {
-                if axis.is_none() || axis == Some(index) {
-                    "\"reduction\""
-                } else {
-                    "\"parallel\""
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        let iterator_types = reduction_iterator_types(rank, axis);
         let output_map = reduction_output_map(rank, axis, keep_dims);
         let reduced = self.fresh();
         let name = self.fresh();
@@ -386,6 +312,38 @@ impl Lowerer<'_> {
         self.lines.push(format!("    }} -> {}", ty.mlir_type()));
         Ok(Value { name, ty })
     }
+
+    fn fill_tensor(&mut self, ty: &TensorType, value: &str, elem: ElementType) -> String {
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let scalar = self.fresh();
+        self.lines.push(format!(
+            "    {scalar} = arith.constant {value} : {}",
+            elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({scalar} : {}) outs({empty} : {}) -> {}",
+            elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        init
+    }
+}
+
+fn reduction_iterator_types(rank: usize, axis: Option<usize>) -> String {
+    (0..rank)
+        .map(|index| {
+            if axis.is_none() || axis == Some(index) {
+                "\"reduction\""
+            } else {
+                "\"parallel\""
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn min_numeric_literal(elem: ElementType) -> &'static str {
@@ -400,26 +358,30 @@ fn min_numeric_literal(elem: ElementType) -> &'static str {
     }
 }
 
-fn ensure_non_empty_argmax_reduction(
+fn ensure_non_empty_reduction(
     input: &TensorType,
     axis: Option<usize>,
+    op_name: &str,
 ) -> anyhow::Result<()> {
     match axis {
         Some(axis) if axis >= input.rank() => {
             anyhow::bail!(
-                "argmax axis {axis} is out of bounds for rank-{} tensor {:?}",
+                "{op_name} axis {axis} is out of bounds for rank-{} tensor {:?}",
                 input.rank(),
                 input.shape
             );
         }
         Some(axis) if input.shape[axis] == 0 => {
             anyhow::bail!(
-                "argmax cannot reduce empty axis {axis} for tensor shape {:?}",
+                "{op_name} cannot reduce empty axis {axis} for tensor shape {:?}",
                 input.shape
             );
         }
         None if element_count(input) == 0 => {
-            anyhow::bail!("argmax cannot reduce empty tensor shape {:?}", input.shape);
+            anyhow::bail!(
+                "{op_name} cannot reduce empty tensor shape {:?}",
+                input.shape
+            );
         }
         _ => Ok(()),
     }

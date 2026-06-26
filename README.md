@@ -258,6 +258,9 @@ They cover the recommended hosted workflow:
 - `argmax(x)` accepts numeric tensors and returns the row-major flattened index
   as `Tensor1<i64, 1>`. `argmax::<AXIS>(x)` returns per-slice indices along the
   reduced axis.
+- Empty `sum`, `all`, and `any` reductions use their identity values. Empty
+  `mean`, `softmax`, and `argmax` reductions are rejected because there is no
+  well-defined selected value or denominator.
 
 ## Dtype support
 

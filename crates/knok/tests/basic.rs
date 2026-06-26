@@ -178,8 +178,36 @@ fn add_column2x3(x: Tensor2<f32, 2, 3>, column: Tensor2<f32, 2, 1>) -> Tensor2<f
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn add_channel_bias4d(
+    x: Tensor4<f32, 1, 2, 2, 3>,
+    bias: Tensor1<f32, 3>,
+) -> Tensor4<f32, 1, 2, 2, 3> {
+    x + bias
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+    sum::<3>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn mean4d_axis2(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
+    mean::<2>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn argmax4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<i64, 1, 2, 2> {
+    argmax::<3>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn slice2x4_to2x2(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
     slice::<Tensor2<f32, 2, 2>, 0, 1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn slice4d_middle(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<f32, 1, 1, 2, 2> {
+    slice::<Tensor4<f32, 1, 1, 2, 2>, 0, 1, 0, 1>(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -190,6 +218,11 @@ fn take2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
 #[knok::graph(backend = "llvm-cpu")]
 fn take2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     take::<1, 2>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+    take::<3, 1>(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -210,6 +243,14 @@ fn concat_rows2x2(x: Tensor2<f32, 1, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 
 #[knok::graph(backend = "llvm-cpu")]
 fn concat_cols2x2(x: Tensor2<f32, 2, 1>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 3> {
     concat::<1>(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn concat4d_channels(
+    x: Tensor4<f32, 1, 1, 1, 1>,
+    y: Tensor4<f32, 1, 1, 1, 2>,
+) -> Tensor4<f32, 1, 1, 1, 3> {
+    concat::<3>(x, y)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -711,6 +752,16 @@ fn axis_reduction_graphs_run() {
 
     let mean = mean2x3_axis1(x).unwrap();
     assert_eq!(mean.into_vec(), vec![2.0, 20.0]);
+
+    let x4 = Tensor4::from_array([[
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+    ]]);
+    let sum4d = sum4d_axis3(x4.clone()).unwrap();
+    assert_eq!(sum4d.into_vec(), vec![6.0, 15.0, 24.0, 33.0]);
+
+    let mean4d = mean4d_axis2(x4).unwrap();
+    assert_eq!(mean4d.into_vec(), vec![2.5, 3.5, 4.5, 8.5, 9.5, 10.5]);
 }
 
 #[test]
@@ -755,6 +806,17 @@ fn rank_broadcasting_graphs_run() {
         added.into_vec(),
         vec![101.0, 102.0, 103.0, 210.0, 220.0, 230.0]
     );
+
+    let x4 = Tensor4::from_array([[
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+    ]]);
+    let bias = Tensor1::from_array([100.0, 200.0, 300.0]);
+    let added = add_channel_bias4d(x4, bias).unwrap();
+    assert_eq!(
+        added.into_vec(),
+        vec![101.0, 202.0, 303.0, 104.0, 205.0, 306.0, 107.0, 208.0, 309.0, 110.0, 211.0, 312.0]
+    );
 }
 
 #[test]
@@ -772,6 +834,19 @@ fn shape_and_indexing_graphs_run() {
         vec![10.0, 20.0, 30.0]
     );
     assert_eq!(take2x3_axis1(x).unwrap().into_vec(), vec![3.0, 30.0]);
+
+    let x4 = Tensor4::from_array([[
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+    ]]);
+    assert_eq!(
+        take4d_axis3(x4.clone()).unwrap().into_vec(),
+        vec![2.0, 5.0, 8.0, 11.0]
+    );
+    assert_eq!(
+        slice4d_middle(x4).unwrap().into_vec(),
+        vec![8.0, 9.0, 11.0, 12.0]
+    );
 
     let x4 = Tensor4::from_array([[[[1.0, 2.0, 3.0]], [[10.0, 20.0, 30.0]]]]);
     let squeezed = squeeze1x2x1x3(x4).unwrap();
@@ -794,6 +869,13 @@ fn shape_and_indexing_graphs_run() {
     )
     .unwrap();
     assert_eq!(cols.into_vec(), vec![1.0, 10.0, 20.0, 2.0, 30.0, 40.0]);
+
+    let channels = concat4d_channels(
+        Tensor4::from_array([[[[1.0]]]]),
+        Tensor4::from_array([[[[10.0, 20.0]]]]),
+    )
+    .unwrap();
+    assert_eq!(channels.into_vec(), vec![1.0, 10.0, 20.0]);
 
     let stacked = stack_vectors(
         Tensor1::from_array([1.0, 2.0, 3.0]),
@@ -877,6 +959,13 @@ fn reduction_and_classifier_op_graphs_run() {
     let argmax_axis_output =
         argmax2x3_axis1(Tensor2::from_array([[1.0, 9.0, 3.0], [7.0, 2.0, 8.0]])).unwrap();
     assert_eq!(argmax_axis_output.into_vec(), vec![1i64, 2i64]);
+
+    let argmax4d_output = argmax4d_axis3(Tensor4::from_array([[
+        [[1.0, 5.0, 3.0], [4.0, 2.0, 6.0]],
+        [[9.0, 8.0, 7.0], [0.0, 11.0, 10.0]],
+    ]]))
+    .unwrap();
+    assert_eq!(argmax4d_output.into_vec(), vec![1i64, 2, 0, 1]);
 }
 
 #[test]

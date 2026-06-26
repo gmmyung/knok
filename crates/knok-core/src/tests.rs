@@ -182,6 +182,22 @@ fn infers_reshape_broadcast_and_sum_shapes() {
     })
     .unwrap();
     assert_eq!(axis_mean.body[0].ty, tensor(&[3]));
+
+    let axis_sum4d = parse(parse_quote! {
+        fn sum_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+            sum::<3>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(axis_sum4d.body[0].ty, tensor(&[1, 2, 2]));
+
+    let axis_mean4d = parse(parse_quote! {
+        fn mean_axis2(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
+            mean::<2>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(axis_mean4d.body[0].ty, tensor(&[1, 2, 3]));
 }
 
 #[test]
@@ -215,6 +231,32 @@ fn infers_static_shape_and_indexing_ops() {
         parse_quote! {
             fn stack_axis0(x: Tensor1<f32, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
                 stack::<0>(x, y)
+            }
+        },
+        parse_quote! {
+            fn slice4d(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<f32, 1, 1, 2, 2> {
+                slice::<Tensor4<f32, 1, 1, 2, 2>, 0, 1, 0, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+                take::<3, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn concat4d_axis3(
+                x: Tensor4<f32, 1, 1, 1, 1>,
+                y: Tensor4<f32, 1, 1, 1, 2>,
+            ) -> Tensor4<f32, 1, 1, 1, 3> {
+                concat::<3>(x, y)
+            }
+        },
+        parse_quote! {
+            fn stack3d_axis2(
+                x: Tensor3<f32, 1, 2, 3>,
+                y: Tensor3<f32, 1, 2, 3>,
+            ) -> Tensor4<f32, 1, 2, 2, 3> {
+                stack::<2>(x, y)
             }
         },
     ] {
@@ -342,7 +384,7 @@ fn infers_scalar_classifier_op_shapes() {
 }
 
 #[test]
-fn rejects_empty_argmax_reductions() {
+fn rejects_empty_non_identity_reductions() {
     let empty_tensor = parse(parse_quote! {
         fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor1<i64, 1> {
             argmax(x)
@@ -368,6 +410,62 @@ fn rejects_empty_argmax_reductions() {
             .contains("argmax cannot reduce empty axis 1 for tensor shape [2, 0]"),
         "{empty_axis}"
     );
+
+    let empty_mean = parse(parse_quote! {
+        fn mean_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<f32, 2> {
+            mean::<1>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_mean
+            .to_string()
+            .contains("mean cannot reduce empty axis 1 for tensor shape [2, 0]"),
+        "{empty_mean}"
+    );
+
+    let empty_softmax = parse(parse_quote! {
+        fn softmax_empty(x: Tensor1<f32, 0>) -> Tensor1<f32, 0> {
+            softmax(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_softmax
+            .to_string()
+            .contains("softmax cannot reduce empty tensor shape [0]"),
+        "{empty_softmax}"
+    );
+
+    let sum_empty_axis = parse(parse_quote! {
+        fn sum_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<f32, 2> {
+            sum::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(sum_empty_axis.body[0].ty, tensor(&[2]));
+
+    let all_empty_axis = parse(parse_quote! {
+        fn all_empty_axis(x: Tensor2<bool, 2, 0>) -> Tensor1<bool, 2> {
+            all::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        all_empty_axis.body[0].ty,
+        TensorType {
+            elem: ElementType::Bool,
+            shape: vec![2]
+        }
+    );
+
+    let any_empty_axis = parse(parse_quote! {
+        fn any_empty_axis(x: Tensor2<bool, 2, 0>) -> Tensor1<bool, 2> {
+            any::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(any_empty_axis.body[0].ty, all_empty_axis.body[0].ty);
 }
 
 #[test]
@@ -381,6 +479,19 @@ fn infers_elementwise_call_shapes() {
         parse_quote! {
             fn maximum_broadcast(x: Tensor2<f32, 2, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
                 maximum(x, y)
+            }
+        },
+        parse_quote! {
+            fn add_channel_bias4d(
+                x: Tensor4<f32, 1, 2, 2, 3>,
+                bias: Tensor1<f32, 3>,
+            ) -> Tensor4<f32, 1, 2, 2, 3> {
+                x + bias
+            }
+        },
+        parse_quote! {
+            fn scalar_compare4d(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<bool, 1, 2, 2, 3> {
+                greater(x, 0.0)
             }
         },
         parse_quote! {
