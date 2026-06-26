@@ -99,7 +99,9 @@ Typed MLIR imports also expose `invoke_run(&engine, ...)` for reusable
 execution. Multi-output MLIR imports use `outputs: [...]` and return a tuple.
 MLIR imports without a declared signature still expose `artifact()`; use
 `Engine::invoke` with `knok::runtime::raw::Input` values when you need raw
-runtime execution.
+runtime execution. Artifacts generated from typed graphs or typed MLIR imports
+record input and output `TensorDesc` metadata, so raw `Engine::invoke` rejects
+input count, dtype, and shape mismatches before entering IREE.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:

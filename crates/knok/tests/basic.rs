@@ -1,6 +1,6 @@
 use knok::prelude::*;
 use knok::runtime::raw;
-use knok::{Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig};
+use knok::{DType, Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig, TensorDesc};
 
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
@@ -679,6 +679,14 @@ fn half_graphs_run() {
 fn artifact_records_backend_variant() {
     let artifact = add4_artifact();
     assert_eq!(artifact.function_name, "knok.add4");
+    assert_eq!(
+        artifact.input_descs,
+        &[
+            TensorDesc::new(DType::F32, &[4]),
+            TensorDesc::new(DType::F32, &[4])
+        ]
+    );
+    assert_eq!(artifact.output_descs, &[TensorDesc::new(DType::F32, &[4])]);
     assert_eq!(artifact.variants.len(), 1);
     let variant = artifact.first_variant().unwrap();
     assert_eq!(variant.backend, "llvm-cpu");
@@ -753,6 +761,66 @@ fn engine_reports_missing_artifact_variant_for_driver() {
             function_name: "knok.add4",
             ..
         }
+    ));
+}
+
+#[test]
+fn engine_rejects_raw_input_count_mismatch() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let x = [1.0, 2.0, 3.0, 4.0];
+    let error = engine
+        .invoke(add4_artifact(), &[raw::Input::F32(&[4], &x)])
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::InputCountMismatch {
+            expected: 2,
+            actual: 1
+        }
+    ));
+}
+
+#[test]
+fn engine_rejects_raw_input_dtype_mismatch() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let x = [1.0f32, 2.0, 3.0, 4.0];
+    let y = [10.0f64, 20.0, 30.0, 40.0];
+    let error = engine
+        .invoke(
+            add4_artifact(),
+            &[raw::Input::F32(&[4], &x), raw::Input::F64(&[4], &y)],
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::InputDTypeMismatch {
+            index: 1,
+            expected: DType::F32,
+            actual: DType::F64
+        }
+    ));
+}
+
+#[test]
+fn engine_rejects_raw_input_shape_mismatch() {
+    let engine = Engine::new(RuntimeConfig::auto()).unwrap();
+    let x = [1.0f32, 2.0, 3.0, 4.0];
+    let y = [10.0f32, 20.0, 30.0, 40.0];
+    let error = engine
+        .invoke(
+            add4_artifact(),
+            &[raw::Input::F32(&[2, 2], &x), raw::Input::F32(&[4], &y)],
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::Shape {
+            expected: &[4],
+            actual
+        } if actual == vec![2, 2]
     ));
 }
 

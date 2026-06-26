@@ -10,6 +10,8 @@ pub mod raw {
     #[cfg(feature = "host-runtime")]
     use alloc::vec::Vec;
 
+    use crate::DType;
+
     /// Raw input buffer passed to a compiled graph.
     pub enum Input<'a> {
         Bool(&'a [usize], &'a [bool]),
@@ -21,6 +23,36 @@ pub mod raw {
         F16(&'a [usize], &'a [crate::half::f16]),
         #[cfg(feature = "half")]
         BF16(&'a [usize], &'a [crate::half::bf16]),
+    }
+
+    impl Input<'_> {
+        /// Returns the static shape supplied for this raw input buffer.
+        pub fn shape(&self) -> &[usize] {
+            match self {
+                Self::Bool(shape, _)
+                | Self::F32(shape, _)
+                | Self::F64(shape, _)
+                | Self::I32(shape, _)
+                | Self::I64(shape, _) => shape,
+                #[cfg(feature = "half")]
+                Self::F16(shape, _) | Self::BF16(shape, _) => shape,
+            }
+        }
+
+        /// Returns the element type supplied for this raw input buffer.
+        pub fn dtype(&self) -> DType {
+            match self {
+                Self::Bool(_, _) => DType::Bool,
+                Self::F32(_, _) => DType::F32,
+                Self::F64(_, _) => DType::F64,
+                Self::I32(_, _) => DType::I32,
+                Self::I64(_, _) => DType::I64,
+                #[cfg(feature = "half")]
+                Self::F16(_, _) => DType::F16,
+                #[cfg(feature = "half")]
+                Self::BF16(_, _) => DType::BF16,
+            }
+        }
     }
 
     /// Element types supported by the raw hosted single-output convenience path.
@@ -306,6 +338,9 @@ mod hosted {
             artifact: GraphArtifact,
             inputs: &[raw::Input<'_>],
         ) -> crate::Result<raw::Outputs> {
+            if artifact.has_typed_signature() {
+                validate_inputs(artifact, inputs)?;
+            }
             let variant = artifact
                 .variant_for_driver(&self.driver_name)
                 .ok_or_else(|| crate::Error::MissingArtifactVariant {
@@ -320,7 +355,14 @@ mod hosted {
                 });
             }
             let function = self.resolve_function(variant.vmfb, artifact.function_name)?;
-            self.invoke_typed_values(&function, inputs)
+            let outputs = self.invoke_typed_values(&function, inputs)?;
+            if artifact.has_typed_signature() && outputs.len() != artifact.output_descs.len() {
+                return Err(crate::Error::OutputCountMismatch {
+                    expected: artifact.output_descs.len(),
+                    actual: outputs.len(),
+                });
+            }
+            Ok(outputs)
         }
 
         pub fn invoke_one<T: raw::Output>(
@@ -400,6 +442,33 @@ mod hosted {
                 }
             }
         }
+    }
+
+    fn validate_inputs(artifact: GraphArtifact, inputs: &[raw::Input<'_>]) -> crate::Result<()> {
+        if inputs.len() != artifact.input_descs.len() {
+            return Err(crate::Error::InputCountMismatch {
+                expected: artifact.input_descs.len(),
+                actual: inputs.len(),
+            });
+        }
+        for (index, (input, expected)) in inputs.iter().zip(artifact.input_descs).enumerate() {
+            let actual_dtype = input.dtype();
+            if actual_dtype != expected.elem {
+                return Err(crate::Error::InputDTypeMismatch {
+                    index,
+                    expected: expected.elem,
+                    actual: actual_dtype,
+                });
+            }
+            let actual_shape = input.shape();
+            if actual_shape != expected.shape {
+                return Err(crate::Error::Shape {
+                    expected: expected.shape,
+                    actual: actual_shape.to_vec(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 

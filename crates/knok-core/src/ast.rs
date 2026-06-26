@@ -58,9 +58,9 @@ pub enum BinaryOp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallOp {
     Abs,
-    All(Option<usize>),
-    Argmax(Option<usize>),
-    Any(Option<usize>),
+    All(AxisSpec),
+    Argmax(AxisSpec),
+    Any(AxisSpec),
     Clip,
     Concat(usize),
     Conv2d(Conv2dOptions),
@@ -77,7 +77,7 @@ pub enum CallOp {
     LogicalOr,
     LogicalXor,
     Matmul,
-    Mean(Option<usize>),
+    Mean(AxisSpec),
     Minimum,
     Maximum,
     NotEqual,
@@ -94,11 +94,11 @@ pub enum CallOp {
         target: TensorType,
         starts: Vec<usize>,
     },
-    Softmax(Option<usize>),
+    Softmax(AxisSpec),
     Sqrt,
     Squeeze(TensorType),
     Stack(usize),
-    Sum(Option<usize>),
+    Sum(AxisSpec),
     Tanh,
     Take {
         axis: usize,
@@ -108,6 +108,28 @@ pub enum CallOp {
     Unsqueeze(TensorType),
     Where,
     Graph(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxisSpec {
+    All,
+    One(usize),
+}
+
+impl AxisSpec {
+    pub fn from_optional(axis: Option<usize>) -> Self {
+        match axis {
+            Some(axis) => Self::One(axis),
+            None => Self::All,
+        }
+    }
+
+    pub fn index(self) -> Option<usize> {
+        match self {
+            Self::All => None,
+            Self::One(axis) => Some(axis),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

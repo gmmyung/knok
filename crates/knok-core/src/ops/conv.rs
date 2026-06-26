@@ -1,6 +1,6 @@
 use proc_macro2::Span;
 
-use crate::typecheck::expect_numeric_element;
+use super::expect_numeric_element;
 use crate::{Conv2dOptions, TensorType};
 
 pub(crate) fn conv2d_result_type(
@@ -46,7 +46,7 @@ pub(crate) fn conv2d_result_type(
             "conv2d input and output channels must be non-zero",
         ));
     }
-    if input_channels % options.groups != 0 {
+    if !input_channels.is_multiple_of(options.groups) {
         return Err(syn::Error::new(
             Span::call_site(),
             format!(
@@ -55,7 +55,7 @@ pub(crate) fn conv2d_result_type(
             ),
         ));
     }
-    if output_channels % options.groups != 0 {
+    if !output_channels.is_multiple_of(options.groups) {
         return Err(syn::Error::new(
             Span::call_site(),
             format!(

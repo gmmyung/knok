@@ -471,7 +471,7 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn splat(&mut self, scalar: Value, ty: &TensorType) -> anyhow::Result<Value> {
-        let scalar = self.to_scalar(scalar)?;
+        let scalar = self.coerce_to_scalar(scalar)?;
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
@@ -497,12 +497,12 @@ impl Lowerer<'_> {
         kind: ValueKind,
     ) -> anyhow::Result<Value> {
         match kind {
-            ValueKind::Scalar => self.to_scalar(value),
+            ValueKind::Scalar => self.coerce_to_scalar(value),
             ValueKind::Tensor => self.broadcast(value, ty),
         }
     }
 
-    pub(super) fn to_scalar(&mut self, value: Value) -> anyhow::Result<Value> {
+    pub(super) fn coerce_to_scalar(&mut self, value: Value) -> anyhow::Result<Value> {
         match value.kind {
             ValueKind::Scalar => Ok(value),
             ValueKind::Tensor

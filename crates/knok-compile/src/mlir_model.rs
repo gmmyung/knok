@@ -13,7 +13,7 @@ use syn::{
 
 use crate::{
     backend::{parse_backend_array, parse_backend_expr, reject_duplicate_drivers, BackendSpec},
-    common::{runtime_input_variant, rust_element_type},
+    common::{runtime_input_variant, rust_element_type, tensor_desc_expr},
     compile::compile_mlir_variants,
     mlir_signature::validate_mlir_model_signature,
 };
@@ -64,15 +64,29 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
     })?;
     let module_name = model.name;
     let function_name = model.function.value();
-    let input_types = model.inputs.unwrap_or_default();
-    let output_shapes = model
+    let input_descs = model
+        .inputs
+        .as_ref()
+        .map(|types| {
+            types
+                .iter()
+                .map(|ty| parse_tensor_type(ty).map(|tensor_ty| tensor_desc_expr(&tensor_ty)))
+                .collect::<syn::Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let output_descs = model
         .outputs
         .as_ref()
         .map(|types| {
-            let shapes = types.iter().map(|ty| quote!(<#ty>::SHAPE));
-            quote!(&[#(#shapes),*] as &[&[usize]])
+            types
+                .iter()
+                .map(|ty| parse_tensor_type(ty).map(|tensor_ty| tensor_desc_expr(&tensor_ty)))
+                .collect::<syn::Result<Vec<_>>>()
         })
-        .unwrap_or_else(|| quote!(&[] as &[&[usize]]));
+        .transpose()?
+        .unwrap_or_default();
+    let input_types = model.inputs.unwrap_or_default();
     let output_types = model.outputs;
     let typed_scope_import = output_types.as_ref().map(|_| {
         quote!(
@@ -177,11 +191,12 @@ fn expand_mlir_model_result(input: TokenStream) -> syn::Result<TokenStream> {
             pub fn artifact() -> ::knok::GraphArtifact {
                 #(#variant_statics)*
                 static VARIANTS: &[::knok::GraphArtifactVariant] = &[#(#variants),*];
-                static INPUT_SHAPES: &[&[usize]] = &[#(<#input_types>::SHAPE),*];
+                static INPUT_DESCS: &[::knok::TensorDesc] = &[#(#input_descs),*];
+                static OUTPUT_DESCS: &[::knok::TensorDesc] = &[#(#output_descs),*];
                 ::knok::GraphArtifact {
                     function_name: #function_name,
-                    input_shapes: INPUT_SHAPES,
-                    output_shapes: #output_shapes,
+                    input_descs: INPUT_DESCS,
+                    output_descs: OUTPUT_DESCS,
                     variants: VARIANTS,
                 }
             }
