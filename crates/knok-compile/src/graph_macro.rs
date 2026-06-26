@@ -67,7 +67,7 @@ fn expand_graph_result(attr: TokenStream, item: TokenStream) -> syn::Result<Toke
                 quote!(&[#(#dims),*])
             };
             let variant = runtime_input_variant(input.ty.elem);
-            quote!(::knok::runtime::RuntimeInput::#variant(#shape, #arg_name.as_slice()))
+            quote!(::knok::runtime::raw::Input::#variant(#shape, #arg_name.as_slice()))
         });
     let artifact_input_shapes = graph.inputs.iter().map(|input| {
         let dims = input.ty.shape.iter().copied();

@@ -1,5 +1,6 @@
 use proc_macro2::Span;
 
+use crate::ops::{conv2d_result_type, matmul_result_type, validate_permute};
 use crate::{
     CallOp, ElementType, Expr, Graph, GraphSignature, TensorType, TypedExpr, TypedGraph, TypedLet,
     TypedValue,
@@ -261,7 +262,7 @@ fn call_result_type(
                     "argmax expects a tensor input",
                 ));
             }
-            expect_non_empty_argmax_reduction(&input, *axis)?;
+            expect_non_empty_reduction(&input, *axis, "argmax")?;
             let mut output = reduction_output_type(&input, *axis)?;
             output.elem = ElementType::I64;
             Ok(output)
@@ -346,9 +347,13 @@ fn call_result_type(
             expect_arity(op, args, 1)?;
             let ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             expect_float(op, ty.elem)?;
-            if let Some(axis) = axis {
-                expect_axis(&ty, *axis)?;
+            if ty.rank() == 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "softmax expects a tensor input",
+                ));
             }
+            expect_non_empty_reduction(&ty, *axis, "softmax")?;
             Ok(ty)
         }
         CallOp::Transpose => {
@@ -362,6 +367,12 @@ fn call_result_type(
             }
             ty.shape.swap(0, 1);
             Ok(ty)
+        }
+        CallOp::Permute { target, axes } => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            validate_permute(&input, target, axes)?;
+            Ok(target.clone())
         }
         CallOp::Reshape(target) => {
             expect_arity(op, args, 1)?;
@@ -441,6 +452,7 @@ fn call_result_type(
                     "mean expects a tensor input",
                 ));
             }
+            expect_non_empty_reduction(&input, *axis, "mean")?;
             Ok(reduction_output_type(&input, *axis)?)
         }
         CallOp::Take { axis, index } => {
@@ -452,94 +464,13 @@ fn call_result_type(
             expect_arity(op, args, 2)?;
             let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
-            if lhs.elem != rhs.elem {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "matmul expects operands with the same element type",
-                ));
-            }
-            expect_numeric_element(lhs.elem, "matmul")?;
-            match (lhs.rank(), rhs.rank()) {
-                (2, 2) => {
-                    if lhs.shape[1] != rhs.shape[0] {
-                        return Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "matmul inner dimensions must match, got {} and {}",
-                                lhs.shape[1], rhs.shape[0]
-                            ),
-                        ));
-                    }
-                    Ok(TensorType {
-                        elem: lhs.elem,
-                        shape: vec![lhs.shape[0], rhs.shape[1]],
-                    })
-                }
-                (3, 3) => {
-                    if lhs.shape[0] != rhs.shape[0] {
-                        return Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "batched matmul batch dimensions must match, got {} and {}",
-                                lhs.shape[0], rhs.shape[0]
-                            ),
-                        ));
-                    }
-                    if lhs.shape[2] != rhs.shape[1] {
-                        return Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "batched matmul inner dimensions must match, got {} and {}",
-                                lhs.shape[2], rhs.shape[1]
-                            ),
-                        ));
-                    }
-                    Ok(TensorType {
-                        elem: lhs.elem,
-                        shape: vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
-                    })
-                }
-                _ => Err(syn::Error::new(
-                    Span::call_site(),
-                    "matmul expects rank-2 operands or rank-3 batched operands",
-                )),
-            }
+            matmul_result_type(&lhs, &rhs)
         }
-        CallOp::Conv2d => {
+        CallOp::Conv2d(options) => {
             expect_arity(op, args, 2)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let kernel = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
-            if input.rank() != 4 || kernel.rank() != 4 || input.elem != kernel.elem {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "conv2d expects NHWC input and HWCF kernel rank-4 tensors with the same element type",
-                ));
-            }
-            expect_numeric_element(input.elem, "conv2d")?;
-            if input.shape[3] != kernel.shape[2] {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    format!(
-                        "conv2d input channels must match kernel channels, got {} and {}",
-                        input.shape[3], kernel.shape[2]
-                    ),
-                ));
-            }
-            if input.shape[1] < kernel.shape[0] || input.shape[2] < kernel.shape[1] {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "conv2d kernel spatial dimensions must fit inside the input",
-                ));
-            }
-            Ok(TensorType {
-                elem: input.elem,
-                shape: vec![
-                    input.shape[0],
-                    input.shape[1] - kernel.shape[0] + 1,
-                    input.shape[2] - kernel.shape[1] + 1,
-                    kernel.shape[3],
-                ],
-            })
+            conv2d_result_type(&input, &kernel, options)
         }
         CallOp::Unsqueeze(target) => {
             expect_arity(op, args, 1)?;
@@ -624,12 +555,12 @@ fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
 }
 
-fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {
-    let rank = lhs.rank().max(rhs.rank());
+pub(crate) fn broadcast_shape_slices(lhs: &[usize], rhs: &[usize]) -> Result<Vec<usize>, String> {
+    let rank = lhs.len().max(rhs.len());
     let mut shape = Vec::with_capacity(rank);
     for offset in 0..rank {
-        let lhs_dim = dim_from_trailing(&lhs.shape, rank, offset);
-        let rhs_dim = dim_from_trailing(&rhs.shape, rank, offset);
+        let lhs_dim = dim_from_trailing(lhs, rank, offset);
+        let rhs_dim = dim_from_trailing(rhs, rank, offset);
         let dim = match (lhs_dim, rhs_dim) {
             (Some(lhs_dim), Some(rhs_dim)) if lhs_dim == rhs_dim => lhs_dim,
             (Some(1), Some(rhs_dim)) => rhs_dim,
@@ -638,14 +569,17 @@ fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, Str
             (None, None) => unreachable!("rank is derived from at least one shape"),
             (Some(lhs_dim), Some(rhs_dim)) => {
                 return Err(format!(
-                    "dimension {} differs: {} vs {}",
-                    offset, lhs_dim, rhs_dim
+                    "dimension {offset} differs: {lhs_dim} vs {rhs_dim}"
                 ));
             }
         };
         shape.push(dim);
     }
     Ok(shape)
+}
+
+fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {
+    broadcast_shape_slices(&lhs.shape, &rhs.shape)
 }
 
 fn dim_from_trailing(shape: &[usize], rank: usize, offset: usize) -> Option<usize> {
@@ -702,9 +636,6 @@ fn take_result_type(input: &TensorType, axis: usize, index: usize) -> syn::Resul
     }
     let mut shape = input.shape.clone();
     shape.remove(axis);
-    if shape.is_empty() {
-        shape.push(1);
-    }
     Ok(TensorType {
         elem: input.elem,
         shape,
@@ -724,11 +655,6 @@ fn validate_squeeze(input: &TensorType, target: &TensorType) -> syn::Result<()> 
         .copied()
         .filter(|dim| *dim != 1)
         .collect::<Vec<_>>();
-    let squeezed = if squeezed.is_empty() {
-        vec![1]
-    } else {
-        squeezed
-    };
     if squeezed == target.shape {
         Ok(())
     } else {
@@ -832,13 +758,9 @@ fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result
         expect_axis(input, axis)?;
         let mut shape = input.shape.clone();
         shape.remove(axis);
-        if shape.is_empty() {
-            vec![1]
-        } else {
-            shape
-        }
+        shape
     } else {
-        vec![1]
+        Vec::new()
     };
     Ok(TensorType {
         elem: input.elem,
@@ -846,7 +768,11 @@ fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result
     })
 }
 
-fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) -> syn::Result<()> {
+fn expect_non_empty_reduction(
+    input: &TensorType,
+    axis: Option<usize>,
+    op_name: &str,
+) -> syn::Result<()> {
     match axis {
         Some(axis) => {
             expect_axis(input, axis)?;
@@ -854,7 +780,7 @@ fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) ->
                 return Err(syn::Error::new(
                     Span::call_site(),
                     format!(
-                        "argmax cannot reduce empty axis {axis} for tensor shape {:?}",
+                        "{op_name} cannot reduce empty axis {axis} for tensor shape {:?}",
                         input.shape
                     ),
                 ));
@@ -863,7 +789,10 @@ fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) ->
         None if element_count(input) == 0 => {
             return Err(syn::Error::new(
                 Span::call_site(),
-                format!("argmax cannot reduce empty tensor shape {:?}", input.shape),
+                format!(
+                    "{op_name} cannot reduce empty tensor shape {:?}",
+                    input.shape
+                ),
             ));
         }
         None => {}
@@ -908,7 +837,7 @@ fn expect_float(op: &CallOp, elem: ElementType) -> syn::Result<()> {
     }
 }
 
-fn expect_numeric_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+pub(crate) fn expect_numeric_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
     if elem.is_numeric() {
         Ok(())
     } else {

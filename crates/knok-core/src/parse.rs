@@ -5,8 +5,8 @@ use syn::{
 };
 
 use crate::{
-    type_check, BinaryOp, CallOp, ElementType, Expr, Graph, GraphSignature, Input, Let, TensorType,
-    TypedGraph, UnaryOp,
+    type_check, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
+    Let, Padding2d, TensorType, TypedGraph, UnaryOp,
 };
 
 pub fn parse_graph(attr: proc_macro2::TokenStream, item: ItemFn) -> syn::Result<TypedGraph> {
@@ -140,16 +140,17 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(
             ty.span(),
-            "expected Tensor1, Tensor2, Tensor3, or Tensor4 type",
+            "expected Tensor0, Tensor1, Tensor2, Tensor3, or Tensor4 type",
         ));
     };
     let segment = path.segments.last().ok_or_else(|| {
         syn::Error::new(
             path.span(),
-            "expected Tensor1, Tensor2, Tensor3, or Tensor4 type",
+            "expected Tensor0, Tensor1, Tensor2, Tensor3, or Tensor4 type",
         )
     })?;
     let rank = match segment.ident.to_string().as_str() {
+        "Tensor0" => 0,
         "Tensor1" => 1,
         "Tensor2" => 2,
         "Tensor3" => 3,
@@ -157,7 +158,7 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
         _ => {
             return Err(syn::Error::new(
                 segment.ident.span(),
-                "expected Tensor1<T, D0>, Tensor2<T, D0, D1>, Tensor3<T, D0, D1, D2>, or Tensor4<T, D0, D1, D2, D3>",
+                "expected Tensor0<T>, Tensor1<T, D0>, Tensor2<T, D0, D1>, Tensor3<T, D0, D1, D2>, or Tensor4<T, D0, D1, D2, D3>",
             ));
         }
     };
@@ -392,15 +393,15 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Abs
                 }
                 "all" => {
-                    reject_target_type(&generics, &path.path, "all")?;
+                    reject_types(&generics, &path.path, "all")?;
                     CallOp::All(optional_axis(&generics, &path.path, "all")?)
                 }
                 "argmax" => {
-                    reject_target_type(&generics, &path.path, "argmax")?;
+                    reject_types(&generics, &path.path, "argmax")?;
                     CallOp::Argmax(optional_axis(&generics, &path.path, "argmax")?)
                 }
                 "any" => {
-                    reject_target_type(&generics, &path.path, "any")?;
+                    reject_types(&generics, &path.path, "any")?;
                     CallOp::Any(optional_axis(&generics, &path.path, "any")?)
                 }
                 "clip" => {
@@ -408,13 +409,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Clip
                 }
                 "concat" => {
-                    reject_target_type(&generics, &path.path, "concat")?;
+                    reject_types(&generics, &path.path, "concat")?;
                     CallOp::Concat(expect_one_const(&generics, &path.path, "concat")?)
                 }
-                "conv2d" => {
-                    reject_any_generics(&generics, &path.path, "conv2d")?;
-                    CallOp::Conv2d
-                }
+                "conv2d" => CallOp::Conv2d(parse_conv2d_options(&generics, &path.path)?),
                 "exp" => {
                     reject_any_generics(&generics, &path.path, "exp")?;
                     CallOp::Exp
@@ -464,7 +462,7 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Matmul
                 }
                 "mean" => {
-                    reject_target_type(&generics, &path.path, "mean")?;
+                    reject_types(&generics, &path.path, "mean")?;
                     CallOp::Mean(optional_axis(&generics, &path.path, "mean")?)
                 }
                 "minimum" => {
@@ -478,6 +476,13 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "pow" => {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
+                }
+                "permute" => {
+                    let target = expect_target_type(&generics, &path.path, "permute")?;
+                    CallOp::Permute {
+                        target,
+                        axes: generics.consts.clone(),
+                    }
                 }
                 "equal" => {
                     reject_any_generics(&generics, &path.path, "equal")?;
@@ -493,31 +498,22 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 }
                 "reshape" => {
                     reject_consts(&generics, &path.path, "reshape")?;
-                    CallOp::Reshape(expect_target_type(
-                        generics.target_ty.clone(),
-                        &path.path,
-                        "reshape",
-                    )?)
+                    CallOp::Reshape(expect_target_type(&generics, &path.path, "reshape")?)
                 }
                 "broadcast" => {
                     reject_consts(&generics, &path.path, "broadcast")?;
-                    CallOp::Broadcast(expect_target_type(
-                        generics.target_ty.clone(),
-                        &path.path,
-                        "broadcast",
-                    )?)
+                    CallOp::Broadcast(expect_target_type(&generics, &path.path, "broadcast")?)
                 }
                 "sigmoid" => {
                     reject_any_generics(&generics, &path.path, "sigmoid")?;
                     CallOp::Sigmoid
                 }
                 "softmax" => {
-                    reject_target_type(&generics, &path.path, "softmax")?;
+                    reject_types(&generics, &path.path, "softmax")?;
                     CallOp::Softmax(optional_axis(&generics, &path.path, "softmax")?)
                 }
                 "slice" => {
-                    let target =
-                        expect_target_type(generics.target_ty.clone(), &path.path, "slice")?;
+                    let target = expect_target_type(&generics, &path.path, "slice")?;
                     CallOp::Slice {
                         target,
                         starts: generics.consts.clone(),
@@ -529,18 +525,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 }
                 "squeeze" => {
                     reject_consts(&generics, &path.path, "squeeze")?;
-                    CallOp::Squeeze(expect_target_type(
-                        generics.target_ty.clone(),
-                        &path.path,
-                        "squeeze",
-                    )?)
+                    CallOp::Squeeze(expect_target_type(&generics, &path.path, "squeeze")?)
                 }
                 "stack" => {
-                    reject_target_type(&generics, &path.path, "stack")?;
+                    reject_types(&generics, &path.path, "stack")?;
                     CallOp::Stack(expect_one_const(&generics, &path.path, "stack")?)
                 }
                 "sum" => {
-                    reject_target_type(&generics, &path.path, "sum")?;
+                    reject_types(&generics, &path.path, "sum")?;
                     CallOp::Sum(optional_axis(&generics, &path.path, "sum")?)
                 }
                 "tanh" => {
@@ -548,7 +540,7 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Tanh
                 }
                 "take" => {
-                    reject_target_type(&generics, &path.path, "take")?;
+                    reject_types(&generics, &path.path, "take")?;
                     let values = expect_const_count(&generics, &path.path, "take", 2)?;
                     CallOp::Take {
                         axis: values[0],
@@ -565,11 +557,7 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 }
                 "unsqueeze" => {
                     reject_consts(&generics, &path.path, "unsqueeze")?;
-                    CallOp::Unsqueeze(expect_target_type(
-                        generics.target_ty.clone(),
-                        &path.path,
-                        "unsqueeze",
-                    )?)
+                    CallOp::Unsqueeze(expect_target_type(&generics, &path.path, "unsqueeze")?)
                 }
                 _ => {
                     reject_any_generics(&generics, &path.path, &op_name)?;
@@ -592,7 +580,7 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
 
 #[derive(Clone, Debug, Default)]
 struct CallGenerics {
-    target_ty: Option<TensorType>,
+    types: Vec<Type>,
     consts: Vec<usize>,
 }
 
@@ -619,13 +607,7 @@ fn parse_call_path(path: &syn::Path) -> syn::Result<(String, CallGenerics)> {
             for arg in &args.args {
                 match arg {
                     GenericArgument::Type(ty) => {
-                        if generics.target_ty.is_some() {
-                            return Err(syn::Error::new(
-                                arg.span(),
-                                "graph ops accept at most one target tensor type",
-                            ));
-                        }
-                        generics.target_ty = Some(parse_tensor_type(ty)?);
+                        generics.types.push(ty.clone());
                     }
                     GenericArgument::Const(expr) => {
                         generics.consts.push(parse_generic_const_usize(expr)?);
@@ -633,7 +615,7 @@ fn parse_call_path(path: &syn::Path) -> syn::Result<(String, CallGenerics)> {
                     _ => {
                         return Err(syn::Error::new(
                             arg.span(),
-                            "graph op generic argument must be a tensor type or integer const",
+                            "graph op generic argument must be a type-like option or integer const",
                         ));
                     }
                 }
@@ -666,23 +648,25 @@ fn parse_generic_const_usize(expr: &SynExpr) -> syn::Result<usize> {
 }
 
 fn expect_target_type(
-    target_ty: Option<TensorType>,
+    generics: &CallGenerics,
     path: &syn::Path,
     op_name: &str,
 ) -> syn::Result<TensorType> {
-    target_ty.ok_or_else(|| {
-        syn::Error::new(
-            path.span(),
-            format!("{op_name} requires a target tensor type, for example {op_name}::<Tensor1<f32, 4>>(x)"),
-        )
-    })
-}
-
-fn reject_target_type(generics: &CallGenerics, path: &syn::Path, op_name: &str) -> syn::Result<()> {
-    if generics.target_ty.is_some() {
+    if generics.types.len() == 1 {
+        parse_tensor_type(&generics.types[0])
+    } else {
         Err(syn::Error::new(
             path.span(),
-            format!("{op_name} does not accept a target tensor type"),
+            format!("{op_name} requires exactly one target tensor type, for example {op_name}::<Tensor1<f32, 4>>(x)"),
+        ))
+    }
+}
+
+fn reject_types(generics: &CallGenerics, path: &syn::Path, op_name: &str) -> syn::Result<()> {
+    if !generics.types.is_empty() {
+        Err(syn::Error::new(
+            path.span(),
+            format!("{op_name} does not accept type generic arguments"),
         ))
     } else {
         Ok(())
@@ -705,7 +689,7 @@ fn reject_any_generics(
     path: &syn::Path,
     op_name: &str,
 ) -> syn::Result<()> {
-    if generics.target_ty.is_some() || !generics.consts.is_empty() {
+    if !generics.types.is_empty() || !generics.consts.is_empty() {
         Err(syn::Error::new(
             path.span(),
             format!("graph call `{op_name}` does not accept generic arguments"),
@@ -728,6 +712,132 @@ fn optional_axis(
             format!("{op_name} accepts at most one axis const generic"),
         )),
     }
+}
+
+fn parse_conv2d_options(generics: &CallGenerics, path: &syn::Path) -> syn::Result<Conv2dOptions> {
+    if !generics.consts.is_empty() {
+        return Err(syn::Error::new(
+            path.span(),
+            "conv2d options use type-style generics, for example conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)",
+        ));
+    }
+    let mut options = Conv2dOptions::default();
+    let mut saw_padding = false;
+    let mut saw_stride = false;
+    let mut saw_dilation = false;
+    let mut saw_groups = false;
+    for ty in &generics.types {
+        let segment = option_type_segment(ty)?;
+        match segment.ident.to_string().as_str() {
+            "Pad" | "Padding" => {
+                if saw_padding {
+                    return Err(syn::Error::new(
+                        segment.span(),
+                        "duplicate conv2d padding option",
+                    ));
+                }
+                let args = option_const_args(segment, 4, "Pad")?;
+                options.padding = Padding2d {
+                    top: args[0],
+                    bottom: args[1],
+                    left: args[2],
+                    right: args[3],
+                };
+                saw_padding = true;
+            }
+            "Stride" => {
+                if saw_stride {
+                    return Err(syn::Error::new(
+                        segment.span(),
+                        "duplicate conv2d stride option",
+                    ));
+                }
+                let args = option_const_args(segment, 2, "Stride")?;
+                options.stride = [args[0], args[1]];
+                saw_stride = true;
+            }
+            "Dilation" => {
+                if saw_dilation {
+                    return Err(syn::Error::new(
+                        segment.span(),
+                        "duplicate conv2d dilation option",
+                    ));
+                }
+                let args = option_const_args(segment, 2, "Dilation")?;
+                options.dilation = [args[0], args[1]];
+                saw_dilation = true;
+            }
+            "Groups" => {
+                if saw_groups {
+                    return Err(syn::Error::new(
+                        segment.span(),
+                        "duplicate conv2d groups option",
+                    ));
+                }
+                let args = option_const_args(segment, 1, "Groups")?;
+                options.groups = args[0];
+                saw_groups = true;
+            }
+            name => {
+                return Err(syn::Error::new(
+                    segment.span(),
+                    format!(
+                        "unknown conv2d option `{name}`; expected Pad<TOP, BOTTOM, LEFT, RIGHT>, Stride<H, W>, Dilation<H, W>, or Groups<N>"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(options)
+}
+
+fn option_type_segment(ty: &Type) -> syn::Result<&syn::PathSegment> {
+    let Type::Path(TypePath { path, qself: None }) = ty else {
+        return Err(syn::Error::new(
+            ty.span(),
+            "conv2d options must be type paths such as Pad<1, 1, 1, 1>",
+        ));
+    };
+    path.segments.last().ok_or_else(|| {
+        syn::Error::new(
+            ty.span(),
+            "conv2d options must be type paths such as Pad<1, 1, 1, 1>",
+        )
+    })
+}
+
+fn option_const_args(
+    segment: &syn::PathSegment,
+    expected: usize,
+    option_name: &str,
+) -> syn::Result<Vec<usize>> {
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return Err(syn::Error::new(
+            segment.span(),
+            format!("{option_name} expects {expected} integer const arguments"),
+        ));
+    };
+    if args.args.len() != expected {
+        return Err(syn::Error::new(
+            args.span(),
+            format!(
+                "{option_name} expects {expected} integer const arguments, got {}",
+                args.args.len()
+            ),
+        ));
+    }
+    args.args
+        .iter()
+        .map(|arg| {
+            let GenericArgument::Const(expr) = arg else {
+                return Err(syn::Error::new(
+                    arg.span(),
+                    format!("{option_name} arguments must be integer consts"),
+                ));
+            };
+            parse_generic_const_usize(expr)
+        })
+        .collect()
 }
 
 fn expect_one_const(

@@ -1,6 +1,6 @@
 use knok_core::TensorType;
 
-use super::lowerer::{Lowerer, Value};
+use super::lowerer::{Lowerer, Value, ValueKind};
 use super::shape::{
     axis_broadcast_dimensions, collapse_reassociation_for_removed_axis,
     collapse_reassociation_for_squeezed_broadcast, element_count, ensure_axis_broadcastable,
@@ -9,137 +9,43 @@ use super::shape::{
 };
 
 impl Lowerer<'_> {
-    pub(super) fn matmul(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
-        if lhs.ty.rank() == 3 {
-            return self.batch_matmul(lhs, rhs);
-        }
-        let ty = TensorType {
-            elem: lhs.ty.elem,
-            shape: vec![lhs.ty.shape[0], rhs.ty.shape[1]],
-        };
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {} : {}",
-            ty.elem.zero_literal(),
-            ty.elem.mlir_type()
-        ));
-        let init = self.fresh();
-        self.lines.push(format!(
-            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
-            ty.elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = linalg.matmul ins({}, {} : {}, {}) outs({init} : {}) -> {}",
-            lhs.name,
-            rhs.name,
-            lhs.ty.mlir_type(),
-            rhs.ty.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value { name, ty })
-    }
-
-    fn batch_matmul(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
-        let ty = TensorType {
-            elem: lhs.ty.elem,
-            shape: vec![lhs.ty.shape[0], lhs.ty.shape[1], rhs.ty.shape[2]],
-        };
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {} : {}",
-            ty.elem.zero_literal(),
-            ty.elem.mlir_type()
-        ));
-        let init = self.fresh();
-        self.lines.push(format!(
-            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
-            ty.elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = linalg.batch_matmul ins({}, {} : {}, {}) outs({init} : {}) -> {}",
-            lhs.name,
-            rhs.name,
-            lhs.ty.mlir_type(),
-            rhs.ty.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value { name, ty })
-    }
-
-    pub(super) fn conv2d(&mut self, input: Value, kernel: Value) -> anyhow::Result<Value> {
-        let ty = TensorType {
-            elem: input.ty.elem,
-            shape: vec![
-                input.ty.shape[0],
-                input.ty.shape[1] - kernel.ty.shape[0] + 1,
-                input.ty.shape[2] - kernel.ty.shape[1] + 1,
-                kernel.ty.shape[3],
-            ],
-        };
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {} : {}",
-            ty.elem.zero_literal(),
-            ty.elem.mlir_type()
-        ));
-        let init = self.fresh();
-        self.lines.push(format!(
-            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
-            ty.elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = linalg.conv_2d_nhwc_hwcf ins({}, {} : {}, {}) outs({init} : {}) -> {}",
-            input.name,
-            kernel.name,
-            input.ty.mlir_type(),
-            kernel.ty.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value { name, ty })
-    }
-
     pub(super) fn transpose(&mut self, input: Value) -> anyhow::Result<Value> {
         let ty = TensorType {
             elem: input.ty.elem,
             shape: vec![input.ty.shape[1], input.ty.shape[0]],
         };
+        self.permute(input, &ty, &[1, 0])
+    }
+
+    pub(super) fn permute(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        axes: &[usize],
+    ) -> anyhow::Result<Value> {
+        if axes.iter().copied().eq(0..axes.len()) {
+            return Ok(input);
+        }
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let name = self.fresh();
+        let permutation = format_usize_list(axes);
         self.lines.push(format!(
-            "    {name} = linalg.transpose ins({} : {}) outs({empty} : {}) permutation = [1, 0]",
+            "    {name} = linalg.transpose ins({} : {}) outs({empty} : {}) permutation = {permutation}",
             input.name,
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
-        Ok(Value { name, ty })
+        Ok(Value::tensor(name, ty.clone()))
     }
 
     pub(super) fn reshape(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
         if input.ty == *ty {
             return Ok(input);
+        }
+        if ty.rank() == 0 || input.ty.rank() == 0 {
+            return self.splat(input, ty);
         }
         let flat = if input.ty.rank() == 1 {
             input
@@ -167,10 +73,7 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-        })
+        Ok(Value::tensor(name, ty.clone()))
     }
 
     fn collapse_to_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
@@ -182,10 +85,7 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-        })
+        Ok(Value::tensor(name, ty.clone()))
     }
 
     pub(super) fn slice(
@@ -204,10 +104,7 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-        })
+        Ok(Value::tensor(name, ty.clone()))
     }
 
     pub(super) fn take(
@@ -227,15 +124,15 @@ impl Lowerer<'_> {
         let sliced = self.slice(input, &slice_ty, &starts)?;
         let mut output_shape = sliced.ty.shape.clone();
         output_shape.remove(axis);
-        if output_shape.is_empty() {
-            output_shape.push(1);
-        }
         let output_ty = TensorType {
             elem: sliced.ty.elem,
             shape: output_shape,
         };
         if sliced.ty == output_ty {
             return Ok(sliced);
+        }
+        if output_ty.rank() == 0 {
+            return self.reshape(sliced, &output_ty);
         }
         let name = self.fresh();
         let reassociation = collapse_reassociation_for_removed_axis(sliced.ty.rank(), axis);
@@ -245,10 +142,7 @@ impl Lowerer<'_> {
             sliced.ty.mlir_type(),
             output_ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: output_ty,
-        })
+        Ok(Value::tensor(name, output_ty))
     }
 
     pub(super) fn concat(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {
@@ -297,10 +191,7 @@ impl Lowerer<'_> {
             source.ty.mlir_type(),
             dest_ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: dest_ty.clone(),
-        })
+        Ok(Value::tensor(name, dest_ty.clone()))
     }
 
     fn expand_insert_axis(
@@ -318,15 +209,15 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-        })
+        Ok(Value::tensor(name, ty.clone()))
     }
 
     pub(super) fn broadcast(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
-        if input.ty == *ty {
+        if input.ty == *ty && input.kind == ValueKind::Tensor {
             return Ok(input);
+        }
+        if input.kind == ValueKind::Scalar {
+            return self.splat(input, ty);
         }
         if input.ty.rank() == 0 {
             return self.splat(input, ty);
@@ -346,15 +237,14 @@ impl Lowerer<'_> {
         ty: &TensorType,
         axis: usize,
     ) -> anyhow::Result<Value> {
-        if input.ty == *ty {
+        if input.ty == *ty && input.kind == ValueKind::Tensor {
             return Ok(input);
         }
+        if input.kind == ValueKind::Scalar {
+            return self.splat(input, ty);
+        }
         if input.ty.rank() == 0 || element_count(&input.ty) == 1 {
-            let scalar = if input.ty.rank() == 0 {
-                input
-            } else {
-                self.extract_first_scalar(input)?
-            };
+            let scalar = self.to_scalar(input)?;
             return self.splat(scalar, ty);
         }
         ensure_axis_broadcastable(&input.ty, ty, axis)?;
@@ -379,13 +269,10 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-        })
+        Ok(Value::tensor(name, ty.clone()))
     }
 
-    fn extract_first_scalar(&mut self, input: Value) -> anyhow::Result<Value> {
+    pub(super) fn extract_first_scalar(&mut self, input: Value) -> anyhow::Result<Value> {
         let name = self.fresh();
         let zero = self.fresh();
         self.lines
@@ -397,13 +284,7 @@ impl Lowerer<'_> {
             indices,
             input.ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: TensorType {
-                elem: input.ty.elem,
-                shape: Vec::new(),
-            },
-        })
+        Ok(Value::scalar(name, input.ty.elem))
     }
 
     fn squeeze_singleton_broadcast_dims(
@@ -458,12 +339,6 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             squeezed_ty.mlir_type()
         ));
-        Ok((
-            Value {
-                name,
-                ty: squeezed_ty,
-            },
-            dimensions,
-        ))
+        Ok((Value::tensor(name, squeezed_ty), dimensions))
     }
 }

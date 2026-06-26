@@ -1,5 +1,5 @@
 use knok::prelude::*;
-use knok::runtime::RuntimeInput;
+use knok::runtime::raw;
 use knok::{Engine, Error, RuntimeConfig};
 
 knok::mlir_model! {
@@ -102,7 +102,7 @@ fn raw_runtime_multi_output_runs() {
     let outputs = engine
         .invoke(
             imported_add_sub4::artifact(),
-            &[RuntimeInput::F32(&[4], &x), RuntimeInput::F32(&[4], &y)],
+            &[raw::Input::F32(&[4], &x), raw::Input::F32(&[4], &y)],
         )
         .unwrap();
 
@@ -126,7 +126,7 @@ fn single_output_helper_rejects_multi_output_function() {
     let error = engine
         .invoke_one::<f32>(
             imported_add_sub4::artifact(),
-            &[RuntimeInput::F32(&[4], &x), RuntimeInput::F32(&[4], &y)],
+            &[raw::Input::F32(&[4], &x), raw::Input::F32(&[4], &y)],
         )
         .unwrap_err();
 

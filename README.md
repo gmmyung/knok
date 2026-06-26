@@ -98,7 +98,8 @@ let output = imported_add4::invoke(x, y)?;
 Typed MLIR imports also expose `invoke_run(&engine, ...)` for reusable
 execution. Multi-output MLIR imports use `outputs: [...]` and return a tuple.
 MLIR imports without a declared signature still expose `artifact()`; use
-`Engine::invoke` with `RuntimeInput` values when you need raw runtime execution.
+`Engine::invoke` with `knok::runtime::raw::Input` values when you need raw
+runtime execution.
 
 Graphs can call earlier graph functions. Calls are inlined into the caller at
 macro expansion time, so the outer graph still compiles to one VMFB:
@@ -117,10 +118,11 @@ fn model(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 
 Recursive graph calls are rejected.
 
-`Tensor1<T, D0>` through `Tensor4<T, D0, ...>` are used because stable Rust does
+`Tensor0<T>` through `Tensor4<T, D0, ...>` are used because stable Rust does
 not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 They expose `from_array`, `from_vec`, `TryFrom<Vec<_>>`, `zeros`, `ones`,
 `filled`, `as_slice`, `as_mut_slice`, `into_vec`, and checked indexing helpers.
+`Tensor0<T>` represents a rank-0 scalar tensor and stores exactly one element.
 
 ## Static graph syntax
 
@@ -157,8 +159,8 @@ fn last_column(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
 ```
 
 `slice::<Target, START...>(x)` keeps rank and uses the target shape as static
-slice sizes. `take::<AXIS, INDEX>(x)` removes one axis, returning `Tensor1<_, 1>`
-when that would otherwise be scalar. `concat::<AXIS>(a, b)` joins two tensors
+slice sizes. `take::<AXIS, INDEX>(x)` removes one axis and returns `Tensor0<_>`
+when that is the remaining scalar. `concat::<AXIS>(a, b)` joins two tensors
 along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
 
 Predicate tensors use `TensorN<bool, ...>` and lower to MLIR `i1`, not numeric
@@ -170,7 +172,7 @@ fn select_positive(x: Tensor1<f32, 4>, fallback: Tensor1<f32, 4>) -> Tensor1<f32
     r#where(greater(x, 0.0), x, fallback)
 }
 
-fn all_positive(x: Tensor1<f32, 4>) -> Tensor1<bool, 1> {
+fn all_positive(x: Tensor1<f32, 4>) -> Tensor0<bool> {
     all(greater(x, 0.0))
 }
 ```
@@ -221,7 +223,9 @@ They cover the recommended hosted workflow:
   have matching element types; mixed dtype promotion is not implemented.
 - Quantized integer types, complex numbers, and string/object-like values are
   not implemented yet.
-- Static rank-1 through rank-4 shapes only.
+- Static rank-0 through rank-4 shapes only.
+- Host tensors are contiguous row-major value containers. Graph operations are
+  value operations, not NumPy-style host views.
 - Explicit `backend = "llvm-cpu"` or `backend = "metal-spirv"`, or
   `backends = [backend("...", driver = "...")]`.
   Backend names and driver compatibility are validated at macro expansion time.
@@ -229,14 +233,21 @@ They cover the recommended hosted workflow:
   broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
-  `pow`, `relu`, `matmul`, batched rank-3 `matmul`, NHWC/HWCF `conv2d`, rank-2
-  `transpose`, reshape across ranks 1-4, `broadcast`, `squeeze`, `unsqueeze`,
-  static `slice`, static `take`, binary `concat`, binary `stack`, full-tensor
-  and axis-aware `sum`, full-tensor and axis-aware `mean`, full-tensor and
-  axis-aware `softmax`, full-tensor and axis-aware `argmax`, `exp`, `log`,
-  `sqrt`, `tanh`, and `sigmoid`.
+  `pow`, `relu`, NumPy-style `matmul` for ranks 1-4, NHWC/HWCF `conv2d` with
+  static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
+  `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
+  `permute::<Target, AXES...>`, reshape across ranks 0-4, `broadcast`,
+  `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
+  binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
+  `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
+  `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
+- `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
+  markers, for example `conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)`.
+  `Groups<N>` follows PyTorch-style grouped convolution shape rules: input
+  channels and output channels must both be divisible by `N`, and kernel input
+  channels must equal `input_channels / N`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`,
   `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
   element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
@@ -255,9 +266,13 @@ They cover the recommended hosted workflow:
 - `softmax(x)` normalizes over the whole tensor using max-subtracted
   exponentials; `softmax::<AXIS>(x)` normalizes over one axis using
   `linalg.softmax`.
+- Full-tensor reductions and rank-1 axis reductions return `Tensor0<_>`.
 - `argmax(x)` accepts numeric tensors and returns the row-major flattened index
-  as `Tensor1<i64, 1>`. `argmax::<AXIS>(x)` returns per-slice indices along the
+  as `Tensor0<i64>`. `argmax::<AXIS>(x)` returns per-slice indices along the
   reduced axis.
+- Empty `sum`, `all`, and `any` reductions use their identity values. Empty
+  `mean`, `softmax`, and `argmax` reductions are rejected because there is no
+  well-defined selected value or denominator.
 
 ## Dtype support
 

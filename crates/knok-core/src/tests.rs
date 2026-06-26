@@ -160,12 +160,12 @@ fn infers_reshape_broadcast_and_sum_shapes() {
     assert_eq!(broadcast.body[0].ty, tensor(&[4]));
 
     let sum = parse(parse_quote! {
-        fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+        fn sum4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
             sum(x)
         }
     })
     .unwrap();
-    assert_eq!(sum.body[0].ty, tensor(&[1]));
+    assert_eq!(sum.body[0].ty, tensor(&[]));
 
     let axis_sum = parse(parse_quote! {
         fn sum_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
@@ -182,6 +182,22 @@ fn infers_reshape_broadcast_and_sum_shapes() {
     })
     .unwrap();
     assert_eq!(axis_mean.body[0].ty, tensor(&[3]));
+
+    let axis_sum4d = parse(parse_quote! {
+        fn sum_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+            sum::<3>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(axis_sum4d.body[0].ty, tensor(&[1, 2, 2]));
+
+    let axis_mean4d = parse(parse_quote! {
+        fn mean_axis2(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
+            mean::<2>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(axis_mean4d.body[0].ty, tensor(&[1, 2, 3]));
 }
 
 #[test]
@@ -217,6 +233,32 @@ fn infers_static_shape_and_indexing_ops() {
                 stack::<0>(x, y)
             }
         },
+        parse_quote! {
+            fn slice4d(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<f32, 1, 1, 2, 2> {
+                slice::<Tensor4<f32, 1, 1, 2, 2>, 0, 1, 0, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+                take::<3, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn concat4d_axis3(
+                x: Tensor4<f32, 1, 1, 1, 1>,
+                y: Tensor4<f32, 1, 1, 1, 2>,
+            ) -> Tensor4<f32, 1, 1, 1, 3> {
+                concat::<3>(x, y)
+            }
+        },
+        parse_quote! {
+            fn stack3d_axis2(
+                x: Tensor3<f32, 1, 2, 3>,
+                y: Tensor3<f32, 1, 2, 3>,
+            ) -> Tensor4<f32, 1, 2, 2, 3> {
+                stack::<2>(x, y)
+            }
+        },
     ] {
         let graph = parse(item).unwrap();
         assert_eq!(graph.body[0].ty, graph.outputs[0]);
@@ -248,6 +290,47 @@ fn parses_higher_rank_tensors_and_infers_inference_ops() {
         })
         .unwrap();
     assert_eq!(conv.body[0].ty, tensor(&[1, 2, 2, 8]));
+
+    let padded_conv = parse(parse_quote! {
+            fn conv(x: Tensor4<f32, 1, 3, 3, 3>, k: Tensor4<f32, 2, 2, 3, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+                conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>, Dilation<1, 1>, Groups<1>>(x, k)
+            }
+        })
+        .unwrap();
+    assert_eq!(padded_conv.body[0].ty, tensor(&[1, 2, 2, 8]));
+
+    let grouped_conv = parse(parse_quote! {
+            fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 2, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+                conv2d::<Groups<2>>(x, k)
+            }
+        })
+        .unwrap();
+    assert_eq!(grouped_conv.body[0].ty, tensor(&[1, 2, 2, 8]));
+}
+
+#[test]
+fn rejects_invalid_grouped_conv2d_channels() {
+    let error = parse(parse_quote! {
+        fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 4, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+            conv2d::<Groups<2>>(x, k)
+        }
+    })
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("kernel input channels must equal input channels / groups"));
+
+    let error = parse(parse_quote! {
+        fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 2, 7>) -> Tensor4<f32, 1, 2, 2, 7> {
+            conv2d::<Groups<2>>(x, k)
+        }
+    })
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("output channels must be divisible by groups"));
 }
 
 #[test]
@@ -283,15 +366,15 @@ fn infers_scalar_classifier_op_shapes() {
     }
 
     let mean = parse(parse_quote! {
-        fn mean4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+        fn mean4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
             mean(x)
         }
     })
     .unwrap();
-    assert_eq!(mean.body[0].ty, tensor(&[1]));
+    assert_eq!(mean.body[0].ty, tensor(&[]));
 
     let argmax = parse(parse_quote! {
-        fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
+        fn argmax4(x: Tensor1<f32, 4>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -300,12 +383,12 @@ fn infers_scalar_classifier_op_shapes() {
         argmax.body[0].ty,
         TensorType {
             elem: ElementType::I64,
-            shape: vec![1]
+            shape: vec![]
         }
     );
 
     let integer_argmax = parse(parse_quote! {
-        fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
+        fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -313,7 +396,7 @@ fn infers_scalar_classifier_op_shapes() {
     assert_eq!(integer_argmax.body[0].ty, argmax.body[0].ty);
 
     let matrix_argmax = parse(parse_quote! {
-        fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 1> {
+        fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -322,7 +405,7 @@ fn infers_scalar_classifier_op_shapes() {
         matrix_argmax.body[0].ty,
         TensorType {
             elem: ElementType::I64,
-            shape: vec![1]
+            shape: vec![]
         }
     );
 
@@ -342,9 +425,9 @@ fn infers_scalar_classifier_op_shapes() {
 }
 
 #[test]
-fn rejects_empty_argmax_reductions() {
+fn rejects_empty_non_identity_reductions() {
     let empty_tensor = parse(parse_quote! {
-        fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor1<i64, 1> {
+        fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -368,6 +451,62 @@ fn rejects_empty_argmax_reductions() {
             .contains("argmax cannot reduce empty axis 1 for tensor shape [2, 0]"),
         "{empty_axis}"
     );
+
+    let empty_mean = parse(parse_quote! {
+        fn mean_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<f32, 2> {
+            mean::<1>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_mean
+            .to_string()
+            .contains("mean cannot reduce empty axis 1 for tensor shape [2, 0]"),
+        "{empty_mean}"
+    );
+
+    let empty_softmax = parse(parse_quote! {
+        fn softmax_empty(x: Tensor1<f32, 0>) -> Tensor1<f32, 0> {
+            softmax(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_softmax
+            .to_string()
+            .contains("softmax cannot reduce empty tensor shape [0]"),
+        "{empty_softmax}"
+    );
+
+    let sum_empty_axis = parse(parse_quote! {
+        fn sum_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<f32, 2> {
+            sum::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(sum_empty_axis.body[0].ty, tensor(&[2]));
+
+    let all_empty_axis = parse(parse_quote! {
+        fn all_empty_axis(x: Tensor2<bool, 2, 0>) -> Tensor1<bool, 2> {
+            all::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        all_empty_axis.body[0].ty,
+        TensorType {
+            elem: ElementType::Bool,
+            shape: vec![2]
+        }
+    );
+
+    let any_empty_axis = parse(parse_quote! {
+        fn any_empty_axis(x: Tensor2<bool, 2, 0>) -> Tensor1<bool, 2> {
+            any::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(any_empty_axis.body[0].ty, all_empty_axis.body[0].ty);
 }
 
 #[test]
@@ -381,6 +520,19 @@ fn infers_elementwise_call_shapes() {
         parse_quote! {
             fn maximum_broadcast(x: Tensor2<f32, 2, 3>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
                 maximum(x, y)
+            }
+        },
+        parse_quote! {
+            fn add_channel_bias4d(
+                x: Tensor4<f32, 1, 2, 2, 3>,
+                bias: Tensor1<f32, 3>,
+            ) -> Tensor4<f32, 1, 2, 2, 3> {
+                x + bias
+            }
+        },
+        parse_quote! {
+            fn scalar_compare4d(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<bool, 1, 2, 2, 3> {
+                greater(x, 0.0)
             }
         },
         parse_quote! {
@@ -428,7 +580,7 @@ fn infers_bool_predicate_selection_and_reduction_shapes() {
             }
         },
         parse_quote! {
-            fn all4(x: Tensor1<bool, 4>) -> Tensor1<bool, 1> {
+            fn all4(x: Tensor1<bool, 4>) -> Tensor0<bool> {
                 all(x)
             }
         },

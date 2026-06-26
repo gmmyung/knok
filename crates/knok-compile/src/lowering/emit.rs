@@ -1,6 +1,6 @@
 use knok_core::{BinaryOp, ElementType, TensorType};
 
-use super::lowerer::{Lowerer, Value};
+use super::lowerer::{Lowerer, Value, ValueKind};
 use super::shape::{broadcast_result_type, broadcast_shape, format_dim_list, parallel_iterators};
 
 impl Lowerer<'_> {
@@ -10,13 +10,7 @@ impl Lowerer<'_> {
             "    {name} = arith.constant {value} : {}",
             elem.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: TensorType {
-                elem,
-                shape: vec![],
-            },
-        })
+        Ok(Value::scalar(name, elem))
     }
 
     pub(super) fn zero_like(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
@@ -29,10 +23,27 @@ impl Lowerer<'_> {
             ty.elem.zero_literal(),
             ty.mlir_type()
         ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-        })
+        Ok(Value::tensor(name, ty.clone()))
+    }
+
+    pub(super) fn zero_initialized_tensor(&mut self, ty: &TensorType) -> anyhow::Result<String> {
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant {} : {}",
+            ty.elem.zero_literal(),
+            ty.elem.mlir_type()
+        ));
+        let init = self.fresh();
+        self.lines.push(format!(
+            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
+            ty.elem.mlir_type(),
+            ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(init)
     }
 
     pub(super) fn binary_value(
@@ -92,9 +103,13 @@ impl Lowerer<'_> {
         self.lines.push(format!(
             "    {name} = {op_name} {} : {}",
             value.name,
-            value.ty.mlir_type()
+            value.mlir_type()
         ));
-        Ok(Value { name, ty: value.ty })
+        Ok(Value {
+            name,
+            ty: value.ty,
+            kind: value.kind,
+        })
     }
 
     pub(super) fn emit_binary(
@@ -104,24 +119,28 @@ impl Lowerer<'_> {
         rhs: Value,
     ) -> anyhow::Result<Value> {
         let ty = broadcast_result_type(&lhs.ty, &rhs.ty)?;
-        let lhs = if lhs.ty == ty {
-            lhs
-        } else {
-            self.broadcast(lhs, &ty)?
-        };
-        let rhs = if rhs.ty == ty {
-            rhs
-        } else {
-            self.broadcast(rhs, &ty)?
+        let result_kind =
+            if ty.rank() == 0 && lhs.kind == ValueKind::Scalar && rhs.kind == ValueKind::Scalar {
+                ValueKind::Scalar
+            } else {
+                ValueKind::Tensor
+            };
+        let lhs = self.coerce_to_kind(lhs, &ty, result_kind)?;
+        let rhs = self.coerce_to_kind(rhs, &ty, result_kind)?;
+        let result_type = match result_kind {
+            ValueKind::Scalar => ty.elem.mlir_type().to_string(),
+            ValueKind::Tensor => ty.mlir_type(),
         };
         let name = self.fresh();
         self.lines.push(format!(
             "    {name} = {op_name} {}, {} : {}",
-            lhs.name,
-            rhs.name,
-            ty.mlir_type()
+            lhs.name, rhs.name, result_type
         ));
-        Ok(Value { name, ty })
+        Ok(Value {
+            name,
+            ty,
+            kind: result_kind,
+        })
     }
 
     pub(super) fn comparison(
@@ -200,29 +219,17 @@ impl Lowerer<'_> {
             elem: ElementType::Bool,
             shape: ty.shape.clone(),
         };
-        let condition = if condition.ty == condition_ty {
-            condition
-        } else {
-            self.broadcast(condition, &condition_ty)?
-        };
+        let condition = self.coerce_to_kind(condition, &condition_ty, ValueKind::Tensor)?;
         let true_ty = TensorType {
             elem: true_value.ty.elem,
             shape: ty.shape.clone(),
         };
-        let true_value = if true_value.ty == true_ty {
-            true_value
-        } else {
-            self.broadcast(true_value, &true_ty)?
-        };
+        let true_value = self.coerce_to_kind(true_value, &true_ty, ValueKind::Tensor)?;
         let false_ty = TensorType {
             elem: false_value.ty.elem,
             shape: ty.shape.clone(),
         };
-        let false_value = if false_value.ty == false_ty {
-            false_value
-        } else {
-            self.broadcast(false_value, &false_ty)?
-        };
+        let false_value = self.coerce_to_kind(false_value, &false_ty, ValueKind::Tensor)?;
         self.emit_elementwise_ternary(&ty, condition, true_value, false_value)
     }
 
@@ -236,23 +243,21 @@ impl Lowerer<'_> {
         F: FnOnce(&str, &str, &str) -> String,
     {
         if ty.rank() == 0 {
+            let result_kind = value.kind;
+            let value_type = value.mlir_type();
             let name = self.fresh();
-            self.lines
-                .push(emit_body(&name, &value.name, value.ty.elem.mlir_type()));
+            self.lines.push(emit_body(&name, &value.name, &value_type));
             return Ok(Value {
                 name,
                 ty: ty.clone(),
+                kind: result_kind,
             });
         }
         let value_ty = TensorType {
             elem: value.ty.elem,
             shape: ty.shape.clone(),
         };
-        let value = if value.ty == value_ty {
-            value
-        } else {
-            self.broadcast(value, &value_ty)?
-        };
+        let value = self.coerce_to_kind(value, &value_ty, ValueKind::Tensor)?;
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
@@ -270,7 +275,7 @@ impl Lowerer<'_> {
         self.lines.push(format!(
             "    }} ins({} : {}) outs({empty} : {}) {{",
             value.name,
-            value.ty.mlir_type(),
+            value.mlir_type(),
             ty.mlir_type()
         ));
         self.lines.push(format!(
@@ -288,6 +293,7 @@ impl Lowerer<'_> {
         Ok(Value {
             name,
             ty: ty.clone(),
+            kind: ValueKind::Tensor,
         })
     }
 
@@ -302,36 +308,41 @@ impl Lowerer<'_> {
         F: FnOnce(&str, &str, &str, &str) -> String,
     {
         if ty.rank() == 0 {
+            let result_kind = if lhs.kind == ValueKind::Scalar && rhs.kind == ValueKind::Scalar {
+                ValueKind::Scalar
+            } else {
+                ValueKind::Tensor
+            };
+            let lhs_ty = TensorType {
+                elem: lhs.ty.elem,
+                shape: Vec::new(),
+            };
+            let rhs_ty = TensorType {
+                elem: rhs.ty.elem,
+                shape: Vec::new(),
+            };
+            let lhs = self.coerce_to_kind(lhs, &lhs_ty, result_kind)?;
+            let rhs = self.coerce_to_kind(rhs, &rhs_ty, result_kind)?;
+            let operand_type = lhs.mlir_type();
             let name = self.fresh();
-            self.lines.push(emit_body(
-                &name,
-                &lhs.name,
-                &rhs.name,
-                lhs.ty.elem.mlir_type(),
-            ));
+            self.lines
+                .push(emit_body(&name, &lhs.name, &rhs.name, &operand_type));
             return Ok(Value {
                 name,
                 ty: ty.clone(),
+                kind: result_kind,
             });
         }
         let lhs_ty = TensorType {
             elem: lhs.ty.elem,
             shape: ty.shape.clone(),
         };
-        let lhs = if lhs.ty == lhs_ty {
-            lhs
-        } else {
-            self.broadcast(lhs, &lhs_ty)?
-        };
+        let lhs = self.coerce_to_kind(lhs, &lhs_ty, ValueKind::Tensor)?;
         let rhs_ty = TensorType {
             elem: rhs.ty.elem,
             shape: ty.shape.clone(),
         };
-        let rhs = if rhs.ty == rhs_ty {
-            rhs
-        } else {
-            self.broadcast(rhs, &rhs_ty)?
-        };
+        let rhs = self.coerce_to_kind(rhs, &rhs_ty, ValueKind::Tensor)?;
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
@@ -350,8 +361,8 @@ impl Lowerer<'_> {
             "    }} ins({}, {} : {}, {}) outs({empty} : {}) {{",
             lhs.name,
             rhs.name,
-            lhs.ty.mlir_type(),
-            rhs.ty.mlir_type(),
+            lhs.mlir_type(),
+            rhs.mlir_type(),
             ty.mlir_type()
         ));
         self.lines.push(format!(
@@ -370,6 +381,7 @@ impl Lowerer<'_> {
         Ok(Value {
             name,
             ty: ty.clone(),
+            kind: ValueKind::Tensor,
         })
     }
 
@@ -381,17 +393,35 @@ impl Lowerer<'_> {
         false_value: Value,
     ) -> anyhow::Result<Value> {
         if ty.rank() == 0 {
+            let result_kind = if condition.kind == ValueKind::Scalar
+                && true_value.kind == ValueKind::Scalar
+                && false_value.kind == ValueKind::Scalar
+            {
+                ValueKind::Scalar
+            } else {
+                ValueKind::Tensor
+            };
+            let condition_ty = TensorType {
+                elem: ElementType::Bool,
+                shape: Vec::new(),
+            };
+            let value_ty = TensorType {
+                elem: ty.elem,
+                shape: Vec::new(),
+            };
+            let condition = self.coerce_to_kind(condition, &condition_ty, result_kind)?;
+            let true_value = self.coerce_to_kind(true_value, &value_ty, result_kind)?;
+            let false_value = self.coerce_to_kind(false_value, &value_ty, result_kind)?;
+            let value_type = true_value.mlir_type();
             let name = self.fresh();
             self.lines.push(format!(
                 "    {name} = arith.select {}, {}, {} : {}",
-                condition.name,
-                true_value.name,
-                false_value.name,
-                ty.elem.mlir_type()
+                condition.name, true_value.name, false_value.name, value_type
             ));
             return Ok(Value {
                 name,
                 ty: ty.clone(),
+                kind: result_kind,
             });
         }
         let empty = self.fresh();
@@ -413,9 +443,9 @@ impl Lowerer<'_> {
             condition.name,
             true_value.name,
             false_value.name,
-            condition.ty.mlir_type(),
-            true_value.ty.mlir_type(),
-            false_value.ty.mlir_type(),
+            condition.mlir_type(),
+            true_value.mlir_type(),
+            false_value.mlir_type(),
             ty.mlir_type()
         ));
         self.lines.push(format!(
@@ -436,10 +466,12 @@ impl Lowerer<'_> {
         Ok(Value {
             name,
             ty: ty.clone(),
+            kind: ValueKind::Tensor,
         })
     }
 
     pub(super) fn splat(&mut self, scalar: Value, ty: &TensorType) -> anyhow::Result<Value> {
+        let scalar = self.to_scalar(scalar)?;
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
@@ -454,6 +486,33 @@ impl Lowerer<'_> {
         Ok(Value {
             name,
             ty: ty.clone(),
+            kind: ValueKind::Tensor,
         })
+    }
+
+    pub(super) fn coerce_to_kind(
+        &mut self,
+        value: Value,
+        ty: &TensorType,
+        kind: ValueKind,
+    ) -> anyhow::Result<Value> {
+        match kind {
+            ValueKind::Scalar => self.to_scalar(value),
+            ValueKind::Tensor => self.broadcast(value, ty),
+        }
+    }
+
+    pub(super) fn to_scalar(&mut self, value: Value) -> anyhow::Result<Value> {
+        match value.kind {
+            ValueKind::Scalar => Ok(value),
+            ValueKind::Tensor
+                if value.ty.rank() == 0 || value.ty.shape.iter().product::<usize>() == 1 =>
+            {
+                self.extract_first_scalar(value)
+            }
+            ValueKind::Tensor => {
+                anyhow::bail!("expected scalar-compatible tensor, got {:?}", value.ty)
+            }
+        }
     }
 }

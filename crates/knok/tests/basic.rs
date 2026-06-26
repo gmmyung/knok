@@ -1,5 +1,5 @@
 use knok::prelude::*;
-use knok::runtime::RuntimeInput;
+use knok::runtime::raw;
 use knok::{Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig};
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -46,7 +46,7 @@ fn identity4_bf16(x: Tensor1<bf16, 4>) -> Tensor1<bf16, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn sum4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 1> {
+fn sum4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
     sum(x)
 }
 
@@ -133,12 +133,12 @@ fn broadcast1to4(x: Tensor1<f32, 1>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+fn sum4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
     sum(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn sum2x2(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 1> {
+fn sum2x2(x: Tensor2<f32, 2, 2>) -> Tensor0<f32> {
     sum(x)
 }
 
@@ -178,8 +178,36 @@ fn add_column2x3(x: Tensor2<f32, 2, 3>, column: Tensor2<f32, 2, 1>) -> Tensor2<f
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn add_channel_bias4d(
+    x: Tensor4<f32, 1, 2, 2, 3>,
+    bias: Tensor1<f32, 3>,
+) -> Tensor4<f32, 1, 2, 2, 3> {
+    x + bias
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+    sum::<3>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn mean4d_axis2(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
+    mean::<2>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn argmax4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<i64, 1, 2, 2> {
+    argmax::<3>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn slice2x4_to2x2(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
     slice::<Tensor2<f32, 2, 2>, 0, 1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn slice4d_middle(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor4<f32, 1, 1, 2, 2> {
+    slice::<Tensor4<f32, 1, 1, 2, 2>, 0, 1, 0, 1>(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -190,6 +218,11 @@ fn take2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
 #[knok::graph(backend = "llvm-cpu")]
 fn take2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     take::<1, 2>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
+    take::<3, 1>(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -210,6 +243,14 @@ fn concat_rows2x2(x: Tensor2<f32, 1, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 
 #[knok::graph(backend = "llvm-cpu")]
 fn concat_cols2x2(x: Tensor2<f32, 2, 1>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 3> {
     concat::<1>(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn concat4d_channels(
+    x: Tensor4<f32, 1, 1, 1, 1>,
+    y: Tensor4<f32, 1, 1, 1, 2>,
+) -> Tensor4<f32, 1, 1, 1, 3> {
+    concat::<3>(x, y)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -258,22 +299,22 @@ fn softmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn mean4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+fn mean4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
     mean(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
+fn argmax4(x: Tensor1<f32, 4>) -> Tensor0<i64> {
     argmax(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
+fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i64> {
     argmax(x)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 1> {
+fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor0<i64> {
     argmax(x)
 }
 
@@ -288,11 +329,73 @@ fn batch_mm(x: Tensor3<f32, 1, 2, 3>, y: Tensor3<f32, 1, 3, 2>) -> Tensor3<f32, 
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn scalar_add(x: Tensor0<f32>, y: Tensor0<f32>) -> Tensor0<f32> {
+    x + y
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn sum4_axis0(x: Tensor1<f32, 4>) -> Tensor0<f32> {
+    sum::<0>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn dot4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor0<f32> {
+    matmul(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn matvec2x3(x: Tensor2<f32, 2, 3>, y: Tensor1<f32, 3>) -> Tensor1<f32, 2> {
+    matmul(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn vecmat3x2(x: Tensor1<f32, 3>, y: Tensor2<f32, 3, 2>) -> Tensor1<f32, 2> {
+    matmul(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn broadcast_batch_mm(
+    x: Tensor4<f32, 2, 1, 2, 3>,
+    y: Tensor3<f32, 3, 3, 2>,
+) -> Tensor4<f32, 2, 3, 2, 2> {
+    matmul(x, y)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn permute4d(x: Tensor4<f32, 1, 2, 3, 4>) -> Tensor4<f32, 1, 3, 2, 4> {
+    permute::<Tensor4<f32, 1, 3, 2, 4>, 0, 2, 1, 3>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn conv2d_1x1(
     x: Tensor4<f32, 1, 2, 2, 1>,
     k: Tensor4<f32, 1, 1, 1, 1>,
 ) -> Tensor4<f32, 1, 2, 2, 1> {
     conv2d(x, k)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn conv2d_pad_stride(
+    x: Tensor4<f32, 1, 3, 3, 1>,
+    k: Tensor4<f32, 2, 2, 1, 1>,
+) -> Tensor4<f32, 1, 2, 2, 1> {
+    conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn conv2d_dilated(
+    x: Tensor4<f32, 1, 3, 3, 1>,
+    k: Tensor4<f32, 2, 2, 1, 1>,
+) -> Tensor4<f32, 1, 1, 1, 1> {
+    conv2d::<Dilation<2, 2>>(x, k)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn conv2d_groups2(
+    x: Tensor4<f32, 1, 1, 1, 4>,
+    k: Tensor4<f32, 1, 1, 2, 4>,
+) -> Tensor4<f32, 1, 1, 1, 4> {
+    conv2d::<Groups<2>>(x, k)
 }
 
 #[knok::graph(backend = "llvm-cpu")]
@@ -396,12 +499,12 @@ fn logical_not_input4(x: Tensor1<bool, 4>) -> Tensor1<bool, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn all_positive4(x: Tensor1<f32, 4>) -> Tensor1<bool, 1> {
+fn all_positive4(x: Tensor1<f32, 4>) -> Tensor0<bool> {
     all(greater(x, 0.0))
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn any_nan4(x: Tensor1<f32, 4>) -> Tensor1<bool, 1> {
+fn any_nan4(x: Tensor1<f32, 4>) -> Tensor0<bool> {
     any(isnan(x))
 }
 
@@ -542,7 +645,7 @@ fn engine_reports_missing_artifact_variant_for_driver() {
     let error = engine
         .invoke(
             artifact,
-            &[RuntimeInput::F32(&[4], &x), RuntimeInput::F32(&[4], &y)],
+            &[raw::Input::F32(&[4], &x), raw::Input::F32(&[4], &y)],
         )
         .unwrap_err();
 
@@ -658,10 +761,64 @@ fn matmul_graph_runs() {
 }
 
 #[test]
+fn scalar_tensor_graph_runs() {
+    let output = scalar_add(Tensor0::from_scalar(2.0), Tensor0::from_scalar(3.5)).unwrap();
+    assert_eq!(output.into_vec(), vec![5.5]);
+
+    let sum = sum4_axis0(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
+    assert_eq!(sum.into_vec(), vec![10.0]);
+}
+
+#[test]
+fn expanded_matmul_graphs_run() {
+    let dot = dot4(
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    assert_eq!(dot.into_vec(), vec![300.0]);
+
+    let matvec = matvec2x3(
+        Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+        Tensor1::from_array([7.0, 8.0, 9.0]),
+    )
+    .unwrap();
+    assert_eq!(matvec.into_vec(), vec![50.0, 122.0]);
+
+    let vecmat = vecmat3x2(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor2::from_array([[4.0, 5.0], [6.0, 7.0], [8.0, 9.0]]),
+    )
+    .unwrap();
+    assert_eq!(vecmat.into_vec(), vec![40.0, 46.0]);
+
+    let broadcast =
+        broadcast_batch_mm(Tensor4::filled(1.0), Tensor3::<f32, 3, 3, 2>::filled(2.0)).unwrap();
+    assert_eq!(broadcast.into_vec(), vec![6.0; 24]);
+}
+
+#[test]
 fn transpose_graph_runs() {
     let x = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
     let output = transpose2x3(x).unwrap();
     assert_eq!(output.into_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+}
+
+#[test]
+fn permute_graph_runs() {
+    let values = (0..24).map(|value| value as f32).collect::<Vec<_>>();
+    let output = permute4d(Tensor4::<f32, 1, 2, 3, 4>::from_vec(values.clone()).unwrap()).unwrap();
+    let mut expected = Vec::new();
+    for d0 in 0..1 {
+        for d2 in 0..3 {
+            for d1 in 0..2 {
+                for d3 in 0..4 {
+                    expected.push(values[((d0 * 2 + d1) * 3 + d2) * 4 + d3]);
+                }
+            }
+        }
+    }
+    assert_eq!(output.into_vec(), expected);
 }
 
 #[test]
@@ -711,6 +868,16 @@ fn axis_reduction_graphs_run() {
 
     let mean = mean2x3_axis1(x).unwrap();
     assert_eq!(mean.into_vec(), vec![2.0, 20.0]);
+
+    let x4 = Tensor4::from_array([[
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+    ]]);
+    let sum4d = sum4d_axis3(x4.clone()).unwrap();
+    assert_eq!(sum4d.into_vec(), vec![6.0, 15.0, 24.0, 33.0]);
+
+    let mean4d = mean4d_axis2(x4).unwrap();
+    assert_eq!(mean4d.into_vec(), vec![2.5, 3.5, 4.5, 8.5, 9.5, 10.5]);
 }
 
 #[test]
@@ -755,6 +922,17 @@ fn rank_broadcasting_graphs_run() {
         added.into_vec(),
         vec![101.0, 102.0, 103.0, 210.0, 220.0, 230.0]
     );
+
+    let x4 = Tensor4::from_array([[
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+    ]]);
+    let bias = Tensor1::from_array([100.0, 200.0, 300.0]);
+    let added = add_channel_bias4d(x4, bias).unwrap();
+    assert_eq!(
+        added.into_vec(),
+        vec![101.0, 202.0, 303.0, 104.0, 205.0, 306.0, 107.0, 208.0, 309.0, 110.0, 211.0, 312.0]
+    );
 }
 
 #[test]
@@ -772,6 +950,19 @@ fn shape_and_indexing_graphs_run() {
         vec![10.0, 20.0, 30.0]
     );
     assert_eq!(take2x3_axis1(x).unwrap().into_vec(), vec![3.0, 30.0]);
+
+    let x4 = Tensor4::from_array([[
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+    ]]);
+    assert_eq!(
+        take4d_axis3(x4.clone()).unwrap().into_vec(),
+        vec![2.0, 5.0, 8.0, 11.0]
+    );
+    assert_eq!(
+        slice4d_middle(x4).unwrap().into_vec(),
+        vec![8.0, 9.0, 11.0, 12.0]
+    );
 
     let x4 = Tensor4::from_array([[[[1.0, 2.0, 3.0]], [[10.0, 20.0, 30.0]]]]);
     let squeezed = squeeze1x2x1x3(x4).unwrap();
@@ -794,6 +985,13 @@ fn shape_and_indexing_graphs_run() {
     )
     .unwrap();
     assert_eq!(cols.into_vec(), vec![1.0, 10.0, 20.0, 2.0, 30.0, 40.0]);
+
+    let channels = concat4d_channels(
+        Tensor4::from_array([[[[1.0]]]]),
+        Tensor4::from_array([[[[10.0, 20.0]]]]),
+    )
+    .unwrap();
+    assert_eq!(channels.into_vec(), vec![1.0, 10.0, 20.0]);
 
     let stacked = stack_vectors(
         Tensor1::from_array([1.0, 2.0, 3.0]),
@@ -877,6 +1075,13 @@ fn reduction_and_classifier_op_graphs_run() {
     let argmax_axis_output =
         argmax2x3_axis1(Tensor2::from_array([[1.0, 9.0, 3.0], [7.0, 2.0, 8.0]])).unwrap();
     assert_eq!(argmax_axis_output.into_vec(), vec![1i64, 2i64]);
+
+    let argmax4d_output = argmax4d_axis3(Tensor4::from_array([[
+        [[1.0, 5.0, 3.0], [4.0, 2.0, 6.0]],
+        [[9.0, 8.0, 7.0], [0.0, 11.0, 10.0]],
+    ]]))
+    .unwrap();
+    assert_eq!(argmax4d_output.into_vec(), vec![1i64, 2, 0, 1]);
 }
 
 #[test]
@@ -890,6 +1095,23 @@ fn batched_matmul_and_conv2d_graphs_run() {
     let kernel = Tensor4::from_array([[[[2.0]]]]);
     let conv = conv2d_1x1(image, kernel).unwrap();
     assert_eq!(conv.into_vec(), vec![2.0, 4.0, 6.0, 8.0]);
+
+    let image = Tensor4::from_array([[
+        [[1.0], [2.0], [3.0]],
+        [[4.0], [5.0], [6.0]],
+        [[7.0], [8.0], [9.0]],
+    ]]);
+    let kernel = Tensor4::filled(1.0);
+    let padded = conv2d_pad_stride(image.clone(), kernel.clone()).unwrap();
+    assert_eq!(padded.into_vec(), vec![1.0, 5.0, 11.0, 28.0]);
+
+    let dilated = conv2d_dilated(image, kernel).unwrap();
+    assert_eq!(dilated.into_vec(), vec![20.0]);
+
+    let image = Tensor4::from_array([[[[1.0, 2.0, 10.0, 20.0]]]]);
+    let kernel = Tensor4::from_array([[[[1.0, 0.0, 3.0, 0.0], [0.0, 1.0, 0.0, 4.0]]]]);
+    let grouped = conv2d_groups2(image, kernel).unwrap();
+    assert_eq!(grouped.into_vec(), vec![1.0, 2.0, 30.0, 80.0]);
 }
 
 #[test]

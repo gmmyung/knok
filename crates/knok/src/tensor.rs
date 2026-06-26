@@ -42,6 +42,11 @@ struct TensorData<T> {
 }
 
 #[derive(Clone, PartialEq)]
+pub struct Tensor0<T> {
+    storage: TensorData<T>,
+}
+
+#[derive(Clone, PartialEq)]
 pub struct Tensor1<T, const D0: usize> {
     storage: TensorData<T>,
 }
@@ -89,6 +94,54 @@ impl<T> TensorData<T> {
         Self {
             data: vec![value; len],
         }
+    }
+}
+
+impl<T> Tensor0<T> {
+    pub const SHAPE: &'static [usize] = &[];
+
+    pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
+        Ok(Self {
+            storage: TensorData::from_vec(data, &[])?,
+        })
+    }
+
+    pub fn from_scalar(value: T) -> Self {
+        Self {
+            storage: TensorData { data: vec![value] },
+        }
+    }
+
+    pub fn from_array(data: [T; 1]) -> Self {
+        Self {
+            storage: TensorData { data: data.into() },
+        }
+    }
+
+    pub fn filled(value: T) -> Self {
+        Self {
+            storage: TensorData { data: vec![value] },
+        }
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        self.storage.as_slice()
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut self.storage.data
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.storage.into_vec()
+    }
+
+    pub fn get(&self) -> &T {
+        &self.storage.data[0]
+    }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.storage.data[0]
     }
 }
 
@@ -291,6 +344,16 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
     }
 }
 
+impl<T: TensorElement> Tensor0<T> {
+    pub fn zeros() -> Self {
+        Self::filled(T::ZERO)
+    }
+
+    pub fn ones() -> Self {
+        Self::filled(T::ONE)
+    }
+}
+
 impl<T: TensorElement, const D0: usize> Tensor1<T, D0> {
     pub fn zeros() -> Self {
         Self::filled(T::ZERO)
@@ -333,6 +396,14 @@ impl<T: TensorElement, const D0: usize, const D1: usize, const D2: usize, const 
     }
 }
 
+impl<T> TryFrom<Vec<T>> for Tensor0<T> {
+    type Error = crate::Error;
+
+    fn try_from(data: Vec<T>) -> crate::Result<Self> {
+        Self::from_vec(data)
+    }
+}
+
 impl<T, const D0: usize> TryFrom<Vec<T>> for Tensor1<T, D0> {
     type Error = crate::Error;
 
@@ -366,6 +437,16 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize> TryF
 
     fn try_from(data: Vec<T>) -> crate::Result<Self> {
         Self::from_vec(data)
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Tensor0<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Tensor0")
+            .field("shape", &Self::SHAPE)
+            .field("data", &self.storage.data)
+            .finish()
     }
 }
 

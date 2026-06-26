@@ -1,195 +1,200 @@
 extern crate alloc;
 
 use alloc::string::String;
-#[cfg(feature = "host-runtime")]
-use alloc::vec::Vec;
 
 use crate::Backend;
 
-/// Runtime input buffer passed to a compiled graph.
-pub enum RuntimeInput<'a> {
-    Bool(&'a [usize], &'a [bool]),
-    F32(&'a [usize], &'a [f32]),
-    F64(&'a [usize], &'a [f64]),
-    I32(&'a [usize], &'a [i32]),
-    I64(&'a [usize], &'a [i64]),
-    #[cfg(feature = "half")]
-    F16(&'a [usize], &'a [crate::half::f16]),
-    #[cfg(feature = "half")]
-    BF16(&'a [usize], &'a [crate::half::bf16]),
-}
+pub mod raw {
+    extern crate alloc;
 
-/// Element types supported by the hosted single-output convenience path.
-pub trait RuntimeOutput: Copy {
     #[cfg(feature = "host-runtime")]
-    fn read_output(outputs: RuntimeOutputs) -> crate::Result<alloc::vec::Vec<Self>>;
-}
+    use alloc::vec::Vec;
 
-#[cfg(feature = "host-runtime")]
-macro_rules! impl_runtime_output {
-    ($ty:ty) => {
-        impl RuntimeOutput for $ty {
-            fn read_output(outputs: RuntimeOutputs) -> crate::Result<alloc::vec::Vec<Self>> {
-                outputs.one::<Self>()
+    /// Raw input buffer passed to a compiled graph.
+    pub enum Input<'a> {
+        Bool(&'a [usize], &'a [bool]),
+        F32(&'a [usize], &'a [f32]),
+        F64(&'a [usize], &'a [f64]),
+        I32(&'a [usize], &'a [i32]),
+        I64(&'a [usize], &'a [i64]),
+        #[cfg(feature = "half")]
+        F16(&'a [usize], &'a [crate::half::f16]),
+        #[cfg(feature = "half")]
+        BF16(&'a [usize], &'a [crate::half::bf16]),
+    }
+
+    /// Element types supported by the raw hosted single-output convenience path.
+    pub trait Output: Copy {
+        #[cfg(feature = "host-runtime")]
+        fn read_output(outputs: Outputs) -> crate::Result<alloc::vec::Vec<Self>>;
+    }
+
+    #[cfg(feature = "host-runtime")]
+    macro_rules! impl_output {
+        ($ty:ty) => {
+            impl Output for $ty {
+                fn read_output(outputs: Outputs) -> crate::Result<alloc::vec::Vec<Self>> {
+                    outputs.one::<Self>()
+                }
             }
+        };
+    }
+
+    #[cfg(feature = "host-runtime")]
+    impl_output!(f32);
+    #[cfg(feature = "host-runtime")]
+    impl_output!(f64);
+    #[cfg(feature = "host-runtime")]
+    impl_output!(bool);
+    #[cfg(feature = "host-runtime")]
+    impl_output!(i32);
+    #[cfg(feature = "host-runtime")]
+    impl_output!(i64);
+
+    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    impl_output!(crate::half::f16);
+    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    impl_output!(crate::half::bf16);
+
+    #[cfg(not(feature = "host-runtime"))]
+    impl<T: Copy> Output for T {}
+
+    /// Outputs returned by a raw hosted graph invocation.
+    #[cfg(feature = "host-runtime")]
+    pub struct Outputs {
+        pub(super) values: Vec<eerie::runtime::Value>,
+    }
+
+    #[cfg(feature = "host-runtime")]
+    impl core::fmt::Debug for Outputs {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter
+                .debug_struct("Outputs")
+                .field("len", &self.values.len())
+                .finish()
         }
-    };
-}
-
-#[cfg(feature = "host-runtime")]
-impl_runtime_output!(f32);
-#[cfg(feature = "host-runtime")]
-impl_runtime_output!(f64);
-#[cfg(feature = "host-runtime")]
-impl_runtime_output!(bool);
-#[cfg(feature = "host-runtime")]
-impl_runtime_output!(i32);
-#[cfg(feature = "host-runtime")]
-impl_runtime_output!(i64);
-
-#[cfg(all(feature = "host-runtime", feature = "half"))]
-impl_runtime_output!(crate::half::f16);
-#[cfg(all(feature = "host-runtime", feature = "half"))]
-impl_runtime_output!(crate::half::bf16);
-
-#[cfg(not(feature = "host-runtime"))]
-impl<T: Copy> RuntimeOutput for T {}
-
-#[cfg(feature = "host-runtime")]
-/// Outputs returned by a hosted graph invocation.
-pub struct RuntimeOutputs {
-    values: Vec<eerie::runtime::Value>,
-}
-
-#[cfg(feature = "host-runtime")]
-impl core::fmt::Debug for RuntimeOutputs {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter
-            .debug_struct("RuntimeOutputs")
-            .field("len", &self.values.len())
-            .finish()
-    }
-}
-
-#[cfg(feature = "host-runtime")]
-impl RuntimeOutputs {
-    /// Returns the number of values produced by the invoked function.
-    pub fn len(&self) -> usize {
-        self.values.len()
     }
 
-    /// Returns true when the invoked function produced no values.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
-    /// Reads the only output as a host vector.
-    pub fn one<T: RuntimeElement>(mut self) -> crate::Result<Vec<T>> {
-        let actual = self.values.len();
-        if actual != 1 {
-            return Err(crate::Error::OutputCountMismatch {
-                expected: 1,
-                actual,
-            });
+    #[cfg(feature = "host-runtime")]
+    impl Outputs {
+        /// Returns the number of values produced by the invoked function.
+        pub fn len(&self) -> usize {
+            self.values.len()
         }
-        let value = self.values.pop().expect("output count was checked");
-        let output = T::buffer_from_value(value)?;
-        Ok(output.read()?)
-    }
 
-    /// Reads one output by index as a host vector.
-    pub fn read<T: RuntimeElement>(&self, index: usize) -> crate::Result<Vec<T>> {
-        let value = self
-            .values
-            .get(index)
-            .ok_or(crate::Error::OutputIndexOutOfBounds {
-                index,
-                len: self.values.len(),
-            })?;
-        let output = T::buffer_from_value(value.clone())?;
-        Ok(output.read()?)
-    }
-}
+        /// Returns true when the invoked function produced no values.
+        pub fn is_empty(&self) -> bool {
+            self.values.is_empty()
+        }
 
-#[cfg(not(feature = "host-runtime"))]
-#[doc(hidden)]
-pub struct RuntimeOutputs;
-
-#[cfg(not(feature = "host-runtime"))]
-impl RuntimeOutputs {
-    pub fn len(&self) -> usize {
-        0
-    }
-
-    pub fn is_empty(&self) -> bool {
-        true
-    }
-
-    pub fn one<T: RuntimeElement>(self) -> crate::Result<alloc::vec::Vec<T>> {
-        Err(crate::Error::HostedRuntimeDisabled)
-    }
-
-    pub fn read<T: RuntimeElement>(&self, _index: usize) -> crate::Result<alloc::vec::Vec<T>> {
-        Err(crate::Error::HostedRuntimeDisabled)
-    }
-}
-
-/// Element types that can be passed through raw runtime buffer views.
-#[cfg(feature = "host-runtime")]
-#[doc(hidden)]
-pub trait RuntimeElement: eerie::runtime::BufferElement {
-    fn buffer_from_value(
-        value: eerie::runtime::Value,
-    ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError>;
-}
-
-#[cfg(feature = "host-runtime")]
-macro_rules! impl_runtime_element {
-    ($type:ty) => {
-        impl RuntimeElement for $type {
-            fn buffer_from_value(
-                value: eerie::runtime::Value,
-            ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError> {
-                value.try_into()
+        /// Reads the only output as a host vector.
+        pub fn one<T: Element>(mut self) -> crate::Result<Vec<T>> {
+            let actual = self.values.len();
+            if actual != 1 {
+                return Err(crate::Error::OutputCountMismatch {
+                    expected: 1,
+                    actual,
+                });
             }
+            let value = self.values.pop().expect("output count was checked");
+            let output = T::buffer_from_value(value)?;
+            Ok(output.read()?)
         }
-    };
+
+        /// Reads one output by index as a host vector.
+        pub fn read<T: Element>(&self, index: usize) -> crate::Result<Vec<T>> {
+            let value = self
+                .values
+                .get(index)
+                .ok_or(crate::Error::OutputIndexOutOfBounds {
+                    index,
+                    len: self.values.len(),
+                })?;
+            let output = T::buffer_from_value(value.clone())?;
+            Ok(output.read()?)
+        }
+    }
+
+    #[cfg(not(feature = "host-runtime"))]
+    #[doc(hidden)]
+    pub struct Outputs;
+
+    #[cfg(not(feature = "host-runtime"))]
+    impl Outputs {
+        pub fn len(&self) -> usize {
+            0
+        }
+
+        pub fn is_empty(&self) -> bool {
+            true
+        }
+
+        pub fn one<T: Element>(self) -> crate::Result<alloc::vec::Vec<T>> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+
+        pub fn read<T: Element>(&self, _index: usize) -> crate::Result<alloc::vec::Vec<T>> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+    }
+
+    /// Element types that can be passed through raw runtime buffer views.
+    #[cfg(feature = "host-runtime")]
+    #[doc(hidden)]
+    pub trait Element: eerie::runtime::BufferElement {
+        fn buffer_from_value(
+            value: eerie::runtime::Value,
+        ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError>;
+    }
+
+    #[cfg(feature = "host-runtime")]
+    macro_rules! impl_element {
+        ($type:ty) => {
+            impl Element for $type {
+                fn buffer_from_value(
+                    value: eerie::runtime::Value,
+                ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError> {
+                    value.try_into()
+                }
+            }
+        };
+    }
+
+    #[cfg(feature = "host-runtime")]
+    impl_element!(bool);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(u8);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(u16);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(u32);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(u64);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(i8);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(i16);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(i32);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(i64);
+    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    impl_element!(half::f16);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(f32);
+    #[cfg(feature = "host-runtime")]
+    impl_element!(f64);
+    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    impl_element!(half::bf16);
+
+    /// Element types that can be named by generated runtime wrappers in no-std builds.
+    #[cfg(not(feature = "host-runtime"))]
+    #[doc(hidden)]
+    pub trait Element: Copy {}
+
+    #[cfg(not(feature = "host-runtime"))]
+    impl<T: Copy> Element for T {}
 }
-
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(bool);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(u8);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(u16);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(u32);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(u64);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(i8);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(i16);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(i32);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(i64);
-#[cfg(all(feature = "host-runtime", feature = "half"))]
-impl_runtime_element!(half::f16);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(f32);
-#[cfg(feature = "host-runtime")]
-impl_runtime_element!(f64);
-#[cfg(all(feature = "host-runtime", feature = "half"))]
-impl_runtime_element!(half::bf16);
-
-/// Element types that can be named by generated runtime wrappers in no-std builds.
-#[cfg(not(feature = "host-runtime"))]
-#[doc(hidden)]
-pub trait RuntimeElement: Copy {}
-
-#[cfg(not(feature = "host-runtime"))]
-impl<T: Copy> RuntimeElement for T {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeConfig {
@@ -252,7 +257,7 @@ mod hosted {
 
     use eerie::runtime::{DeviceSpec, Function, Program, Runtime, Value};
 
-    use super::{driver_for_backend, RuntimeConfig, RuntimeInput, RuntimeOutput, RuntimeOutputs};
+    use super::{driver_for_backend, raw, RuntimeConfig};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
     pub struct Engine {
@@ -301,8 +306,8 @@ mod hosted {
         pub fn invoke(
             &self,
             artifact: GraphArtifact,
-            inputs: &[RuntimeInput<'_>],
-        ) -> crate::Result<RuntimeOutputs> {
+            inputs: &[raw::Input<'_>],
+        ) -> crate::Result<raw::Outputs> {
             let variant = artifact
                 .variant_for_driver(&self.driver_name)
                 .ok_or_else(|| crate::Error::MissingArtifactVariant {
@@ -320,10 +325,10 @@ mod hosted {
             self.invoke_typed_values(&function, inputs)
         }
 
-        pub fn invoke_one<T: RuntimeOutput>(
+        pub fn invoke_one<T: raw::Output>(
             &self,
             artifact: GraphArtifact,
-            inputs: &[RuntimeInput<'_>],
+            inputs: &[raw::Input<'_>],
         ) -> crate::Result<Vec<T>> {
             let outputs = self.invoke(artifact, inputs)?;
             T::read_output(outputs)
@@ -351,8 +356,8 @@ mod hosted {
         fn invoke_typed_values(
             &self,
             function: &Function,
-            inputs: &[RuntimeInput<'_>],
-        ) -> crate::Result<RuntimeOutputs> {
+            inputs: &[raw::Input<'_>],
+        ) -> crate::Result<raw::Outputs> {
             let input_values = inputs
                 .iter()
                 .map(|input| self.input_value(input))
@@ -364,35 +369,35 @@ mod hosted {
             &self,
             function: &Function,
             input_values: Vec<Value>,
-        ) -> crate::Result<RuntimeOutputs> {
-            Ok(RuntimeOutputs {
+        ) -> crate::Result<raw::Outputs> {
+            Ok(raw::Outputs {
                 values: function.invoke(input_values)?,
             })
         }
 
-        fn input_value(&self, input: &RuntimeInput<'_>) -> crate::Result<Value> {
+        fn input_value(&self, input: &raw::Input<'_>) -> crate::Result<Value> {
             match input {
-                RuntimeInput::Bool(shape, data) => {
+                raw::Input::Bool(shape, data) => {
                     Ok(Value::from(self.runtime.buffer_view(shape, data)?))
                 }
-                RuntimeInput::F32(shape, data) => {
+                raw::Input::F32(shape, data) => {
                     Ok(Value::from(self.runtime.buffer_view(shape, data)?))
                 }
-                RuntimeInput::F64(shape, data) => {
+                raw::Input::F64(shape, data) => {
                     Ok(Value::from(self.runtime.buffer_view(shape, data)?))
                 }
-                RuntimeInput::I32(shape, data) => {
+                raw::Input::I32(shape, data) => {
                     Ok(Value::from(self.runtime.buffer_view(shape, data)?))
                 }
-                RuntimeInput::I64(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                #[cfg(feature = "half")]
-                RuntimeInput::F16(shape, data) => {
+                raw::Input::I64(shape, data) => {
                     Ok(Value::from(self.runtime.buffer_view(shape, data)?))
                 }
                 #[cfg(feature = "half")]
-                RuntimeInput::BF16(shape, data) => {
+                raw::Input::F16(shape, data) => {
+                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
+                }
+                #[cfg(feature = "half")]
+                raw::Input::BF16(shape, data) => {
                     Ok(Value::from(self.runtime.buffer_view(shape, data)?))
                 }
             }
@@ -404,7 +409,7 @@ mod hosted {
 mod hosted {
     use alloc::vec::Vec;
 
-    use super::{RuntimeConfig, RuntimeInput, RuntimeOutput, RuntimeOutputs};
+    use super::{raw, RuntimeConfig};
     use crate::GraphArtifact;
 
     pub struct Engine;
@@ -437,15 +442,15 @@ mod hosted {
         pub fn invoke(
             &self,
             _artifact: GraphArtifact,
-            _inputs: &[RuntimeInput<'_>],
-        ) -> crate::Result<RuntimeOutputs> {
+            _inputs: &[raw::Input<'_>],
+        ) -> crate::Result<raw::Outputs> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        pub fn invoke_one<T: RuntimeOutput>(
+        pub fn invoke_one<T: raw::Output>(
             &self,
             _artifact: GraphArtifact,
-            _inputs: &[RuntimeInput<'_>],
+            _inputs: &[raw::Input<'_>],
         ) -> crate::Result<Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
