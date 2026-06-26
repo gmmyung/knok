@@ -4,8 +4,8 @@ use super::lowerer::{Lowerer, Value, ValueKind};
 use super::shape::{
     axis_broadcast_dimensions, collapse_reassociation_for_removed_axis,
     collapse_reassociation_for_squeezed_broadcast, element_count, ensure_axis_broadcastable,
-    ensure_broadcastable, expand_reassociation_for_inserted_axis, format_shape_list,
-    format_usize_list, reassociation_for_rank,
+    ensure_broadcastable, expand_reassociation_for_inserted_axis, format_dim_list,
+    format_shape_list, format_usize_list, parallel_iterators, reassociation_for_rank,
 };
 
 impl Lowerer<'_> {
@@ -147,6 +147,173 @@ impl Lowerer<'_> {
             output_ty.mlir_type()
         ));
         Ok(Value::tensor(name, output_ty))
+    }
+
+    pub(super) fn gather(
+        &mut self,
+        input: Value,
+        indices: Value,
+        axis: usize,
+        ty: &TensorType,
+    ) -> anyhow::Result<Value> {
+        let index_rank = indices.ty.rank();
+        let index_axes = (axis..axis + index_rank).collect::<Vec<_>>();
+        let input_axes = (0..input.ty.rank())
+            .map(|input_axis| {
+                if input_axis < axis {
+                    GatherInputAxis::Output(input_axis)
+                } else if input_axis == axis {
+                    GatherInputAxis::Index
+                } else {
+                    GatherInputAxis::Output(input_axis + index_rank - 1)
+                }
+            })
+            .collect::<Vec<_>>();
+        self.gather_with_maps(input, indices, ty, &index_axes, &input_axes)
+    }
+
+    pub(super) fn take_along_axis(
+        &mut self,
+        input: Value,
+        indices: Value,
+        axis: usize,
+    ) -> anyhow::Result<Value> {
+        let ty = TensorType {
+            elem: input.ty.elem,
+            shape: indices.ty.shape.clone(),
+        };
+        let index_axes = (0..indices.ty.rank()).collect::<Vec<_>>();
+        let input_axes = (0..input.ty.rank())
+            .map(|input_axis| {
+                if input_axis == axis {
+                    GatherInputAxis::Index
+                } else {
+                    GatherInputAxis::Output(input_axis)
+                }
+            })
+            .collect::<Vec<_>>();
+        self.gather_with_maps(input, indices, &ty, &index_axes, &input_axes)
+    }
+
+    fn gather_with_maps(
+        &mut self,
+        input: Value,
+        indices: Value,
+        ty: &TensorType,
+        index_axes: &[usize],
+        input_axes: &[GatherInputAxis],
+    ) -> anyhow::Result<Value> {
+        let index_ty = indices.ty.clone();
+        let indices = self.coerce_to_kind(indices, &index_ty, ValueKind::Tensor)?;
+        if ty.rank() == 0 {
+            let index_value = self.extract_index_value(&indices, &[])?;
+            let value = self.extract_gather_value(input, &index_value, input_axes)?;
+            return self.splat(value, ty);
+        }
+
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let name = self.fresh();
+        let dims = format_dim_list(ty.rank());
+        let output_map = format!("({dims})");
+        let index_map = format_dim_subset(index_axes);
+        let iterators = parallel_iterators(ty.rank());
+        self.lines.push(format!("    {name} = linalg.generic {{"));
+        self.lines.push(format!(
+            "      indexing_maps = [affine_map<({dims}) -> {index_map}>, affine_map<({dims}) -> {output_map}>],"
+        ));
+        self.lines
+            .push(format!("      iterator_types = [{iterators}]"));
+        self.lines.push(format!(
+            "    }} ins({} : {}) outs({empty} : {}) {{",
+            indices.name,
+            indices.mlir_type(),
+            ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "    ^bb0(%index_value: {}, %out: {}):",
+            indices.ty.elem.mlir_type(),
+            ty.elem.mlir_type()
+        ));
+        let output_indices = (0..ty.rank())
+            .map(|axis| {
+                let value = self.fresh();
+                self.lines
+                    .push(format!("      {value} = linalg.index {axis} : index"));
+                value
+            })
+            .collect::<Vec<_>>();
+        let index_value = self.index_cast("%index_value", indices.ty.elem.mlir_type(), "      ");
+        let input_indices = input_axes
+            .iter()
+            .map(|axis| match axis {
+                GatherInputAxis::Index => index_value.clone(),
+                GatherInputAxis::Output(axis) => output_indices[*axis].clone(),
+            })
+            .collect::<Vec<_>>();
+        let result = self.fresh();
+        self.lines.push(format!(
+            "      {result} = tensor.extract {}[{}] : {}",
+            input.name,
+            input_indices.join(", "),
+            input.ty.mlir_type()
+        ));
+        self.lines.push(format!(
+            "      linalg.yield {result} : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
+        Ok(Value::tensor(name, ty.clone()))
+    }
+
+    fn extract_index_value(
+        &mut self,
+        indices: &Value,
+        index_axes: &[String],
+    ) -> anyhow::Result<String> {
+        let index_value = self.fresh();
+        self.lines.push(format!(
+            "    {index_value} = tensor.extract {}[{}] : {}",
+            indices.name,
+            index_axes.join(", "),
+            indices.ty.mlir_type()
+        ));
+        Ok(self.index_cast(&index_value, indices.ty.elem.mlir_type(), "    "))
+    }
+
+    fn extract_gather_value(
+        &mut self,
+        input: Value,
+        index_value: &str,
+        input_axes: &[GatherInputAxis],
+    ) -> anyhow::Result<Value> {
+        let zero = self.fresh();
+        self.lines
+            .push(format!("    {zero} = arith.constant 0 : index"));
+        let indices = input_axes
+            .iter()
+            .map(|axis| match axis {
+                GatherInputAxis::Index => index_value.to_string(),
+                GatherInputAxis::Output(_) => zero.clone(),
+            })
+            .collect::<Vec<_>>();
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = tensor.extract {}[{}] : {}",
+            input.name,
+            indices.join(", "),
+            input.ty.mlir_type()
+        ));
+        Ok(Value::scalar(name, input.ty.elem))
+    }
+
+    fn index_cast(&mut self, value: &str, elem_type: &str, indent: &str) -> String {
+        let index = self.fresh();
+        self.lines.push(format!(
+            "{indent}{index} = arith.index_cast {value} : {elem_type} to index"
+        ));
+        index
     }
 
     pub(super) fn concat(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {
@@ -345,4 +512,18 @@ impl Lowerer<'_> {
         ));
         Ok((Value::tensor(name, squeezed_ty), dimensions))
     }
+}
+
+enum GatherInputAxis {
+    Index,
+    Output(usize),
+}
+
+fn format_dim_subset(axes: &[usize]) -> String {
+    let dims = axes
+        .iter()
+        .map(|axis| format!("d{axis}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("({dims})")
 }

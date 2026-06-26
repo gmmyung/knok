@@ -201,6 +201,11 @@ impl<'a> Lowerer<'a> {
                     let rhs = self.lower_expr(&args[1])?;
                     self.comparison("oge", "sge", lhs, rhs)
                 }
+                CallOp::Gather { target, axis } => {
+                    let input = self.lower_expr(&args[0])?;
+                    let indices = self.lower_expr(&args[1])?;
+                    self.gather(input, indices, *axis, target)
+                }
                 CallOp::IsNan => {
                     let value = self.lower_expr(&args[0])?;
                     self.isnan(value)
@@ -329,6 +334,11 @@ impl<'a> Lowerer<'a> {
                 CallOp::Take { axis, index } => {
                     let input = self.lower_expr(&args[0])?;
                     self.take(input, *axis, *index)
+                }
+                CallOp::TakeAlongAxis { axis } => {
+                    let input = self.lower_expr(&args[0])?;
+                    let indices = self.lower_expr(&args[1])?;
+                    self.take_along_axis(input, indices, *axis)
                 }
                 CallOp::Unsqueeze(ty) => {
                     let input = self.lower_expr(&args[0])?;

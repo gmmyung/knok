@@ -443,6 +443,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "greater_equal")?;
                     CallOp::GreaterEqual
                 }
+                "gather" => {
+                    let target = expect_target_type(&generics, &path.path, "gather")?;
+                    let values = expect_const_count(&generics, &path.path, "gather", 1)?;
+                    CallOp::Gather {
+                        target,
+                        axis: values[0],
+                    }
+                }
                 "isnan" => {
                     reject_any_generics(&generics, &path.path, "isnan")?;
                     CallOp::IsNan
@@ -563,6 +571,12 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Take {
                         axis: values[0],
                         index: values[1],
+                    }
+                }
+                "take_along_axis" => {
+                    reject_types(&generics, &path.path, "take_along_axis")?;
+                    CallOp::TakeAlongAxis {
+                        axis: expect_one_const(&generics, &path.path, "take_along_axis")?,
                     }
                 }
                 "transpose" => {

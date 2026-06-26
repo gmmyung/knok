@@ -158,12 +158,26 @@ fn middle_columns(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
 fn last_column(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     take::<1, 2>(x)
 }
+
+fn rows_by_index(x: Tensor2<f32, 2, 3>, indices: Tensor1<i64, 2>) -> Tensor2<f32, 2, 3> {
+    gather::<Tensor2<f32, 2, 3>, 0>(x, indices)
+}
+
+fn columns_by_row(x: Tensor2<f32, 2, 3>, indices: Tensor2<i64, 2, 2>) -> Tensor2<f32, 2, 2> {
+    take_along_axis::<1>(x, indices)
+}
 ```
 
 `slice::<Target, START...>(x)` keeps rank and uses the target shape as static
 slice sizes. `take::<AXIS, INDEX>(x)` removes one axis and returns `Tensor0<_>`
-when that is the remaining scalar. `concat::<AXIS>(a, b)` joins two tensors
-along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
+when that is the remaining scalar. `gather::<Target, AXIS>(x, indices)` is
+NumPy-style `take` with an `i32` or `i64` index tensor; the output shape must be
+`input[..AXIS] + indices.shape + input[AXIS + 1..]`. `take_along_axis::<AXIS>(x,
+indices)` uses an `i32` or `i64` index tensor with the same rank as `x`; all
+dimensions except `AXIS` must match, and the result shape is `indices.shape`.
+Runtime index values must be in bounds for the selected axis. `concat::<AXIS>(a,
+b)` joins two tensors along one existing axis. `stack::<AXIS>(a, b)` inserts a
+new axis of size 2.
 
 Predicate tensors use `TensorN<bool, ...>` and lower to MLIR `i1`, not numeric
 masks. Comparisons return bool tensors and can feed logical ops, bool
@@ -239,10 +253,11 @@ They cover the recommended hosted workflow:
   static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
   `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
   `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
-  `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
-  binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
-  `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
-  `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+  `squeeze`, `unsqueeze`, static `slice`, static `take`, tensor-index
+  `gather`, `take_along_axis`, binary `concat`, binary `stack`, full-tensor and
+  axis-aware `sum`, full-tensor and axis-aware `mean`, full-tensor and
+  axis-aware `softmax`, full-tensor and axis-aware `argmax`, `exp`, `log`,
+  `sqrt`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
@@ -290,7 +305,7 @@ scalar bool predicate is valid.
 | `bf16` | `half` feature | `half` feature | `half` feature | Uses `half::bf16`; currently best treated as typed storage/roundtrip unless the selected backend accepts the op. |
 | `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
 | `i64` | yes | yes | yes | Same policy as `i32`. |
-| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, and `isnan`. |
+| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, `isnan`, and value tensors in indexing ops. |
 | quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
 
 There is no implicit promotion, mixed numeric dtype execution, complex dtype,

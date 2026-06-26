@@ -239,6 +239,45 @@ fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn gather2x3_axis0_i64(x: Tensor2<f32, 2, 3>, indices: Tensor1<i64, 2>) -> Tensor2<f32, 2, 3> {
+    gather::<Tensor2<f32, 2, 3>, 0>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather2x3_axis1_i32(
+    x: Tensor2<f32, 2, 3>,
+    indices: Tensor2<i32, 2, 2>,
+) -> Tensor3<f32, 2, 2, 2> {
+    gather::<Tensor3<f32, 2, 2, 2>, 1>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn take_along_axis2x3_axis1_i64(
+    x: Tensor2<i32, 2, 3>,
+    indices: Tensor2<i64, 2, 2>,
+) -> Tensor2<i32, 2, 2> {
+    take_along_axis::<1>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather_bool1_axis0(x: Tensor1<bool, 3>, indices: Tensor1<i64, 2>) -> Tensor1<bool, 2> {
+    gather::<Tensor1<bool, 2>, 0>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather1_scalar_index(x: Tensor1<f32, 3>, index: Tensor0<i64>) -> Tensor0<f32> {
+    gather::<Tensor0<f32>, 0>(x, index)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather6d_axis5(
+    x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+    indices: Tensor1<i64, 2>,
+) -> Tensor6<f32, 1, 1, 1, 1, 2, 2> {
+    gather::<Tensor6<f32, 1, 1, 1, 1, 2, 2>, 5>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn squeeze1x2x1x3(x: Tensor4<f32, 1, 2, 1, 3>) -> Tensor2<f32, 2, 3> {
     squeeze::<Tensor2<f32, 2, 3>>(x)
 }
@@ -1245,6 +1284,40 @@ fn shape_and_indexing_graphs_run() {
         vec![8.0, 9.0, 11.0, 12.0]
     );
 
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let gathered = gather2x3_axis0_i64(x.clone(), Tensor1::from_array([1, 0]))
+        .unwrap()
+        .into_vec();
+    assert_eq!(gathered, vec![10.0, 20.0, 30.0, 1.0, 2.0, 3.0]);
+
+    let gathered = gather2x3_axis1_i32(x, Tensor2::from_array([[2, 0], [1, 2]]))
+        .unwrap()
+        .into_vec();
+    assert_eq!(gathered, vec![3.0, 1.0, 2.0, 3.0, 30.0, 10.0, 20.0, 30.0]);
+
+    let taken = take_along_axis2x3_axis1_i64(
+        Tensor2::from_array([[1, 2, 3], [10, 20, 30]]),
+        Tensor2::from_array([[2, 0], [1, 2]]),
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(taken, vec![3, 1, 20, 30]);
+
+    let gathered = gather_bool1_axis0(
+        Tensor1::from_array([true, false, true]),
+        Tensor1::from_array([1, 2]),
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(gathered, vec![false, true]);
+
+    let gathered = gather1_scalar_index(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor0::from_scalar(2),
+    )
+    .unwrap();
+    assert_eq!(*gathered.get(), 3.0);
+
     let x4 = Tensor4::from_array([[[[1.0, 2.0, 3.0]], [[10.0, 20.0, 30.0]]]]);
     let squeezed = squeeze1x2x1x3(x4).unwrap();
     assert_eq!(squeezed.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
@@ -1252,6 +1325,14 @@ fn shape_and_indexing_graphs_run() {
     let x2 = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
     let unsqueezed = unsqueeze2x3(x2).unwrap();
     assert_eq!(unsqueezed.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
+
+    let gathered = gather6d_axis5(
+        Tensor6::from_vec(vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]).unwrap(),
+        Tensor1::from_array([2, 0]),
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(gathered, vec![3.0, 1.0, 30.0, 10.0]);
 
     let rows = concat_rows2x2(
         Tensor2::from_array([[1.0, 2.0]]),
