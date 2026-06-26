@@ -10,11 +10,15 @@ use super::shape::{
 
 impl Lowerer<'_> {
     pub(super) fn transpose(&mut self, input: Value) -> anyhow::Result<Value> {
+        if input.ty.rank() <= 1 {
+            return Ok(input);
+        }
         let ty = TensorType {
             elem: input.ty.elem,
-            shape: vec![input.ty.shape[1], input.ty.shape[0]],
+            shape: input.ty.shape.iter().rev().copied().collect(),
         };
-        self.permute(input, &ty, &[1, 0])
+        let axes = (0..input.ty.rank()).rev().collect::<Vec<_>>();
+        self.permute(input, &ty, &axes)
     }
 
     pub(super) fn permute(

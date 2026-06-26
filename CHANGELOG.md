@@ -15,6 +15,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 - Added typed backend and driver selection for graph and MLIR model macros.
 - Added `Tensor5` and `Tensor6` containers and rank-6 graph support.
+- Added rank-6 NumPy-style shape, broadcasting, selection, and reduction test
+  coverage for existing graph ops.
 - Added contributor, developer, agent, and changelog documentation.
 - Added tag-triggered release automation with release metadata validation.
 
@@ -22,6 +24,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 - Replaced string backend and driver macro attributes with typed `Backend` and
   `Driver` paths.
+- Changed `transpose` to match NumPy's default rank-N axis reversal instead of
+  only accepting rank-2 tensors.
 
 ### Fixed
 

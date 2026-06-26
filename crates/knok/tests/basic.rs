@@ -383,8 +383,85 @@ fn batch_mm5d(
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn batch_mm6d(
+    x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+    y: Tensor6<f32, 1, 1, 1, 1, 3, 2>,
+) -> Tensor6<f32, 1, 1, 1, 1, 2, 2> {
+    matmul(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn permute4d(x: Tensor4<f32, 1, 2, 3, 4>) -> Tensor4<f32, 1, 3, 2, 4> {
     permute::<Tensor4<f32, 1, 3, 2, 4>, 0, 2, 1, 3>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn transpose6d(x: Tensor6<f32, 1, 2, 1, 3, 2, 4>) -> Tensor6<f32, 4, 2, 3, 1, 2, 1> {
+    transpose(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn slice6d(x: Tensor6<f32, 1, 1, 1, 1, 2, 4>) -> Tensor6<f32, 1, 1, 1, 1, 1, 2> {
+    slice::<Tensor6<f32, 1, 1, 1, 1, 1, 2>, 0, 0, 0, 0, 1, 1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn take6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+    take::<5, 1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn squeeze6d(x: Tensor6<f32, 1, 2, 1, 3, 1, 4>) -> Tensor3<f32, 2, 3, 4> {
+    squeeze::<Tensor3<f32, 2, 3, 4>>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn unsqueeze3d_to6d(x: Tensor3<f32, 2, 3, 4>) -> Tensor6<f32, 1, 2, 1, 3, 1, 4> {
+    unsqueeze::<Tensor6<f32, 1, 2, 1, 3, 1, 4>>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn concat6d(
+    x: Tensor6<f32, 1, 1, 1, 1, 2, 1>,
+    y: Tensor6<f32, 1, 1, 1, 1, 2, 2>,
+) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+    concat::<5>(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn stack5d_to6d(
+    x: Tensor5<f32, 1, 1, 1, 2, 3>,
+    y: Tensor5<f32, 1, 1, 1, 2, 3>,
+) -> Tensor6<f32, 1, 1, 1, 2, 2, 3> {
+    stack::<4>(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn softmax6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+    softmax::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn mean6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+    mean::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmax6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+    argmax::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn any6d_axis5(x: Tensor6<bool, 1, 1, 1, 1, 2, 3>) -> Tensor5<bool, 1, 1, 1, 1, 2> {
+    any::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn where6d(
+    x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+    y: Tensor1<f32, 3>,
+) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+    r#where(greater(x, y), x, y)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -823,6 +900,13 @@ fn expanded_matmul_graphs_run() {
     )
     .unwrap();
     assert_eq!(rank5_batch.into_vec(), vec![6.0; 8]);
+
+    let rank6_batch = batch_mm6d(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::filled(1.0),
+        Tensor6::<f32, 1, 1, 1, 1, 3, 2>::filled(2.0),
+    )
+    .unwrap();
+    assert_eq!(rank6_batch.into_vec(), vec![6.0; 4]);
 }
 
 #[test]
@@ -847,6 +931,60 @@ fn permute_graph_runs() {
         }
     }
     assert_eq!(output.into_vec(), expected);
+}
+
+#[test]
+fn rank6_numpy_style_shape_ops_run() {
+    let values = (0..48).map(|value| value as f32).collect::<Vec<_>>();
+    let transposed =
+        transpose6d(Tensor6::<f32, 1, 2, 1, 3, 2, 4>::from_vec(values.clone()).unwrap()).unwrap();
+    assert_eq!(
+        transposed.into_vec(),
+        reverse_axes_flat(&values, &[1, 2, 1, 3, 2, 4])
+    );
+
+    let sliced = slice6d(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 4>::from_vec((1..=8).map(|v| v as f32).collect()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(sliced.into_vec(), vec![6.0, 7.0]);
+
+    let taken = take6d_axis5(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec((1..=6).map(|v| v as f32).collect()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(taken.into_vec(), vec![2.0, 5.0]);
+
+    let rank3_values = (1..=24).map(|value| value as f32).collect::<Vec<_>>();
+    let squeezed =
+        squeeze6d(Tensor6::<f32, 1, 2, 1, 3, 1, 4>::from_vec(rank3_values.clone()).unwrap())
+            .unwrap();
+    assert_eq!(squeezed.into_vec(), rank3_values);
+
+    let rank3_values = (1..=24).map(|value| value as f32).collect::<Vec<_>>();
+    let unsqueezed =
+        unsqueeze3d_to6d(Tensor3::<f32, 2, 3, 4>::from_vec(rank3_values.clone()).unwrap()).unwrap();
+    assert_eq!(unsqueezed.into_vec(), rank3_values);
+
+    let concatenated = concat6d(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 1>::from_vec(vec![1.0, 2.0]).unwrap(),
+        Tensor6::<f32, 1, 1, 1, 1, 2, 2>::from_vec(vec![10.0, 20.0, 30.0, 40.0]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        concatenated.into_vec(),
+        vec![1.0, 10.0, 20.0, 2.0, 30.0, 40.0]
+    );
+
+    let stacked = stack5d_to6d(
+        Tensor5::<f32, 1, 1, 1, 2, 3>::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap(),
+        Tensor5::<f32, 1, 1, 1, 2, 3>::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        stacked.into_vec(),
+        vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 4.0, 5.0, 6.0, 40.0, 50.0, 60.0]
+    );
 }
 
 #[test]
@@ -930,6 +1068,33 @@ fn axis_softmax_graph_runs() {
 }
 
 #[test]
+fn rank6_numpy_style_reductions_run() {
+    let input =
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec(vec![1.0, 2.0, 3.0, 1.0, 1.0, 1.0]).unwrap();
+
+    let softmax = softmax6d_axis5(input.clone()).unwrap().into_vec();
+    assert_close(
+        &softmax,
+        &[
+            0.09003057, 0.24472848, 0.66524094, 0.33333334, 0.33333334, 0.33333334,
+        ],
+    );
+
+    let mean = mean6d_axis5(input.clone()).unwrap();
+    assert_close(&mean.into_vec(), &[2.0, 1.0]);
+
+    let argmax = argmax6d_axis5(input).unwrap();
+    assert_eq!(argmax.into_vec(), vec![2, 0]);
+
+    let any = any6d_axis5(
+        Tensor6::<bool, 1, 1, 1, 1, 2, 3>::from_vec(vec![false, false, true, false, false, false])
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(any.into_vec(), vec![true, false]);
+}
+
+#[test]
 fn rank_broadcasting_graphs_run() {
     let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
     let bias = Tensor1::from_array([100.0, 200.0, 300.0]);
@@ -971,6 +1136,16 @@ fn rank_broadcasting_graphs_run() {
         added.into_vec(),
         vec![101.0, 202.0, 303.0, 104.0, 205.0, 306.0, 107.0, 208.0, 309.0, 110.0, 211.0, 312.0]
     );
+}
+
+#[test]
+fn rank6_numpy_style_broadcasting_and_selection_run() {
+    let selected = where6d(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec(vec![1.0, 0.0, 4.0, 2.0, 5.0, 1.0]).unwrap(),
+        Tensor1::from_array([2.0, 3.0, 1.0]),
+    )
+    .unwrap();
+    assert_eq!(selected.into_vec(), vec![2.0, 3.0, 4.0, 2.0, 5.0, 1.0]);
 }
 
 #[test]
@@ -1293,6 +1468,34 @@ fn bool_predicate_and_where_graphs_run() {
             .into_vec(),
         vec![true]
     );
+}
+
+fn reverse_axes_flat(values: &[f32], shape: &[usize]) -> Vec<f32> {
+    let output_shape = shape.iter().rev().copied().collect::<Vec<_>>();
+    let output_len = output_shape.iter().product();
+    (0..output_len)
+        .map(|output_index| {
+            let output_indices = unravel_index(output_index, &output_shape);
+            let input_indices = output_indices.iter().rev().copied().collect::<Vec<_>>();
+            values[ravel_index(&input_indices, shape)]
+        })
+        .collect()
+}
+
+fn unravel_index(mut index: usize, shape: &[usize]) -> Vec<usize> {
+    let mut indices = vec![0; shape.len()];
+    for axis in (0..shape.len()).rev() {
+        indices[axis] = index % shape[axis];
+        index /= shape[axis];
+    }
+    indices
+}
+
+fn ravel_index(indices: &[usize], shape: &[usize]) -> usize {
+    indices
+        .iter()
+        .zip(shape)
+        .fold(0, |index, (axis_index, dim)| index * dim + axis_index)
 }
 
 fn assert_close(actual: &[f32], expected: &[f32]) {

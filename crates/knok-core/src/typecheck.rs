@@ -359,13 +359,7 @@ fn call_result_type(
         CallOp::Transpose => {
             expect_arity(op, args, 1)?;
             let mut ty = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
-            if ty.rank() != 2 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "transpose currently supports rank-2 tensors only",
-                ));
-            }
-            ty.shape.swap(0, 1);
+            ty.shape.reverse();
             Ok(ty)
         }
         CallOp::Permute { target, axes } => {
