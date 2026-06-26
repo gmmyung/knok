@@ -418,6 +418,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_types(&generics, &path.path, "argmax")?;
                     CallOp::Argmax(optional_axis(&generics, &path.path, "argmax")?)
                 }
+                "argmin" => {
+                    reject_types(&generics, &path.path, "argmin")?;
+                    CallOp::Argmin(optional_axis(&generics, &path.path, "argmin")?)
+                }
                 "any" => {
                     reject_types(&generics, &path.path, "any")?;
                     CallOp::Any(optional_axis(&generics, &path.path, "any")?)
@@ -479,9 +483,17 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "matmul")?;
                     CallOp::Matmul
                 }
+                "max" | "amax" => {
+                    reject_types(&generics, &path.path, op_name.as_str())?;
+                    CallOp::Max(optional_axis(&generics, &path.path, op_name.as_str())?)
+                }
                 "mean" => {
                     reject_types(&generics, &path.path, "mean")?;
                     CallOp::Mean(optional_axis(&generics, &path.path, "mean")?)
+                }
+                "min" | "amin" => {
+                    reject_types(&generics, &path.path, op_name.as_str())?;
+                    CallOp::Min(optional_axis(&generics, &path.path, op_name.as_str())?)
                 }
                 "minimum" => {
                     reject_any_generics(&generics, &path.path, "minimum")?;
@@ -494,6 +506,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "pow" => {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
+                }
+                "prod" => {
+                    reject_types(&generics, &path.path, "prod")?;
+                    CallOp::Prod(optional_axis(&generics, &path.path, "prod")?)
+                }
+                "ptp" => {
+                    reject_types(&generics, &path.path, "ptp")?;
+                    CallOp::Ptp(optional_axis(&generics, &path.path, "ptp")?)
                 }
                 "permute" => {
                     let target = expect_target_type(&generics, &path.path, "permute")?;
@@ -549,6 +569,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_types(&generics, &path.path, "stack")?;
                     CallOp::Stack(expect_one_const(&generics, &path.path, "stack")?)
                 }
+                "std" => {
+                    reject_types(&generics, &path.path, "std")?;
+                    CallOp::Std(optional_axis(&generics, &path.path, "std")?)
+                }
                 "sum" => {
                     reject_types(&generics, &path.path, "sum")?;
                     CallOp::Sum(optional_axis(&generics, &path.path, "sum")?)
@@ -576,6 +600,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "unsqueeze" => {
                     reject_consts(&generics, &path.path, "unsqueeze")?;
                     CallOp::Unsqueeze(expect_target_type(&generics, &path.path, "unsqueeze")?)
+                }
+                "var" => {
+                    reject_types(&generics, &path.path, "var")?;
+                    CallOp::Var(optional_axis(&generics, &path.path, "var")?)
                 }
                 _ => {
                     reject_any_generics(&generics, &path.path, &op_name)?;

@@ -198,6 +198,74 @@ fn infers_reshape_broadcast_and_sum_shapes() {
     })
     .unwrap();
     assert_eq!(axis_mean4d.body[0].ty, tensor(&[1, 2, 3]));
+
+    for item in [
+        parse_quote! {
+            fn prod_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+                prod::<1>(x)
+            }
+        },
+        parse_quote! {
+            fn max_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+                max::<0>(x)
+            }
+        },
+        parse_quote! {
+            fn amax_all(x: Tensor2<i32, 2, 3>) -> Tensor0<i32> {
+                amax(x)
+            }
+        },
+        parse_quote! {
+            fn min_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+                min::<1>(x)
+            }
+        },
+        parse_quote! {
+            fn amin_all(x: Tensor2<i64, 2, 3>) -> Tensor0<i64> {
+                amin(x)
+            }
+        },
+        parse_quote! {
+            fn var_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+                var::<1>(x)
+            }
+        },
+        parse_quote! {
+            fn std_all(x: Tensor2<f32, 2, 3>) -> Tensor0<f32> {
+                std(x)
+            }
+        },
+        parse_quote! {
+            fn ptp_axis0(x: Tensor2<i32, 2, 3>) -> Tensor1<i32, 3> {
+                ptp::<0>(x)
+            }
+        },
+    ] {
+        let graph = parse(item).unwrap();
+        assert_eq!(graph.body[0].ty, graph.outputs[0]);
+    }
+
+    let argmin = parse(parse_quote! {
+        fn argmin_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
+            argmin::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        argmin.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![2]
+        }
+    );
+
+    let scalar_var = parse(parse_quote! {
+        fn scalar_var(x: Tensor0<f32>) -> Tensor0<f32> {
+            var(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(scalar_var.body[0].ty, tensor(&[]));
 }
 
 #[test]
@@ -495,6 +563,47 @@ fn infers_numpy_style_rank_parity_ops_through_rank6() {
     })
     .unwrap();
     assert_eq!(all_all.body[0].ty, bool_tensor(&[]));
+
+    for item in [
+        parse_quote! {
+            fn prod_rank6_axis5(x: Tensor6<i32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i32, 1, 1, 1, 1, 2> {
+                prod::<5>(x)
+            }
+        },
+        parse_quote! {
+            fn max_rank6_axis5(x: Tensor6<bool, 1, 1, 1, 1, 2, 3>) -> Tensor5<bool, 1, 1, 1, 1, 2> {
+                max::<5>(x)
+            }
+        },
+        parse_quote! {
+            fn min_rank6_axis5(x: Tensor6<bool, 1, 1, 1, 1, 2, 3>) -> Tensor5<bool, 1, 1, 1, 1, 2> {
+                min::<5>(x)
+            }
+        },
+        parse_quote! {
+            fn argmin_rank6_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+                argmin::<5>(x)
+            }
+        },
+        parse_quote! {
+            fn var_rank6_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+                var::<5>(x)
+            }
+        },
+        parse_quote! {
+            fn std_rank6_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+                std::<5>(x)
+            }
+        },
+        parse_quote! {
+            fn ptp_rank6_axis5(x: Tensor6<i64, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+                ptp::<5>(x)
+            }
+        },
+    ] {
+        let graph = parse(item).unwrap();
+        assert_eq!(graph.body[0].ty, graph.outputs[0]);
+    }
 }
 
 #[test]
@@ -654,6 +763,45 @@ fn rejects_empty_non_identity_reductions() {
         "{empty_mean}"
     );
 
+    let empty_argmin = parse(parse_quote! {
+        fn argmin_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<i64, 2> {
+            argmin::<1>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_argmin
+            .to_string()
+            .contains("argmin cannot reduce empty axis 1 for tensor shape [2, 0]"),
+        "{empty_argmin}"
+    );
+
+    let empty_max = parse(parse_quote! {
+        fn max_empty(x: Tensor1<f32, 0>) -> Tensor0<f32> {
+            max(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_max
+            .to_string()
+            .contains("max cannot reduce empty tensor shape [0]"),
+        "{empty_max}"
+    );
+
+    let empty_var = parse(parse_quote! {
+        fn var_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<f32, 2> {
+            var::<1>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_var
+            .to_string()
+            .contains("var cannot reduce empty axis 1 for tensor shape [2, 0]"),
+        "{empty_var}"
+    );
+
     let empty_softmax = parse(parse_quote! {
         fn softmax_empty(x: Tensor1<f32, 0>) -> Tensor1<f32, 0> {
             softmax(x)
@@ -674,6 +822,14 @@ fn rejects_empty_non_identity_reductions() {
     })
     .unwrap();
     assert_eq!(sum_empty_axis.body[0].ty, tensor(&[2]));
+
+    let prod_empty_axis = parse(parse_quote! {
+        fn prod_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<f32, 2> {
+            prod::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(prod_empty_axis.body[0].ty, tensor(&[2]));
 
     let all_empty_axis = parse(parse_quote! {
         fn all_empty_axis(x: Tensor2<bool, 2, 0>) -> Tensor1<bool, 2> {

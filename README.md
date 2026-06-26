@@ -240,22 +240,25 @@ They cover the recommended hosted workflow:
   `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
   `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
   `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
-  binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
-  `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
-  `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+  binary `stack`, full-tensor and axis-aware `sum`, `prod`, `mean`, `max` /
+  `amax`, `min` / `amin`, `argmax`, `argmin`, `var`, `std`, and `ptp`,
+  full-tensor and axis-aware `softmax`, `exp`, `log`, `sqrt`, `tanh`, and
+  `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
-  `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
+  `prod::<1>(x)`, `mean::<0>(x)`, `amax::<1>(x)`, `var::<1>(x)`,
+  `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
   markers, for example `conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)`.
   `Groups<N>` follows PyTorch-style grouped convolution shape rules: input
   channels and output channels must both be divisible by `N`, and kernel input
   channels must equal `input_channels / N`.
-- Floating-point classifier/math ops (`relu`, `mean`, `softmax`,
-  `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
-  element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
-  support arithmetic, `abs`, `minimum`, `maximum`, `clip`, reshape/broadcast,
-  sum, `argmax`, matmul, and conv lowering where IREE accepts the resulting
-  MLIR.
+- Floating-point classifier/math/statistics ops (`relu`, `mean`, `var`, `std`,
+  `softmax`, `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a
+  floating-point element type. Backend support for `f16`/`bf16` math can vary.
+  Integer tensors support arithmetic, `abs`, `minimum`, `maximum`, `clip`,
+  reshape/broadcast, `sum`, `prod`, `max` / `amax`, `min` / `amin`, `ptp`,
+  `argmax`, `argmin`, matmul, and conv lowering where IREE accepts the
+  resulting MLIR.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
 - The compiler, MLIR lowering, and hosted runtime wrappers support real bool
@@ -269,12 +272,17 @@ They cover the recommended hosted workflow:
   exponentials; `softmax::<AXIS>(x)` normalizes over one axis using
   `linalg.softmax`.
 - Full-tensor reductions and rank-1 axis reductions return `Tensor0<_>`.
-- `argmax(x)` accepts numeric tensors and returns the row-major flattened index
-  as `Tensor0<i64>`. `argmax::<AXIS>(x)` returns per-slice indices along the
-  reduced axis.
-- Empty `sum`, `all`, and `any` reductions use their identity values. Empty
-  `mean`, `softmax`, and `argmax` reductions are rejected because there is no
-  well-defined selected value or denominator.
+  Full-tensor reductions over `Tensor0<_>` return `Tensor0<_>` where the
+  operation is defined.
+- `argmax(x)` and `argmin(x)` accept ordered tensor elements and return the
+  row-major flattened index as `Tensor0<i64>`. Axis-aware forms return
+  per-slice indices along the reduced axis. Ties select the lowest index.
+- `var` and `std` compute population statistics with the same output dtype as
+  the input. Integer and bool statistics are not implicitly promoted.
+- Empty `sum`, `prod`, `all`, and `any` reductions use their identity values.
+  Empty `mean`, `max`, `min`, `softmax`, `argmax`, `argmin`, `var`, `std`, and
+  `ptp` reductions are rejected because there is no well-defined selected value
+  or denominator.
 
 ## Dtype support
 
@@ -290,7 +298,7 @@ scalar bool predicate is valid.
 | `bf16` | `half` feature | `half` feature | `half` feature | Uses `half::bf16`; currently best treated as typed storage/roundtrip unless the selected backend accepts the op. |
 | `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
 | `i64` | yes | yes | yes | Same policy as `i32`. |
-| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, and `isnan`. |
+| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, `max`, `min`, `argmax`, `argmin`, and `isnan`. |
 | quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
 
 There is no implicit promotion, mixed numeric dtype execution, complex dtype,

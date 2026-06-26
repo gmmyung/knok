@@ -15,25 +15,18 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
             expect_bool_element(input.elem, "bool reductions")?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "bool reductions expect a tensor input",
-                ));
-            }
             reduction_output_type(&input, *axis)
         }
-        CallOp::Argmax(axis) => {
+        CallOp::Argmax(axis) | CallOp::Argmin(axis) => {
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
-            expect_numeric_element(input.elem, "argmax")?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "argmax expects a tensor input",
-                ));
-            }
-            expect_non_empty_reduction(&input, *axis, "argmax")?;
+            let op_name = if matches!(op, CallOp::Argmax(_)) {
+                "argmax"
+            } else {
+                "argmin"
+            };
+            expect_ordered_element(input.elem, op_name)?;
+            expect_non_empty_reduction(&input, *axis, op_name)?;
             let mut output = reduction_output_type(&input, *axis)?;
             output.elem = ElementType::I64;
             Ok(output)
@@ -80,6 +73,18 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_numeric_element(args[0].elem, "min/max ops")?;
             expect_numeric_element(args[1].elem, "min/max ops")?;
             binary_result_type(&args[0], &args[1])
+        }
+        CallOp::Max(axis) | CallOp::Min(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            let op_name = if matches!(op, CallOp::Max(_)) {
+                "max"
+            } else {
+                "min"
+            };
+            expect_ordered_element(input.elem, op_name)?;
+            expect_non_empty_reduction(&input, *axis, op_name)?;
+            reduction_output_type(&input, *axis)
         }
         CallOp::Clip => {
             expect_arity(op, args, 3)?;
@@ -175,28 +180,41 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 2)?;
             stack_result_type(&args[0], &args[1], *axis)
         }
+        CallOp::Prod(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            expect_numeric_element(input.elem, "prod")?;
+            reduction_output_type(&input, *axis)
+        }
+        CallOp::Ptp(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            expect_numeric_element(input.elem, "ptp")?;
+            expect_non_empty_reduction(&input, *axis, "ptp")?;
+            reduction_output_type(&input, *axis)
+        }
+        CallOp::Std(axis) | CallOp::Var(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            let op_name = if matches!(op, CallOp::Std(_)) {
+                "std"
+            } else {
+                "var"
+            };
+            expect_float(op, input.elem)?;
+            expect_non_empty_reduction(&input, *axis, op_name)?;
+            reduction_output_type(&input, *axis)
+        }
         CallOp::Sum(axis) => {
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
             expect_numeric_element(input.elem, "sum")?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "sum expects a tensor input",
-                ));
-            }
             reduction_output_type(&input, *axis)
         }
         CallOp::Mean(axis) => {
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
             expect_float(op, input.elem)?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "mean expects a tensor input",
-                ));
-            }
             expect_non_empty_reduction(&input, *axis, "mean")?;
             reduction_output_type(&input, *axis)
         }
@@ -637,6 +655,17 @@ pub(crate) fn expect_numeric_element(elem: ElementType, op_name: &str) -> syn::R
         Err(syn::Error::new(
             Span::call_site(),
             format!("{op_name} {verb} numeric tensors only"),
+        ))
+    }
+}
+
+fn expect_ordered_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+    if elem.is_numeric() || elem.is_bool() {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} supports ordered tensor elements only"),
         ))
     }
 }

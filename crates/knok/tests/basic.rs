@@ -158,6 +158,86 @@ fn mean2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn prod4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
+    prod(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn prod2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    prod::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn max2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+    max::<0>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn amax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
+    amax(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn min2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    min::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn amin4_i64(x: Tensor1<i64, 4>) -> Tensor0<i64> {
+    amin(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn bool_min2x3_axis1(x: Tensor2<bool, 2, 3>) -> Tensor1<bool, 2> {
+    min::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn bool_max2x3_axis1(x: Tensor2<bool, 2, 3>) -> Tensor1<bool, 2> {
+    max::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmin2x3(x: Tensor2<f32, 2, 3>) -> Tensor0<i64> {
+    argmin(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmin2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
+    argmin::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn var4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
+    var(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn var2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    var::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn std4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
+    std(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn std2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+    std::<0>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
+    ptp(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    ptp::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn softmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> {
     softmax::<1>(x)
 }
@@ -449,6 +529,26 @@ fn mean6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
     argmax::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn prod6d_axis5(x: Tensor6<i32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i32, 1, 1, 1, 1, 2> {
+    prod::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmin6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+    argmin::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn var6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+    var::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp6d_axis5(x: Tensor6<i64, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+    ptp::<5>(x)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -1100,8 +1200,29 @@ fn axis_reduction_graphs_run() {
     let axis1 = sum2x3_axis1(x.clone()).unwrap();
     assert_eq!(axis1.into_vec(), vec![6.0, 60.0]);
 
-    let mean = mean2x3_axis1(x).unwrap();
+    let mean = mean2x3_axis1(x.clone()).unwrap();
     assert_eq!(mean.into_vec(), vec![2.0, 20.0]);
+
+    let prod_axis1 = prod2x3_axis1(x.clone()).unwrap();
+    assert_eq!(prod_axis1.into_vec(), vec![6.0, 6000.0]);
+
+    let max_axis0 = max2x3_axis0(x.clone()).unwrap();
+    assert_eq!(max_axis0.into_vec(), vec![10.0, 20.0, 30.0]);
+
+    let min_axis1 = min2x3_axis1(x.clone()).unwrap();
+    assert_eq!(min_axis1.into_vec(), vec![1.0, 10.0]);
+
+    let var_axis1 = var2x3_axis1(x.clone()).unwrap();
+    assert_close(&var_axis1.into_vec(), &[0.6666667, 66.666664]);
+
+    let ptp_axis1 = ptp2x3_axis1(x.clone()).unwrap();
+    assert_eq!(ptp_axis1.into_vec(), vec![2.0, 20.0]);
+
+    let bool_input = Tensor2::from_array([[true, true, false], [false, false, false]]);
+    let bool_min = bool_min2x3_axis1(bool_input.clone()).unwrap();
+    assert_eq!(bool_min.into_vec(), vec![false, false]);
+    let bool_max = bool_max2x3_axis1(bool_input).unwrap();
+    assert_eq!(bool_max.into_vec(), vec![true, false]);
 
     let x4 = Tensor4::from_array([[
         [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
@@ -1153,6 +1274,28 @@ fn rank6_numpy_style_reductions_run() {
 
     let argmax = argmax6d_axis5(input).unwrap();
     assert_eq!(argmax.into_vec(), vec![2, 0]);
+
+    let prod =
+        prod6d_axis5(Tensor6::<i32, 1, 1, 1, 1, 2, 3>::from_vec(vec![1, 2, 3, 4, 5, 6]).unwrap())
+            .unwrap();
+    assert_eq!(prod.into_vec(), vec![6, 120]);
+
+    let argmin = argmin6d_axis5(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec(vec![2.0, 1.0, 1.0, 3.0, -1.0, -1.0]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(argmin.into_vec(), vec![1, 1]);
+
+    let var = var6d_axis5(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec(vec![1.0, 2.0, 3.0, 2.0, 2.0, 2.0]).unwrap(),
+    )
+    .unwrap();
+    assert_close(&var.into_vec(), &[0.6666667, 0.0]);
+
+    let ptp =
+        ptp6d_axis5(Tensor6::<i64, 1, 1, 1, 1, 2, 3>::from_vec(vec![1, 7, 3, -5, -1, -9]).unwrap())
+            .unwrap();
+    assert_eq!(ptp.into_vec(), vec![6, 8]);
 
     let any = any6d_axis5(
         Tensor6::<bool, 1, 1, 1, 1, 2, 3>::from_vec(vec![false, false, true, false, false, false])
@@ -1343,6 +1486,15 @@ fn reduction_and_classifier_op_graphs_run() {
     let mean_output = mean4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
     assert_close(&mean_output.into_vec(), &[2.5]);
 
+    let prod_i32 = prod4_i32(Tensor1::from_array([1, 2, 3, 4])).unwrap();
+    assert_eq!(prod_i32.into_vec(), vec![24]);
+
+    let max_i32 = amax4_i32(Tensor1::from_array([1, 10, 3, 4])).unwrap();
+    assert_eq!(max_i32.into_vec(), vec![10]);
+
+    let min_i64 = amin4_i64(Tensor1::from_array([1, -10, 3, 4])).unwrap();
+    assert_eq!(min_i64.into_vec(), vec![-10]);
+
     let argmax_output = argmax4(Tensor1::from_array([1.0, 10.0, 3.0, 4.0])).unwrap();
     assert_eq!(argmax_output.into_vec(), vec![1i64]);
 
@@ -1356,6 +1508,27 @@ fn reduction_and_classifier_op_graphs_run() {
     let argmax_axis_output =
         argmax2x3_axis1(Tensor2::from_array([[1.0, 9.0, 3.0], [7.0, 2.0, 8.0]])).unwrap();
     assert_eq!(argmax_axis_output.into_vec(), vec![1i64, 2i64]);
+
+    let argmin_full_output =
+        argmin2x3(Tensor2::from_array([[1.0, -9.0, 3.0], [7.0, -9.0, 8.0]])).unwrap();
+    assert_eq!(argmin_full_output.into_vec(), vec![1i64]);
+
+    let argmin_axis_output =
+        argmin2x3_axis1(Tensor2::from_array([[1.0, -9.0, -9.0], [7.0, 2.0, 8.0]])).unwrap();
+    assert_eq!(argmin_axis_output.into_vec(), vec![1i64, 1i64]);
+
+    let var_output = var4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
+    assert_close(&var_output.into_vec(), &[1.25]);
+
+    let std_output = std4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
+    assert_close(&std_output.into_vec(), &[1.118034]);
+
+    let std_axis0_output =
+        std2x3_axis0(Tensor2::from_array([[1.0, 2.0, 3.0], [3.0, 6.0, 9.0]])).unwrap();
+    assert_close(&std_axis0_output.into_vec(), &[1.0, 2.0, 3.0]);
+
+    let ptp_i32 = ptp4_i32(Tensor1::from_array([1, 10, -3, 4])).unwrap();
+    assert_eq!(ptp_i32.into_vec(), vec![13]);
 
     let argmax4d_output = argmax4d_axis3(Tensor4::from_array([[
         [[1.0, 5.0, 3.0], [4.0, 2.0, 6.0]],
