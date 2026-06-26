@@ -437,6 +437,62 @@ fn stack5d_to6d(
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn transpose_axes3d(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 3, 4, 2> {
+    transpose::<1, 2, 0>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn permute_dims3d(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 4, 2, 3> {
+    permute_dims::<2, 0, 1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn swapaxes3d_i32(x: Tensor3<i32, 2, 3, 4>) -> Tensor3<i32, 4, 3, 2> {
+    swapaxes::<0, 2>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn moveaxis3d(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 3, 4, 2> {
+    moveaxis::<0, 2>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn split_cols2x5(x: Tensor2<f32, 2, 5>) -> (Tensor2<f32, 2, 2>, Tensor2<f32, 2, 3>) {
+    let (left, right) = split::<1, 2, 3>(x);
+    (left, right)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn tile2d(x: Tensor2<f32, 1, 2>) -> Tensor2<f32, 2, 6> {
+    tile::<2, 3>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn repeat_cols_i64(x: Tensor2<i64, 2, 2>) -> Tensor2<i64, 2, 6> {
+    repeat::<1, 3>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn pad2d(x: Tensor2<f32, 2, 2>) -> Tensor2<f32, 4, 5> {
+    pad::<Tensor2<f32, 4, 5>, 1, 2>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn flip_cols_bool(x: Tensor2<bool, 2, 3>) -> Tensor2<bool, 2, 3> {
+    flip::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn flip_all2d(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> {
+    flip(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn roll_cols(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 4> {
+    roll::<1, 1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn softmax6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
     softmax::<5>(x)
 }
@@ -1056,6 +1112,90 @@ fn rank6_numpy_style_shape_ops_run() {
 }
 
 #[test]
+fn expanded_static_layout_ops_run() {
+    let values = (0..24).map(|value| value as f32).collect::<Vec<_>>();
+    let x = Tensor3::<f32, 2, 3, 4>::from_vec(values.clone()).unwrap();
+    assert_eq!(
+        transpose_axes3d(x.clone()).unwrap().into_vec(),
+        permute_axes_flat(&values, &[2, 3, 4], &[1, 2, 0])
+    );
+    assert_eq!(
+        permute_dims3d(x.clone()).unwrap().into_vec(),
+        permute_axes_flat(&values, &[2, 3, 4], &[2, 0, 1])
+    );
+    assert_eq!(
+        moveaxis3d(x).unwrap().into_vec(),
+        permute_axes_flat(&values, &[2, 3, 4], &[1, 2, 0])
+    );
+
+    let values_i32 = (0..24).collect::<Vec<_>>();
+    let swapped =
+        swapaxes3d_i32(Tensor3::<i32, 2, 3, 4>::from_vec(values_i32.clone()).unwrap()).unwrap();
+    assert_eq!(
+        swapped.into_vec(),
+        permute_axes_flat_i32(&values_i32, &[2, 3, 4], &[2, 1, 0])
+    );
+
+    let (left, right) = split_cols2x5(Tensor2::from_array([
+        [1.0, 2.0, 3.0, 4.0, 5.0],
+        [10.0, 20.0, 30.0, 40.0, 50.0],
+    ]))
+    .unwrap();
+    assert_eq!(left.into_vec(), vec![1.0, 2.0, 10.0, 20.0]);
+    assert_eq!(right.into_vec(), vec![3.0, 4.0, 5.0, 30.0, 40.0, 50.0]);
+
+    let tiled = tile2d(Tensor2::from_array([[1.0, 2.0]])).unwrap();
+    assert_eq!(
+        tiled.into_vec(),
+        vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0]
+    );
+
+    let repeated = repeat_cols_i64(Tensor2::from_array([[1, 2], [10, 20]])).unwrap();
+    assert_eq!(
+        repeated.into_vec(),
+        vec![1, 1, 1, 2, 2, 2, 10, 10, 10, 20, 20, 20]
+    );
+
+    let padded = pad2d(Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]])).unwrap();
+    assert_eq!(
+        padded.into_vec(),
+        vec![
+            0.0, 0.0, 0.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 2.0, 0.0, //
+            0.0, 0.0, 3.0, 4.0, 0.0, //
+            0.0, 0.0, 0.0, 0.0, 0.0,
+        ]
+    );
+
+    let flipped_bool = flip_cols_bool(Tensor2::from_array([
+        [true, false, true],
+        [false, true, false],
+    ]))
+    .unwrap();
+    assert_eq!(
+        flipped_bool.into_vec(),
+        vec![true, false, true, false, true, false]
+    );
+
+    let flipped_all =
+        flip_all2d(Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]])).unwrap();
+    assert_eq!(
+        flipped_all.into_vec(),
+        vec![30.0, 20.0, 10.0, 3.0, 2.0, 1.0]
+    );
+
+    let rolled = roll_cols(Tensor2::from_array([
+        [1.0, 2.0, 3.0, 4.0],
+        [10.0, 20.0, 30.0, 40.0],
+    ]))
+    .unwrap();
+    assert_eq!(
+        rolled.into_vec(),
+        vec![4.0, 1.0, 2.0, 3.0, 40.0, 10.0, 20.0, 30.0]
+    );
+}
+
+#[test]
 fn reshape_graph_runs() {
     let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
     let output = reshape2x2(x).unwrap();
@@ -1545,6 +1685,29 @@ fn reverse_axes_flat(values: &[f32], shape: &[usize]) -> Vec<f32> {
         .map(|output_index| {
             let output_indices = unravel_index(output_index, &output_shape);
             let input_indices = output_indices.iter().rev().copied().collect::<Vec<_>>();
+            values[ravel_index(&input_indices, shape)]
+        })
+        .collect()
+}
+
+fn permute_axes_flat(values: &[f32], shape: &[usize], axes: &[usize]) -> Vec<f32> {
+    permute_axes_flat_copy(values, shape, axes)
+}
+
+fn permute_axes_flat_i32(values: &[i32], shape: &[usize], axes: &[usize]) -> Vec<i32> {
+    permute_axes_flat_copy(values, shape, axes)
+}
+
+fn permute_axes_flat_copy<T: Copy>(values: &[T], shape: &[usize], axes: &[usize]) -> Vec<T> {
+    let output_shape = axes.iter().map(|axis| shape[*axis]).collect::<Vec<_>>();
+    let output_len = output_shape.iter().product();
+    (0..output_len)
+        .map(|output_index| {
+            let output_indices = unravel_index(output_index, &output_shape);
+            let mut input_indices = vec![0; shape.len()];
+            for (output_axis, input_axis) in axes.iter().enumerate() {
+                input_indices[*input_axis] = output_indices[output_axis];
+            }
             values[ravel_index(&input_indices, shape)]
         })
         .collect()

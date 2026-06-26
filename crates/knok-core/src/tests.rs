@@ -266,6 +266,78 @@ fn infers_static_shape_and_indexing_ops() {
 }
 
 #[test]
+fn infers_expanded_static_layout_ops() {
+    for item in [
+        parse_quote! {
+            fn transpose_axes(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 3, 4, 2> {
+                transpose::<1, 2, 0>(x)
+            }
+        },
+        parse_quote! {
+            fn permute_dims4(x: Tensor4<f32, 1, 2, 3, 4>) -> Tensor4<f32, 3, 1, 4, 2> {
+                permute_dims::<2, 0, 3, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn swapaxes3(x: Tensor3<i32, 2, 3, 4>) -> Tensor3<i32, 4, 3, 2> {
+                swapaxes::<0, 2>(x)
+            }
+        },
+        parse_quote! {
+            fn moveaxis4(x: Tensor4<bool, 2, 3, 4, 5>) -> Tensor4<bool, 3, 4, 2, 5> {
+                moveaxis::<0, 2>(x)
+            }
+        },
+        parse_quote! {
+            fn tile2(x: Tensor2<f64, 1, 2>) -> Tensor2<f64, 2, 6> {
+                tile::<2, 3>(x)
+            }
+        },
+        parse_quote! {
+            fn repeat2(x: Tensor2<i64, 2, 2>) -> Tensor2<i64, 2, 6> {
+                repeat::<1, 3>(x)
+            }
+        },
+        parse_quote! {
+            fn pad2(x: Tensor2<f32, 2, 2>) -> Tensor2<f32, 4, 5> {
+                pad::<Tensor2<f32, 4, 5>, 1, 2>(x)
+            }
+        },
+        parse_quote! {
+            fn flip2(x: Tensor2<bool, 2, 3>) -> Tensor2<bool, 2, 3> {
+                flip::<1>(x)
+            }
+        },
+        parse_quote! {
+            fn flip_all(x: Tensor3<f32, 1, 2, 3>) -> Tensor3<f32, 1, 2, 3> {
+                flip(x)
+            }
+        },
+        parse_quote! {
+            fn roll2(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 4> {
+                roll::<1, 1>(x)
+            }
+        },
+    ] {
+        let graph = parse(item).unwrap();
+        assert_eq!(graph.body[0].ty, graph.outputs[0]);
+    }
+
+    let split = parse(parse_quote! {
+        fn split_cols(x: Tensor2<f32, 2, 5>) -> (Tensor2<f32, 2, 2>, Tensor2<f32, 2, 3>) {
+            let (left, right) = split::<1, 2, 3>(x);
+            (left, right)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        split.lets[0].value.tys,
+        vec![tensor(&[2, 2]), tensor(&[2, 3])]
+    );
+    assert_eq!(split.outputs, vec![tensor(&[2, 2]), tensor(&[2, 3])]);
+}
+
+#[test]
 fn parses_higher_rank_tensors_and_infers_inference_ops() {
     let reshape = parse(parse_quote! {
         fn reshape8(x: Tensor1<f32, 8>) -> Tensor3<f32, 2, 2, 2> {
@@ -881,6 +953,51 @@ fn rejects_invalid_reshape_and_broadcast_shapes() {
     })
     .unwrap_err();
     assert!(take.to_string().contains("out of bounds"));
+
+    let permute = parse(parse_quote! {
+        fn bad_permute(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 2, 3, 4> {
+            permute_dims::<0, 0, 2>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(permute.to_string().contains("permutation"));
+
+    let moveaxis = parse(parse_quote! {
+        fn bad_moveaxis(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 2, 3, 4> {
+            moveaxis::<0, 3>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(moveaxis
+        .to_string()
+        .contains("moveaxis source 0 and destination 3"));
+
+    let split = parse(parse_quote! {
+        fn bad_split(x: Tensor2<f32, 2, 4>) -> (Tensor2<f32, 2, 1>, Tensor2<f32, 2, 2>) {
+            let (a, b) = split::<1, 1, 2>(x);
+            (a, b)
+        }
+    })
+    .unwrap_err();
+    assert!(split.to_string().contains("split sections"));
+
+    let pad = parse(parse_quote! {
+        fn bad_pad(x: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 3> {
+            pad::<Tensor2<f32, 2, 3>, 1, 0>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(pad.to_string().contains("pad dimension 0 is out of bounds"));
+
+    let repeat = parse(parse_quote! {
+        fn bad_repeat(x: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 2> {
+            repeat::<2, 2>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(repeat
+        .to_string()
+        .contains("repeat axis 2 is out of bounds"));
 }
 
 #[test]

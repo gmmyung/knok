@@ -158,12 +158,26 @@ fn middle_columns(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
 fn last_column(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     take::<1, 2>(x)
 }
+
+fn move_batch_axis(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 3, 4, 2> {
+    moveaxis::<0, 2>(x)
+}
+
+fn static_pad(x: Tensor2<f32, 2, 2>) -> Tensor2<f32, 4, 5> {
+    pad::<Tensor2<f32, 4, 5>, 1, 2>(x)
+}
 ```
 
 `slice::<Target, START...>(x)` keeps rank and uses the target shape as static
 slice sizes. `take::<AXIS, INDEX>(x)` removes one axis and returns `Tensor0<_>`
 when that is the remaining scalar. `concat::<AXIS>(a, b)` joins two tensors
 along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
+`permute_dims::<AXES...>(x)`, `transpose::<AXES...>(x)`, `swapaxes::<A, B>(x)`,
+and `moveaxis::<SRC, DST>(x)` use const axes and infer output shapes.
+`split::<AXIS, SECTION...>(x)` returns one statically shaped tensor per section
+and the section sizes must sum to the selected axis. `tile::<MULTIPLE...>(x)`,
+`repeat::<AXIS, COUNT>(x)`, `pad::<Target, LOW...>(x)`, `flip::<AXES...>(x)`,
+and `roll::<AXIS, SHIFT>(x)` are also static; `flip(x)` flips all axes.
 
 Predicate tensors use `TensorN<bool, ...>` and lower to MLIR `i1`, not numeric
 masks. Comparisons return bool tensors and can feed logical ops, bool
@@ -237,12 +251,15 @@ They cover the recommended hosted workflow:
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
   `pow`, `relu`, NumPy-style `matmul` for ranks 1-6, NHWC/HWCF `conv2d` with
   static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
-  `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
-  `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
-  `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
-  binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
-  `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
-  `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
+  `Dilation<H, W>`, and `Groups<N>` options, NumPy-style rank-N `transpose`
+  with optional const axes, explicit `permute::<Target, AXES...>`,
+  shape-inferred `permute_dims::<AXES...>`, `swapaxes`, `moveaxis`, reshape
+  across ranks 0-6, `broadcast`, `squeeze`, `unsqueeze`, static `slice`,
+  static `take`, static `split`, binary `concat`, binary `stack`, `tile`,
+  `repeat`, `pad`, `flip`, `roll`, full-tensor and axis-aware `sum`,
+  full-tensor and axis-aware `mean`, full-tensor and axis-aware `softmax`,
+  full-tensor and axis-aware `argmax`, `exp`, `log`, `sqrt`, `tanh`, and
+  `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic

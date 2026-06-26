@@ -81,13 +81,31 @@ pub enum CallOp {
     Minimum,
     Maximum,
     NotEqual,
+    Flip(Vec<usize>),
+    MoveAxis {
+        source: usize,
+        destination: usize,
+    },
+    Pad {
+        target: TensorType,
+        lows: Vec<usize>,
+    },
     Pow,
     Permute {
         target: TensorType,
         axes: Vec<usize>,
     },
+    PermuteDims(Vec<usize>),
     Relu,
+    Repeat {
+        axis: usize,
+        count: usize,
+    },
     Reshape(TensorType),
+    Roll {
+        axis: usize,
+        shift: usize,
+    },
     Broadcast(TensorType),
     Sigmoid,
     Slice {
@@ -99,12 +117,21 @@ pub enum CallOp {
     Squeeze(TensorType),
     Stack(usize),
     Sum(AxisSpec),
+    Split {
+        axis: usize,
+        sections: Vec<usize>,
+    },
+    SwapAxes {
+        axis0: usize,
+        axis1: usize,
+    },
     Tanh,
     Take {
         axis: usize,
         index: usize,
     },
-    Transpose,
+    Tile(Vec<usize>),
+    Transpose(Vec<usize>),
     Unsqueeze(TensorType),
     Where,
     Graph(String),

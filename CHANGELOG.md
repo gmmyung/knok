@@ -17,6 +17,9 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Added `Tensor5` and `Tensor6` containers and rank-6 graph support.
 - Added rank-6 NumPy-style shape, broadcasting, selection, and reduction test
   coverage for existing graph ops.
+- Added static layout operations for shape-inferred `transpose` axes,
+  `permute_dims`, `swapaxes`, `moveaxis`, `split`, `tile`, `repeat`, `pad`,
+  `flip`, and `roll`.
 - Added contributor, developer, agent, and changelog documentation.
 - Added tag-triggered release automation with release metadata validation.
 
