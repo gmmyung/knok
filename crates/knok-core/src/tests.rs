@@ -342,6 +342,35 @@ fn infers_scalar_classifier_op_shapes() {
 }
 
 #[test]
+fn rejects_empty_argmax_reductions() {
+    let empty_tensor = parse(parse_quote! {
+        fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor1<i64, 1> {
+            argmax(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_tensor
+            .to_string()
+            .contains("argmax cannot reduce empty tensor shape [0]"),
+        "{empty_tensor}"
+    );
+
+    let empty_axis = parse(parse_quote! {
+        fn argmax_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<i64, 2> {
+            argmax::<1>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_axis
+            .to_string()
+            .contains("argmax cannot reduce empty axis 1 for tensor shape [2, 0]"),
+        "{empty_axis}"
+    );
+}
+
+#[test]
 fn infers_elementwise_call_shapes() {
     for item in [
         parse_quote! {

@@ -68,6 +68,7 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn argmax(&mut self, input: Value, axis: Option<usize>) -> anyhow::Result<Value> {
+        ensure_non_empty_argmax_reduction(&input.ty, axis)?;
         let index_ty = TensorType {
             elem: ElementType::I64,
             shape: reduction_output_shape(&input.ty.shape, axis, false),
@@ -396,5 +397,30 @@ fn min_numeric_literal(elem: ElementType) -> &'static str {
         ElementType::BF16 => "-3.38953139E+38",
         ElementType::I32 => "-2147483648",
         ElementType::I64 => "-9223372036854775808",
+    }
+}
+
+fn ensure_non_empty_argmax_reduction(
+    input: &TensorType,
+    axis: Option<usize>,
+) -> anyhow::Result<()> {
+    match axis {
+        Some(axis) if axis >= input.rank() => {
+            anyhow::bail!(
+                "argmax axis {axis} is out of bounds for rank-{} tensor {:?}",
+                input.rank(),
+                input.shape
+            );
+        }
+        Some(axis) if input.shape[axis] == 0 => {
+            anyhow::bail!(
+                "argmax cannot reduce empty axis {axis} for tensor shape {:?}",
+                input.shape
+            );
+        }
+        None if element_count(input) == 0 => {
+            anyhow::bail!("argmax cannot reduce empty tensor shape {:?}", input.shape);
+        }
+        _ => Ok(()),
     }
 }
