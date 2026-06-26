@@ -15,10 +15,10 @@ pub(crate) fn conv2d_result_type(
         ));
     }
     expect_numeric_element(input.elem, "conv2d")?;
-    if options.groups != 1 {
+    if options.groups == 0 {
         return Err(syn::Error::new(
             Span::call_site(),
-            "grouped conv2d is not supported yet",
+            "conv2d groups must be non-zero",
         ));
     }
     if options.stride[0] == 0
@@ -38,12 +38,39 @@ pub(crate) fn conv2d_result_type(
             "conv2d kernel dimensions must be non-zero",
         ));
     }
-    if input.shape[3] != kernel.shape[2] {
+    let input_channels = input.shape[3];
+    let output_channels = kernel.shape[3];
+    if input_channels == 0 || output_channels == 0 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "conv2d input and output channels must be non-zero",
+        ));
+    }
+    if input_channels % options.groups != 0 {
         return Err(syn::Error::new(
             Span::call_site(),
             format!(
-                "conv2d input channels must match kernel channels, got {} and {}",
-                input.shape[3], kernel.shape[2]
+                "conv2d input channels must be divisible by groups, got {input_channels} channels and {} groups",
+                options.groups
+            ),
+        ));
+    }
+    if output_channels % options.groups != 0 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "conv2d output channels must be divisible by groups, got {output_channels} channels and {} groups",
+                options.groups
+            ),
+        ));
+    }
+    let expected_kernel_channels = input_channels / options.groups;
+    if kernel.shape[2] != expected_kernel_channels {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "conv2d kernel input channels must equal input channels / groups, got {} and expected {}",
+                kernel.shape[2], expected_kernel_channels
             ),
         ));
     }
@@ -65,7 +92,7 @@ pub(crate) fn conv2d_result_type(
             input.shape[0],
             (padded_h - effective_h) / options.stride[0] + 1,
             (padded_w - effective_w) / options.stride[1] + 1,
-            kernel.shape[3],
+            output_channels,
         ],
     })
 }

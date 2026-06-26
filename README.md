@@ -235,7 +235,7 @@ They cover the recommended hosted workflow:
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
   `pow`, `relu`, NumPy-style `matmul` for ranks 1-4, NHWC/HWCF `conv2d` with
   static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
-  `Dilation<H, W>` options, rank-2 `transpose`, explicit
+  `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
   `permute::<Target, AXES...>`, reshape across ranks 0-4, `broadcast`,
   `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
   binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
@@ -245,8 +245,9 @@ They cover the recommended hosted workflow:
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
   markers, for example `conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)`.
-  `Groups<N>` is reserved, but grouped convolution is rejected for now unless
-  `N = 1`.
+  `Groups<N>` follows PyTorch-style grouped convolution shape rules: input
+  channels and output channels must both be divisible by `N`, and kernel input
+  channels must equal `input_channels / N`.
 - Floating-point classifier/math ops (`relu`, `mean`, `softmax`,
   `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
   element type. Backend support for `f16`/`bf16` math can vary. Integer tensors

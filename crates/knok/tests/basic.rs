@@ -391,6 +391,14 @@ fn conv2d_dilated(
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn conv2d_groups2(
+    x: Tensor4<f32, 1, 1, 1, 4>,
+    k: Tensor4<f32, 1, 1, 2, 4>,
+) -> Tensor4<f32, 1, 1, 1, 4> {
+    conv2d::<Groups<2>>(x, k)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn layer4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     relu(x)
 }
@@ -1099,6 +1107,11 @@ fn batched_matmul_and_conv2d_graphs_run() {
 
     let dilated = conv2d_dilated(image, kernel).unwrap();
     assert_eq!(dilated.into_vec(), vec![20.0]);
+
+    let image = Tensor4::from_array([[[[1.0, 2.0, 10.0, 20.0]]]]);
+    let kernel = Tensor4::from_array([[[[1.0, 0.0, 3.0, 0.0], [0.0, 1.0, 0.0, 4.0]]]]);
+    let grouped = conv2d_groups2(image, kernel).unwrap();
+    assert_eq!(grouped.into_vec(), vec![1.0, 2.0, 30.0, 80.0]);
 }
 
 #[test]

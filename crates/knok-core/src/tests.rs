@@ -298,10 +298,18 @@ fn parses_higher_rank_tensors_and_infers_inference_ops() {
         })
         .unwrap();
     assert_eq!(padded_conv.body[0].ty, tensor(&[1, 2, 2, 8]));
+
+    let grouped_conv = parse(parse_quote! {
+            fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 2, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
+                conv2d::<Groups<2>>(x, k)
+            }
+        })
+        .unwrap();
+    assert_eq!(grouped_conv.body[0].ty, tensor(&[1, 2, 2, 8]));
 }
 
 #[test]
-fn rejects_unsupported_grouped_conv2d() {
+fn rejects_invalid_grouped_conv2d_channels() {
     let error = parse(parse_quote! {
         fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 4, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
             conv2d::<Groups<2>>(x, k)
@@ -311,7 +319,18 @@ fn rejects_unsupported_grouped_conv2d() {
 
     assert!(error
         .to_string()
-        .contains("grouped conv2d is not supported yet"));
+        .contains("kernel input channels must equal input channels / groups"));
+
+    let error = parse(parse_quote! {
+        fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 2, 7>) -> Tensor4<f32, 1, 2, 2, 7> {
+            conv2d::<Groups<2>>(x, k)
+        }
+    })
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("output channels must be divisible by groups"));
 }
 
 #[test]
