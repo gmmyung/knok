@@ -142,6 +142,57 @@ fn infers_matmul_shape() {
 }
 
 #[test]
+fn infers_linalg_contraction_shapes() {
+    let dot = parse(parse_quote! {
+        fn vector_dot(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor0<f32> {
+            dot(x, y)
+        }
+    })
+    .unwrap();
+    assert_eq!(dot.body[0].ty, tensor(&[]));
+
+    let vecdot = parse(parse_quote! {
+        fn row_vecdot(x: Tensor2<f32, 2, 3>, y: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+            vecdot::<1>(x, y)
+        }
+    })
+    .unwrap();
+    assert_eq!(vecdot.body[0].ty, tensor(&[2]));
+
+    let inner = parse(parse_quote! {
+        fn matrix_inner(x: Tensor2<f32, 2, 3>, y: Tensor2<f32, 4, 3>) -> Tensor2<f32, 2, 4> {
+            inner(x, y)
+        }
+    })
+    .unwrap();
+    assert_eq!(inner.body[0].ty, tensor(&[2, 4]));
+
+    let outer = parse(parse_quote! {
+        fn vector_outer(x: Tensor1<f32, 2>, y: Tensor2<f32, 3, 4>) -> Tensor3<f32, 2, 3, 4> {
+            outer(x, y)
+        }
+    })
+    .unwrap();
+    assert_eq!(outer.body[0].ty, tensor(&[2, 3, 4]));
+
+    let trace = parse(parse_quote! {
+        fn batched_trace(x: Tensor3<f32, 2, 3, 3>) -> Tensor1<f32, 2> {
+            trace(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(trace.body[0].ty, tensor(&[2]));
+
+    let diagonal = parse(parse_quote! {
+        fn diagonal_square(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 2> {
+            diagonal(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(diagonal.body[0].ty, tensor(&[2]));
+}
+
+#[test]
 fn infers_reshape_broadcast_and_sum_shapes() {
     let reshape = parse(parse_quote! {
         fn reshape4(x: Tensor1<f32, 4>) -> Tensor2<f32, 2, 2> {
@@ -898,7 +949,7 @@ fn rejects_unknown_graph_calls() {
 #[test]
 fn rejects_direct_recursion() {
     let signatures = [(
-        "outer".to_string(),
+        "self_ref".to_string(),
         GraphSignature {
             inputs: vec![tensor(&[4])],
             outputs: vec![tensor(&[4])],
@@ -907,13 +958,15 @@ fn rejects_direct_recursion() {
     let error = parse_graph_with_signatures(
         quote!(backend = Backend::LlvmCpu),
         parse_quote! {
-            fn outer(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
-                outer(x)
+            fn self_ref(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                self_ref(x)
             }
         },
         &signatures,
     )
     .unwrap_err();
 
-    assert!(error.to_string().contains("recursive graph call `outer`"));
+    assert!(error
+        .to_string()
+        .contains("recursive graph call `self_ref`"));
 }

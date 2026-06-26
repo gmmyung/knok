@@ -235,7 +235,8 @@ They cover the recommended hosted workflow:
   broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
-  `pow`, `relu`, NumPy-style `matmul` for ranks 1-6, NHWC/HWCF `conv2d` with
+  `pow`, `relu`, NumPy-style `matmul` for ranks 1-6, `dot`, `vecdot`,
+  `inner`, `outer`, `trace`, `diagonal`, NHWC/HWCF `conv2d` with
   static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
   `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
   `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
@@ -245,6 +246,16 @@ They cover the recommended hosted workflow:
   `argmax`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
+- `dot(x, y)` accepts rank-1 numeric vectors. `vecdot(x, y)` contracts the last
+  axis of same-shaped numeric tensors, and `vecdot::<AXIS>(x, y)` contracts a
+  specific axis. `inner(x, y)` contracts the last axis of both numeric operands
+  and treats scalar operands as elementwise multiplication. `outer(x, y)`
+  concatenates operand ranks and is limited by the current Tensor6 maximum.
+- `trace(x)` and `diagonal(x)` use the last two axes by default; pass
+  `trace::<AXIS0, AXIS1>(x)` or `diagonal::<AXIS0, AXIS1>(x)` to select explicit
+  axes. `trace` requires equal diagonal dimensions and numeric tensors.
+  `diagonal` supports all tensor element types and also requires equal diagonal
+  dimensions.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
   markers, for example `conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)`.
   `Groups<N>` follows PyTorch-style grouped convolution shape rules: input
@@ -254,8 +265,8 @@ They cover the recommended hosted workflow:
   `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
   element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
   support arithmetic, `abs`, `minimum`, `maximum`, `clip`, reshape/broadcast,
-  sum, `argmax`, matmul, and conv lowering where IREE accepts the resulting
-  MLIR.
+  sum, `argmax`, matmul, linalg contractions, and conv lowering where IREE
+  accepts the resulting MLIR.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
 - The compiler, MLIR lowering, and hosted runtime wrappers support real bool
@@ -348,10 +359,12 @@ shapes currently include:
 - `matmul_128x128`: `Tensor2<f32, 128, 128> @ Tensor2<f32, 128, 128>`
 - `batched_matmul_16x128x128`: `Tensor3<f32, 16, 128, 128>` where each batch
   computes `128x128 @ 128x128`
+- `vecdot_128x1024_axis1`: row-wise vector dot over `Tensor2<f32, 128, 1024>`
 - `conv2d_nhwc_16x32x32x3_hwcf_3x3x3x16`
 - `mlp_128x128x64`: `128x128 @ 128x64 + 128x64`, then `relu`
 - `softmax_64x1000`: `Tensor2<f32, 64, 1000>`
 
 Comparison groups include `ndarray` equivalents for matmul, batched matmul,
-MLP, softmax, and a direct NHWC/HWCF convolution loop over `ndarray::Array4`;
-`nalgebra` is included for dense `128x128` matrix multiplication.
+vecdot, MLP, softmax, and a direct NHWC/HWCF convolution loop over
+`ndarray::Array4`; `nalgebra` is included for dense `128x128` matrix
+multiplication.

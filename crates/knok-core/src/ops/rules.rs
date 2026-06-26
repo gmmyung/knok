@@ -1,6 +1,9 @@
 use proc_macro2::Span;
 
-use super::{conv2d_result_type, matmul_result_type, validate_permute};
+use super::{
+    conv2d_result_type, diagonal_result_type, dot_result_type, inner_result_type,
+    matmul_result_type, outer_result_type, trace_result_type, validate_permute, vecdot_result_type,
+};
 use crate::{AxisSpec, CallOp, ElementType, TensorType};
 
 pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
@@ -212,10 +215,34 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 2)?;
             conv2d_result_type(&args[0], &args[1], options)
         }
+        CallOp::Diagonal(axes) => {
+            expect_arity(op, args, 1)?;
+            diagonal_result_type(&args[0], *axes)
+        }
+        CallOp::Dot => {
+            expect_arity(op, args, 2)?;
+            dot_result_type(&args[0], &args[1])
+        }
+        CallOp::Inner => {
+            expect_arity(op, args, 2)?;
+            inner_result_type(&args[0], &args[1])
+        }
+        CallOp::Outer => {
+            expect_arity(op, args, 2)?;
+            outer_result_type(&args[0], &args[1])
+        }
         CallOp::Unsqueeze(target) => {
             expect_arity(op, args, 1)?;
             validate_unsqueeze(&args[0], target)?;
             Ok(target.clone())
+        }
+        CallOp::Trace(axes) => {
+            expect_arity(op, args, 1)?;
+            trace_result_type(&args[0], *axes)
+        }
+        CallOp::Vecdot(axis) => {
+            expect_arity(op, args, 2)?;
+            vecdot_result_type(&args[0], &args[1], *axis)
         }
         CallOp::Where => {
             expect_arity(op, args, 3)?;

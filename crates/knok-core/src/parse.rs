@@ -431,6 +431,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Concat(expect_one_const(&generics, &path.path, "concat")?)
                 }
                 "conv2d" => CallOp::Conv2d(parse_conv2d_options(&generics, &path.path)?),
+                "diagonal" => {
+                    reject_types(&generics, &path.path, "diagonal")?;
+                    CallOp::Diagonal(optional_axis_pair(&generics, &path.path, "diagonal")?)
+                }
+                "dot" => {
+                    reject_any_generics(&generics, &path.path, "dot")?;
+                    CallOp::Dot
+                }
                 "exp" => {
                     reject_any_generics(&generics, &path.path, "exp")?;
                     CallOp::Exp
@@ -475,6 +483,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "logical_xor")?;
                     CallOp::LogicalXor
                 }
+                "inner" => {
+                    reject_any_generics(&generics, &path.path, "inner")?;
+                    CallOp::Inner
+                }
                 "matmul" => {
                     reject_any_generics(&generics, &path.path, "matmul")?;
                     CallOp::Matmul
@@ -509,6 +521,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "not_equal" => {
                     reject_any_generics(&generics, &path.path, "not_equal")?;
                     CallOp::NotEqual
+                }
+                "outer" => {
+                    reject_any_generics(&generics, &path.path, "outer")?;
+                    CallOp::Outer
                 }
                 "relu" => {
                     reject_any_generics(&generics, &path.path, "relu")?;
@@ -565,6 +581,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                         index: values[1],
                     }
                 }
+                "trace" => {
+                    reject_types(&generics, &path.path, "trace")?;
+                    CallOp::Trace(optional_axis_pair(&generics, &path.path, "trace")?)
+                }
                 "transpose" => {
                     reject_any_generics(&generics, &path.path, "transpose")?;
                     CallOp::Transpose
@@ -576,6 +596,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "unsqueeze" => {
                     reject_consts(&generics, &path.path, "unsqueeze")?;
                     CallOp::Unsqueeze(expect_target_type(&generics, &path.path, "unsqueeze")?)
+                }
+                "vecdot" => {
+                    reject_types(&generics, &path.path, "vecdot")?;
+                    CallOp::Vecdot(optional_axis_const(&generics, &path.path, "vecdot")?)
                 }
                 _ => {
                     reject_any_generics(&generics, &path.path, &op_name)?;
@@ -722,12 +746,37 @@ fn optional_axis(
     path: &syn::Path,
     op_name: &str,
 ) -> syn::Result<AxisSpec> {
+    Ok(AxisSpec::from_optional(optional_axis_const(
+        generics, path, op_name,
+    )?))
+}
+
+fn optional_axis_const(
+    generics: &CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+) -> syn::Result<Option<usize>> {
     match generics.consts.as_slice() {
-        [] => Ok(AxisSpec::All),
-        [axis] => Ok(AxisSpec::One(*axis)),
+        [] => Ok(None),
+        [axis] => Ok(Some(*axis)),
         _ => Err(syn::Error::new(
             path.span(),
             format!("{op_name} accepts at most one axis const generic"),
+        )),
+    }
+}
+
+fn optional_axis_pair(
+    generics: &CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+) -> syn::Result<Option<[usize; 2]>> {
+    match generics.consts.as_slice() {
+        [] => Ok(None),
+        [axis0, axis1] => Ok(Some([*axis0, *axis1])),
+        _ => Err(syn::Error::new(
+            path.span(),
+            format!("{op_name} accepts either no axes or exactly two axis const generics"),
         )),
     }
 }

@@ -187,6 +187,15 @@ impl<'a> Lowerer<'a> {
                     let kernel = self.lower_expr(&args[1])?;
                     self.conv2d(input, kernel, options)
                 }
+                CallOp::Diagonal(axes) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.diagonal(input, *axes)
+                }
+                CallOp::Dot => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.dot(lhs, rhs)
+                }
                 CallOp::Exp => {
                     let value = self.lower_expr(&args[0])?;
                     self.emit_unary("math.exp", value)
@@ -238,6 +247,11 @@ impl<'a> Lowerer<'a> {
                     let rhs = self.lower_expr(&args[1])?;
                     self.logical_binary("arith.xori", lhs, rhs)
                 }
+                CallOp::Inner => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.inner(lhs, rhs)
+                }
                 CallOp::Relu => {
                     let value = self.lower_expr(&args[0])?;
                     let zero = self.zero_like(&value.ty)?;
@@ -276,6 +290,11 @@ impl<'a> Lowerer<'a> {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.emit_binary("math.powf", lhs, rhs)
+                }
+                CallOp::Outer => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.outer(lhs, rhs)
                 }
                 CallOp::Permute { target, axes } => {
                     let input = self.lower_expr(&args[0])?;
@@ -330,9 +349,18 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.take(input, *axis, *index)
                 }
+                CallOp::Trace(axes) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.trace(input, *axes)
+                }
                 CallOp::Unsqueeze(ty) => {
                     let input = self.lower_expr(&args[0])?;
                     self.reshape(input, ty)
+                }
+                CallOp::Vecdot(axis) => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.vecdot(lhs, rhs, *axis)
                 }
                 CallOp::Where => {
                     let condition = self.lower_expr(&args[0])?;
