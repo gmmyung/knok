@@ -54,9 +54,10 @@ a minor version bump, such as `0.1.0` to `0.2.0`. Fixes, documentation updates,
 and internal-only changes should use a patch bump, such as `0.1.0` to `0.1.1`.
 After `1.0.0`, use standard semantic versioning.
 
-`main` should stay releasable. Use short topic branches such as
-`codex/add-op` or `name/add-op` for PRs. Release branches are not needed unless
-an already-published line needs an urgent patch.
+`main` should stay releasable and is protected on GitHub. Use short topic
+branches such as `codex/add-op` or `name/add-op` for PRs. Required checks are
+`fmt`, `core`, `no-std`, `docs`, and `host-runtime`. Release branches are not
+needed unless an already-published line needs an urgent patch.
 
 Release tags use `vMAJOR.MINOR.PATCH`. Pushing a valid tag publishes to
 crates.io after CI verifies crate versions, workspace dependency versions, and
