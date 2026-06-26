@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       execute:
@@ -8,6 +11,11 @@ on:
         required: true
         type: boolean
         default: false
+      version:
+        description: Version to validate for manual publish, without leading v
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -20,14 +28,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
+      - if: ${{ github.event_name == 'workflow_dispatch' && inputs.execute && inputs.version == '' }}
+        run: |
+          echo "manual publish requires the version input" >&2
+          exit 2
+      - if: ${{ github.ref_type == 'tag' }}
+        run: nix develop --command scripts/verify-release.sh "${GITHUB_REF_NAME}"
+      - if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
+        run: nix develop --command scripts/verify-release.sh "v${{ inputs.version }}"
       - run: nix develop --command scripts/release-check.sh
-      - if: ${{ !inputs.execute }}
-        run: nix develop --command scripts/publish.sh --dry-run
-      - if: ${{ inputs.execute }}
+      - run: nix develop --command scripts/publish.sh --dry-run
+      - if: ${{ github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.execute) }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: nix develop --command scripts/publish.sh --execute
+        run: |
+          if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+            echo "CARGO_REGISTRY_TOKEN secret is required to publish" >&2
+            exit 2
+          fi
+          nix develop --command scripts/publish.sh --execute
