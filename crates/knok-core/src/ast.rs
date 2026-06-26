@@ -59,7 +59,7 @@ pub enum BinaryOp {
 pub enum CallOp {
     Abs,
     All(Option<usize>),
-    Argmax,
+    Argmax(Option<usize>),
     Any(Option<usize>),
     Clip,
     Concat(usize),

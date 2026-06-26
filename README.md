@@ -233,15 +233,16 @@ They cover the recommended hosted workflow:
   `transpose`, reshape across ranks 1-4, `broadcast`, `squeeze`, `unsqueeze`,
   static `slice`, static `take`, binary `concat`, binary `stack`, full-tensor
   and axis-aware `sum`, full-tensor and axis-aware `mean`, full-tensor and
-  axis-aware `softmax`, rank-1 `argmax`, `exp`, `log`, `sqrt`, `tanh`, and
-  `sigmoid`.
+  axis-aware `softmax`, full-tensor and axis-aware `argmax`, `exp`, `log`,
+  `sqrt`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
-  `mean::<0>(x)`, and `softmax::<1>(logits)`.
-- Floating-point classifier/math ops (`relu`, `mean`, `softmax`, `argmax`,
+  `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
+- Floating-point classifier/math ops (`relu`, `mean`, `softmax`,
   `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a floating-point
   element type. Backend support for `f16`/`bf16` math can vary. Integer tensors
   support arithmetic, `abs`, `minimum`, `maximum`, `clip`, reshape/broadcast,
-  sum, matmul, and conv lowering where IREE accepts the resulting MLIR.
+  sum, `argmax`, matmul, and conv lowering where IREE accepts the resulting
+  MLIR.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
 - The compiler, MLIR lowering, and hosted runtime wrappers support real bool
@@ -254,8 +255,9 @@ They cover the recommended hosted workflow:
 - `softmax(x)` normalizes over the whole tensor using max-subtracted
   exponentials; `softmax::<AXIS>(x)` normalizes over one axis using
   `linalg.softmax`.
-  `argmax` currently returns the rank-1 index in the same floating-point element
-  type as its input.
+- `argmax(x)` accepts numeric tensors and returns the row-major flattened index
+  as `Tensor1<i64, 1>`. `argmax::<AXIS>(x)` returns per-slice indices along the
+  reduced axis.
 
 ## Dtype support
 

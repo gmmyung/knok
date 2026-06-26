@@ -291,12 +291,83 @@ fn infers_scalar_classifier_op_shapes() {
     assert_eq!(mean.body[0].ty, tensor(&[1]));
 
     let argmax = parse(parse_quote! {
-        fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+        fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
             argmax(x)
         }
     })
     .unwrap();
-    assert_eq!(argmax.body[0].ty, tensor(&[1]));
+    assert_eq!(
+        argmax.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![1]
+        }
+    );
+
+    let integer_argmax = parse(parse_quote! {
+        fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
+            argmax(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(integer_argmax.body[0].ty, argmax.body[0].ty);
+
+    let matrix_argmax = parse(parse_quote! {
+        fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 1> {
+            argmax(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        matrix_argmax.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![1]
+        }
+    );
+
+    let axis_argmax = parse(parse_quote! {
+        fn argmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
+            argmax::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        axis_argmax.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![2]
+        }
+    );
+}
+
+#[test]
+fn rejects_empty_argmax_reductions() {
+    let empty_tensor = parse(parse_quote! {
+        fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor1<i64, 1> {
+            argmax(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_tensor
+            .to_string()
+            .contains("argmax cannot reduce empty tensor shape [0]"),
+        "{empty_tensor}"
+    );
+
+    let empty_axis = parse(parse_quote! {
+        fn argmax_empty_axis(x: Tensor2<f32, 2, 0>) -> Tensor1<i64, 2> {
+            argmax::<1>(x)
+        }
+    })
+    .unwrap_err();
+    assert!(
+        empty_axis
+            .to_string()
+            .contains("argmax cannot reduce empty axis 1 for tensor shape [2, 0]"),
+        "{empty_axis}"
+    );
 }
 
 #[test]

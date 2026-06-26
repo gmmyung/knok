@@ -7,7 +7,7 @@ fn classifier_head(logits: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
-fn predicted_class(logits: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+fn predicted_class(logits: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
     argmax(logits)
 }
 
@@ -22,7 +22,7 @@ fn main() -> knok::Result<()> {
         &probabilities.into_vec(),
         &[0.032058604, 0.08714432, 0.23688284, 0.6439143],
     );
-    assert_eq!(class.into_vec(), vec![3.0]);
+    assert_eq!(class.into_vec(), vec![3i64]);
     Ok(())
 }
 

@@ -251,20 +251,20 @@ fn call_result_type(
             }
             reduction_output_type(&input, *axis)
         }
-        CallOp::Argmax => {
+        CallOp::Argmax(axis) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
-            expect_float(op, input.elem)?;
-            if input.rank() != 1 {
+            expect_numeric_element(input.elem, "argmax")?;
+            if input.rank() == 0 {
                 return Err(syn::Error::new(
                     Span::call_site(),
-                    "argmax currently supports rank-1 tensors only",
+                    "argmax expects a tensor input",
                 ));
             }
-            Ok(TensorType {
-                elem: input.elem,
-                shape: vec![1],
-            })
+            expect_non_empty_argmax_reduction(&input, *axis)?;
+            let mut output = reduction_output_type(&input, *axis)?;
+            output.elem = ElementType::I64;
+            Ok(output)
         }
         CallOp::Exp
         | CallOp::IsNan
@@ -844,6 +844,31 @@ fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result
         elem: input.elem,
         shape,
     })
+}
+
+fn expect_non_empty_argmax_reduction(input: &TensorType, axis: Option<usize>) -> syn::Result<()> {
+    match axis {
+        Some(axis) => {
+            expect_axis(input, axis)?;
+            if input.shape[axis] == 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "argmax cannot reduce empty axis {axis} for tensor shape {:?}",
+                        input.shape
+                    ),
+                ));
+            }
+        }
+        None if element_count(input) == 0 => {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!("argmax cannot reduce empty tensor shape {:?}", input.shape),
+            ));
+        }
+        None => {}
+    }
+    Ok(())
 }
 
 fn expect_axis(input: &TensorType, axis: usize) -> syn::Result<()> {

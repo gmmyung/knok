@@ -135,9 +135,9 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.all(input, *axis)
                 }
-                CallOp::Argmax => {
+                CallOp::Argmax(axis) => {
                     let input = self.lower_expr(&args[0])?;
-                    self.argmax(input)
+                    self.argmax(input, *axis)
                 }
                 CallOp::Any(axis) => {
                     let input = self.lower_expr(&args[0])?;
