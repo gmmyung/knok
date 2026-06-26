@@ -1,9 +1,8 @@
 use knok::prelude::*;
 
 #[knok::graph(backend = Backend::LlvmCpu)]
-fn bad_transpose(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+fn bad_transpose(x: Tensor3<f32, 2, 3, 4>) -> Tensor3<f32, 2, 3, 4> {
     transpose(x)
 }
 
 fn main() {}
-

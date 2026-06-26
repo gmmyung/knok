@@ -1,4 +1,4 @@
-error: transpose currently supports rank-2 tensors only
+error: return type mismatch: inferred [TensorType { elem: F32, shape: [4, 3, 2] }], declared [TensorType { elem: F32, shape: [2, 3, 4] }]
  --> tests/ui/transpose_rank.rs:3:1
   |
 3 | #[knok::graph(backend = Backend::LlvmCpu)]

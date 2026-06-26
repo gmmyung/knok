@@ -339,6 +339,165 @@ fn parses_higher_rank_tensors_and_infers_inference_ops() {
 }
 
 #[test]
+fn infers_numpy_style_rank_parity_ops_through_rank6() {
+    let bool_tensor = |shape: &[usize]| TensorType {
+        elem: ElementType::Bool,
+        shape: shape.to_vec(),
+    };
+    let i64_tensor = |shape: &[usize]| TensorType {
+        elem: ElementType::I64,
+        shape: shape.to_vec(),
+    };
+
+    for item in [
+        parse_quote! {
+            fn unary_rank6(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                sigmoid(tanh(sqrt(exp(log(abs(x))))))
+            }
+        },
+        parse_quote! {
+            fn binary_rank6(
+                x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+                y: Tensor1<f32, 3>,
+            ) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                clip(pow(maximum(minimum(x + y, x * y), x - y), 2.0), 0.0, 100.0)
+            }
+        },
+        parse_quote! {
+            fn predicate_rank6(
+                x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+                y: Tensor1<f32, 3>,
+            ) -> Tensor6<bool, 1, 1, 1, 1, 2, 3> {
+                logical_or(logical_and(greater_equal(x, y), less(x, 10.0)), isnan(x))
+            }
+        },
+        parse_quote! {
+            fn where_rank6(
+                x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+                y: Tensor1<f32, 3>,
+            ) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                r#where(not_equal(x, 0.0), x, y)
+            }
+        },
+        parse_quote! {
+            fn broadcast_rank6(x: Tensor1<f32, 3>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                broadcast::<Tensor6<f32, 1, 1, 1, 1, 2, 3>>(x)
+            }
+        },
+        parse_quote! {
+            fn reshape_rank6(x: Tensor1<f32, 6>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                reshape::<Tensor6<f32, 1, 1, 1, 1, 2, 3>>(x)
+            }
+        },
+        parse_quote! {
+            fn slice_rank6(x: Tensor6<f32, 1, 1, 1, 1, 2, 4>) -> Tensor6<f32, 1, 1, 1, 1, 1, 2> {
+                slice::<Tensor6<f32, 1, 1, 1, 1, 1, 2>, 0, 0, 0, 0, 1, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn squeeze_rank6(x: Tensor6<f32, 1, 2, 1, 3, 1, 4>) -> Tensor3<f32, 2, 3, 4> {
+                squeeze::<Tensor3<f32, 2, 3, 4>>(x)
+            }
+        },
+        parse_quote! {
+            fn unsqueeze_rank6(x: Tensor3<f32, 2, 3, 4>) -> Tensor6<f32, 1, 2, 1, 3, 1, 4> {
+                unsqueeze::<Tensor6<f32, 1, 2, 1, 3, 1, 4>>(x)
+            }
+        },
+        parse_quote! {
+            fn take_rank6(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+                take::<5, 1>(x)
+            }
+        },
+        parse_quote! {
+            fn concat_rank6(
+                x: Tensor6<f32, 1, 1, 1, 1, 2, 1>,
+                y: Tensor6<f32, 1, 1, 1, 1, 2, 2>,
+            ) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                concat::<5>(x, y)
+            }
+        },
+        parse_quote! {
+            fn stack_rank6(
+                x: Tensor5<f32, 1, 1, 1, 2, 3>,
+                y: Tensor5<f32, 1, 1, 1, 2, 3>,
+            ) -> Tensor6<f32, 1, 1, 1, 2, 2, 3> {
+                stack::<4>(x, y)
+            }
+        },
+        parse_quote! {
+            fn transpose_rank6(x: Tensor6<f32, 1, 2, 1, 3, 2, 4>) -> Tensor6<f32, 4, 2, 3, 1, 2, 1> {
+                transpose(x)
+            }
+        },
+        parse_quote! {
+            fn permute_rank6(x: Tensor6<f32, 1, 2, 1, 3, 2, 4>) -> Tensor6<f32, 1, 3, 2, 2, 4, 1> {
+                permute::<Tensor6<f32, 1, 3, 2, 2, 4, 1>, 0, 3, 4, 1, 5, 2>(x)
+            }
+        },
+        parse_quote! {
+            fn matmul_rank6(
+                x: Tensor6<f32, 1, 2, 1, 3, 2, 3>,
+                y: Tensor5<f32, 2, 1, 3, 3, 4>,
+            ) -> Tensor6<f32, 1, 2, 1, 3, 2, 4> {
+                matmul(x, y)
+            }
+        },
+    ] {
+        let graph = parse(item).unwrap();
+        assert_eq!(graph.body[0].ty, graph.outputs[0]);
+    }
+
+    let sum_axis = parse(parse_quote! {
+        fn sum_rank6_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+            sum::<5>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(sum_axis.body[0].ty, tensor(&[1, 1, 1, 1, 2]));
+
+    let mean_all = parse(parse_quote! {
+        fn mean_rank6(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor0<f32> {
+            mean(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(mean_all.body[0].ty, tensor(&[]));
+
+    let softmax_axis = parse(parse_quote! {
+        fn softmax_rank6_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+            softmax::<5>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(softmax_axis.body[0].ty, tensor(&[1, 1, 1, 1, 2, 3]));
+
+    let argmax_axis = parse(parse_quote! {
+        fn argmax_rank6_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+            argmax::<5>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(argmax_axis.body[0].ty, i64_tensor(&[1, 1, 1, 1, 2]));
+
+    let any_axis = parse(parse_quote! {
+        fn any_rank6_axis5(x: Tensor6<bool, 1, 1, 1, 1, 2, 3>) -> Tensor5<bool, 1, 1, 1, 1, 2> {
+            any::<5>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(any_axis.body[0].ty, bool_tensor(&[1, 1, 1, 1, 2]));
+
+    let all_all = parse(parse_quote! {
+        fn all_rank6(x: Tensor6<bool, 1, 1, 1, 1, 2, 3>) -> Tensor0<bool> {
+            all(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(all_all.body[0].ty, bool_tensor(&[]));
+}
+
+#[test]
 fn rejects_invalid_grouped_conv2d_channels() {
     let error = parse(parse_quote! {
         fn conv(x: Tensor4<f32, 1, 3, 3, 4>, k: Tensor4<f32, 2, 2, 4, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
