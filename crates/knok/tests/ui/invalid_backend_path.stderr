@@ -1,8 +1,8 @@
 error: unsupported backend path; expected Backend::LlvmCpu or Backend::MetalSpirv
  --> tests/ui/invalid_backend_path.rs:4:13
   |
-4 |     backend(RuntimeConfig::LlvmCpu),
-  |             ^^^^^^^^^^^^^
+4 |     backend(fake::Backend::LlvmCpu),
+  |             ^^^^
 
 warning: unused import: `knok::prelude::*`
  --> tests/ui/invalid_backend_path.rs:1:5

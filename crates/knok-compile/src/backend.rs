@@ -107,13 +107,17 @@ impl std::fmt::Display for IreeDriver {
 }
 
 fn typed_path_variant(path: &syn::Path, type_name: &str) -> Option<String> {
-    let mut segments = path.segments.iter().rev();
-    let variant = segments.next()?;
-    let ty = segments.next()?;
-    if ty.ident == type_name {
-        Some(variant.ident.to_string())
-    } else {
-        None
+    let segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [ty, variant] if ty == type_name => Some(variant.clone()),
+        [crate_name, ty, variant] if crate_name == "knok" && ty == type_name => {
+            Some(variant.clone())
+        }
+        _ => None,
     }
 }
 
