@@ -396,8 +396,8 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::All(optional_axis(&generics, &path.path, "all")?)
                 }
                 "argmax" => {
-                    reject_any_generics(&generics, &path.path, "argmax")?;
-                    CallOp::Argmax
+                    reject_target_type(&generics, &path.path, "argmax")?;
+                    CallOp::Argmax(optional_axis(&generics, &path.path, "argmax")?)
                 }
                 "any" => {
                     reject_target_type(&generics, &path.path, "any")?;

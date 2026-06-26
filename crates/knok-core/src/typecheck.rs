@@ -251,20 +251,19 @@ fn call_result_type(
             }
             reduction_output_type(&input, *axis)
         }
-        CallOp::Argmax => {
+        CallOp::Argmax(axis) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             expect_numeric_element(input.elem, "argmax")?;
-            if input.rank() != 1 {
+            if input.rank() == 0 {
                 return Err(syn::Error::new(
                     Span::call_site(),
-                    "argmax currently supports rank-1 tensors only",
+                    "argmax expects a tensor input",
                 ));
             }
-            Ok(TensorType {
-                elem: ElementType::I64,
-                shape: vec![1],
-            })
+            let mut output = reduction_output_type(&input, *axis)?;
+            output.elem = ElementType::I64;
+            Ok(output)
         }
         CallOp::Exp
         | CallOp::IsNan

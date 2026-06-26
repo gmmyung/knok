@@ -273,6 +273,16 @@ fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
 }
 
 #[knok::graph(backend = "llvm-cpu")]
+fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 1> {
+    argmax(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
+fn argmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
+    argmax::<1>(x)
+}
+
+#[knok::graph(backend = "llvm-cpu")]
 fn batch_mm(x: Tensor3<f32, 1, 2, 3>, y: Tensor3<f32, 1, 3, 2>) -> Tensor3<f32, 1, 2, 2> {
     matmul(x, y)
 }
@@ -859,6 +869,14 @@ fn reduction_and_classifier_op_graphs_run() {
 
     let integer_argmax_output = argmax4_i32(Tensor1::from_array([1i32, 10, 3, 4])).unwrap();
     assert_eq!(integer_argmax_output.into_vec(), vec![1i64]);
+
+    let argmax_full_output =
+        argmax2x3(Tensor2::from_array([[1.0, 9.0, 3.0], [7.0, 2.0, 8.0]])).unwrap();
+    assert_eq!(argmax_full_output.into_vec(), vec![1i64]);
+
+    let argmax_axis_output =
+        argmax2x3_axis1(Tensor2::from_array([[1.0, 9.0, 3.0], [7.0, 2.0, 8.0]])).unwrap();
+    assert_eq!(argmax_axis_output.into_vec(), vec![1i64, 2i64]);
 }
 
 #[test]

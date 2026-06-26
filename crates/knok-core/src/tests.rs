@@ -311,6 +311,34 @@ fn infers_scalar_classifier_op_shapes() {
     })
     .unwrap();
     assert_eq!(integer_argmax.body[0].ty, argmax.body[0].ty);
+
+    let matrix_argmax = parse(parse_quote! {
+        fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 1> {
+            argmax(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        matrix_argmax.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![1]
+        }
+    );
+
+    let axis_argmax = parse(parse_quote! {
+        fn argmax2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
+            argmax::<1>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        axis_argmax.body[0].ty,
+        TensorType {
+            elem: ElementType::I64,
+            shape: vec![2]
+        }
+    );
 }
 
 #[test]
