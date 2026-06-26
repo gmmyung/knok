@@ -33,13 +33,33 @@ fn tensor4_from_array_and_vec_share_row_major_layout() {
 }
 
 #[test]
+fn tensor5_from_array_and_vec_share_row_major_layout() {
+    let from_array = Tensor5::from_array([[[[[1.0], [2.0]], [[3.0], [4.0]]]]]);
+    let from_vec = Tensor5::<f32, 1, 1, 2, 2, 1>::from_vec(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+
+    assert_eq!(Tensor5::<f32, 1, 1, 2, 2, 1>::SHAPE, &[1, 1, 2, 2, 1]);
+    assert_eq!(from_array.as_slice(), from_vec.as_slice());
+    assert_eq!(from_array.into_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn tensor6_from_array_and_vec_share_row_major_layout() {
+    let from_array = Tensor6::from_array([[[[[[1.0, 2.0], [3.0, 4.0]]]]]]);
+    let from_vec = Tensor6::<f32, 1, 1, 1, 1, 2, 2>::from_vec(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+
+    assert_eq!(Tensor6::<f32, 1, 1, 1, 1, 2, 2>::SHAPE, &[1, 1, 1, 1, 2, 2]);
+    assert_eq!(from_array.as_slice(), from_vec.as_slice());
+    assert_eq!(from_array.into_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
 fn higher_rank_tensor_from_vec_validates_element_count() {
-    let error = Tensor4::<f32, 1, 2, 2, 1>::from_vec(vec![1.0, 2.0, 3.0]).unwrap_err();
+    let error = Tensor6::<f32, 1, 1, 1, 2, 2, 1>::from_vec(vec![1.0, 2.0, 3.0]).unwrap_err();
 
     assert!(matches!(
         error,
         Error::Shape {
-            expected: &[1, 2, 2, 1],
+            expected: &[1, 1, 1, 2, 2, 1],
             ..
         }
     ));
@@ -73,6 +93,12 @@ fn tensor_convenience_constructors_work() {
 
     let filled = Tensor4::<i32, 1, 1, 2, 2>::filled(7);
     assert_eq!(filled.into_vec(), vec![7, 7, 7, 7]);
+
+    let tensor5_ones = Tensor5::<i32, 1, 1, 1, 2, 2>::ones();
+    assert_eq!(tensor5_ones.as_slice(), &[1, 1, 1, 1]);
+
+    let tensor6_zeros = Tensor6::<i64, 1, 1, 1, 1, 2, 2>::zeros();
+    assert_eq!(tensor6_zeros.as_slice(), &[0, 0, 0, 0]);
 }
 
 #[cfg(feature = "half")]
@@ -93,12 +119,12 @@ fn half_tensor_convenience_constructors_work() {
 
 #[test]
 fn tensor_try_from_vec_and_indexing_work() {
-    let mut tensor = Tensor3::<f32, 1, 2, 2>::try_from(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+    let mut tensor = Tensor6::<f32, 1, 1, 1, 1, 2, 2>::try_from(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
 
-    assert_eq!(tensor.get(0, 1, 0), Some(&3.0));
-    assert_eq!(tensor.get(1, 0, 0), None);
+    assert_eq!(tensor.get(0, 0, 0, 0, 1, 0), Some(&3.0));
+    assert_eq!(tensor.get(0, 0, 0, 0, 2, 0), None);
 
-    *tensor.get_mut(0, 1, 1).unwrap() = 9.0;
+    *tensor.get_mut(0, 0, 0, 0, 1, 1).unwrap() = 9.0;
     assert_eq!(tensor.as_slice(), &[1.0, 2.0, 3.0, 9.0]);
 
     tensor.as_mut_slice()[0] = 5.0;

@@ -3,6 +3,8 @@ use proc_macro2::Span;
 use crate::typecheck::{broadcast_shape_slices, expect_numeric_element};
 use crate::TensorType;
 
+const MAX_TENSOR_RANK: usize = 6;
+
 pub(crate) fn matmul_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
     if lhs.elem != rhs.elem {
         return Err(syn::Error::new(
@@ -17,10 +19,10 @@ pub(crate) fn matmul_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Res
             "matmul expects operands with rank at least 1",
         ));
     }
-    if lhs.rank() > 4 || rhs.rank() > 4 {
+    if lhs.rank() > MAX_TENSOR_RANK || rhs.rank() > MAX_TENSOR_RANK {
         return Err(syn::Error::new(
             Span::call_site(),
-            "matmul currently supports ranks 1 through 4",
+            "matmul currently supports ranks 1 through 6",
         ));
     }
 
@@ -67,11 +69,11 @@ pub(crate) fn matmul_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Res
         shape.push(rhs.shape[rhs.rank() - 1]);
     }
 
-    if shape.len() > 4 {
+    if shape.len() > MAX_TENSOR_RANK {
         return Err(syn::Error::new(
             Span::call_site(),
             format!(
-                "matmul result rank {} exceeds the current Tensor4 limit",
+                "matmul result rank {} exceeds the current Tensor6 limit",
                 shape.len()
             ),
         ));

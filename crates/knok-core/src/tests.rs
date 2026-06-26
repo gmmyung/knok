@@ -283,6 +283,36 @@ fn parses_higher_rank_tensors_and_infers_inference_ops() {
     .unwrap();
     assert_eq!(batch_mm.body[0].ty, tensor(&[1, 2, 2]));
 
+    let rank6_broadcast = parse(parse_quote! {
+        fn add_bias6d(
+            x: Tensor6<f32, 1, 2, 1, 2, 1, 3>,
+            bias: Tensor1<f32, 3>,
+        ) -> Tensor6<f32, 1, 2, 1, 2, 1, 3> {
+            x + bias
+        }
+    })
+    .unwrap();
+    assert_eq!(rank6_broadcast.body[0].ty, tensor(&[1, 2, 1, 2, 1, 3]));
+
+    let rank6_sum = parse(parse_quote! {
+        fn sum_axis5(x: Tensor6<f32, 1, 2, 1, 2, 1, 3>) -> Tensor5<f32, 1, 2, 1, 2, 1> {
+            sum::<5>(x)
+        }
+    })
+    .unwrap();
+    assert_eq!(rank6_sum.body[0].ty, tensor(&[1, 2, 1, 2, 1]));
+
+    let rank6_batch_mm = parse(parse_quote! {
+        fn batch_mm6d(
+            x: Tensor6<f32, 2, 1, 1, 3, 2, 3>,
+            y: Tensor5<f32, 1, 3, 3, 3, 2>,
+        ) -> Tensor6<f32, 2, 1, 3, 3, 2, 2> {
+            matmul(x, y)
+        }
+    })
+    .unwrap();
+    assert_eq!(rank6_batch_mm.body[0].ty, tensor(&[2, 1, 3, 3, 2, 2]));
+
     let conv = parse(parse_quote! {
             fn conv(x: Tensor4<f32, 1, 4, 4, 3>, k: Tensor4<f32, 3, 3, 3, 8>) -> Tensor4<f32, 1, 2, 2, 8> {
                 conv2d(x, k)

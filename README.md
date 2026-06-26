@@ -118,7 +118,7 @@ fn model(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 
 Recursive graph calls are rejected.
 
-`Tensor0<T>` through `Tensor4<T, D0, ...>` are used because stable Rust does
+`Tensor0<T>` through `Tensor6<T, D0, ...>` are used because stable Rust does
 not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 They expose `from_array`, `from_vec`, `TryFrom<Vec<_>>`, `zeros`, `ones`,
 `filled`, `as_slice`, `as_mut_slice`, `into_vec`, and checked indexing helpers.
@@ -223,7 +223,7 @@ They cover the recommended hosted workflow:
   have matching element types; mixed dtype promotion is not implemented.
 - Quantized integer types, complex numbers, and string/object-like values are
   not implemented yet.
-- Static rank-0 through rank-4 shapes only.
+- Static rank-0 through rank-6 shapes only.
 - Host tensors are contiguous row-major value containers. Graph operations are
   value operations, not NumPy-style host views.
 - Explicit `backend = Backend::LlvmCpu` or `backend = Backend::MetalSpirv`, or
@@ -233,10 +233,10 @@ They cover the recommended hosted workflow:
   broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
-  `pow`, `relu`, NumPy-style `matmul` for ranks 1-4, NHWC/HWCF `conv2d` with
+  `pow`, `relu`, NumPy-style `matmul` for ranks 1-6, NHWC/HWCF `conv2d` with
   static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
   `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
-  `permute::<Target, AXES...>`, reshape across ranks 0-4, `broadcast`,
+  `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
   `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
   binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
   `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
