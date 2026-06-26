@@ -314,6 +314,15 @@ scripts/publish.sh --dry-run
 scripts/publish.sh --execute
 ```
 
+Additional project documents:
+
+| Document | Purpose |
+| --- | --- |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, PR expectations, validation commands, branch naming, and versioning policy. |
+| [DEVELOPERS.md](DEVELOPERS.md) | Crate layout, compile/runtime flow, release flow, and platform notes. |
+| [AGENTS.md](AGENTS.md) | Rules for Codex and other automated agents working in this repository. |
+| [CHANGELOG.md](CHANGELOG.md) | User-facing changes and release notes. |
+
 ## Benchmarks
 
 Runtime and tensor benchmarks use Criterion:
