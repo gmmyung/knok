@@ -22,6 +22,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Changed
 
+- Changed `GraphArtifact` metadata from shape-only fields to typed
+  `input_descs` and `output_descs`, and exported `DType` and `TensorDesc`.
 - Replaced string backend and driver macro attributes with typed `Backend` and
   `Driver` paths.
 - Changed `transpose` to match NumPy's default rank-N axis reversal instead of
