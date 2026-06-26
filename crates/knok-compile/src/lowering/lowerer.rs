@@ -29,6 +29,41 @@ pub(super) struct Lowerer<'a> {
 pub(super) struct Value {
     pub(super) name: String,
     pub(super) ty: TensorType,
+    pub(super) kind: ValueKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValueKind {
+    Scalar,
+    Tensor,
+}
+
+impl Value {
+    pub(super) fn scalar(name: String, elem: knok_core::ElementType) -> Self {
+        Self {
+            name,
+            ty: TensorType {
+                elem,
+                shape: Vec::new(),
+            },
+            kind: ValueKind::Scalar,
+        }
+    }
+
+    pub(super) fn tensor(name: String, ty: TensorType) -> Self {
+        Self {
+            name,
+            ty,
+            kind: ValueKind::Tensor,
+        }
+    }
+
+    pub(super) fn mlir_type(&self) -> String {
+        match self.kind {
+            ValueKind::Scalar => self.ty.elem.mlir_type().to_string(),
+            ValueKind::Tensor => self.ty.mlir_type(),
+        }
+    }
 }
 
 impl<'a> Lowerer<'a> {
@@ -52,10 +87,7 @@ impl<'a> Lowerer<'a> {
             .map(|(index, input)| {
                 self.values.insert(
                     input.name.clone(),
-                    Value {
-                        name: format!("%arg{index}"),
-                        ty: input.ty.clone(),
-                    },
+                    Value::tensor(format!("%arg{index}"), input.ty.clone()),
                 );
                 format!("%arg{index}: {}", input.ty.mlir_type())
             })
@@ -65,12 +97,7 @@ impl<'a> Lowerer<'a> {
             let values = self.lower_let_values(&binding.value.kind)?;
             self.bind_values(&binding.names, values, None)?;
         }
-        let body = self
-            .graph
-            .body
-            .iter()
-            .map(|expr| self.lower_expr(&expr.kind))
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        let body = self.lower_body_outputs(&self.graph.body, &self.graph.outputs)?;
         let return_values = body
             .iter()
             .map(|value| value.name.as_str())
@@ -155,10 +182,10 @@ impl<'a> Lowerer<'a> {
                     let rhs = self.lower_expr(&args[1])?;
                     self.concat(lhs, rhs, *axis)
                 }
-                CallOp::Conv2d => {
+                CallOp::Conv2d(options) => {
                     let input = self.lower_expr(&args[0])?;
                     let kernel = self.lower_expr(&args[1])?;
-                    self.conv2d(input, kernel)
+                    self.conv2d(input, kernel, options)
                 }
                 CallOp::Exp => {
                     let value = self.lower_expr(&args[0])?;
@@ -249,6 +276,10 @@ impl<'a> Lowerer<'a> {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.emit_binary("math.powf", lhs, rhs)
+                }
+                CallOp::Permute { target, axes } => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.permute(input, target, axes)
                 }
                 CallOp::Sigmoid => {
                     let value = self.lower_expr(&args[0])?;
@@ -403,11 +434,7 @@ impl<'a> Lowerer<'a> {
                 let values = self.lower_let_values(&binding.value.kind)?;
                 self.bind_values(&binding.names, values, Some(&mut overwritten))?;
             }
-            graph
-                .body
-                .iter()
-                .map(|expr| self.lower_expr(&expr.kind))
-                .collect()
+            self.lower_body_outputs(&graph.body, &graph.outputs)
         })();
 
         for (name, old_value) in overwritten.into_iter().rev() {
@@ -425,5 +452,44 @@ impl<'a> Lowerer<'a> {
         let name = format!("%{}", self.next_value);
         self.next_value += 1;
         name
+    }
+
+    fn lower_body_outputs(
+        &mut self,
+        body: &[knok_core::TypedExpr],
+        outputs: &[TensorType],
+    ) -> anyhow::Result<Vec<Value>> {
+        if body.len() != outputs.len() {
+            anyhow::bail!(
+                "internal error: graph body has {} values but signature has {} outputs",
+                body.len(),
+                outputs.len()
+            );
+        }
+        body.iter()
+            .zip(outputs)
+            .map(|(expr, output)| {
+                let value = self.lower_expr(&expr.kind)?;
+                self.output_value(value, output)
+            })
+            .collect()
+    }
+
+    fn output_value(&mut self, value: Value, output: &TensorType) -> anyhow::Result<Value> {
+        if value.ty != *output {
+            anyhow::bail!(
+                "internal error: lowered output type {:?} does not match graph output {:?}",
+                value.ty,
+                output
+            );
+        }
+        match value.kind {
+            ValueKind::Tensor => Ok(value),
+            ValueKind::Scalar if output.rank() == 0 => self.splat(value, output),
+            ValueKind::Scalar => anyhow::bail!(
+                "internal error: scalar SSA value cannot be returned as rank-{} tensor",
+                output.rank()
+            ),
+        }
     }
 }

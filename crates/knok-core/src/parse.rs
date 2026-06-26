@@ -5,8 +5,8 @@ use syn::{
 };
 
 use crate::{
-    type_check, BinaryOp, CallOp, ElementType, Expr, Graph, GraphSignature, Input, Let, TensorType,
-    TypedGraph, UnaryOp,
+    type_check, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
+    Let, TensorType, TypedGraph, UnaryOp,
 };
 
 pub fn parse_graph(attr: proc_macro2::TokenStream, item: ItemFn) -> syn::Result<TypedGraph> {
@@ -140,16 +140,17 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(
             ty.span(),
-            "expected Tensor1, Tensor2, Tensor3, or Tensor4 type",
+            "expected Tensor0, Tensor1, Tensor2, Tensor3, or Tensor4 type",
         ));
     };
     let segment = path.segments.last().ok_or_else(|| {
         syn::Error::new(
             path.span(),
-            "expected Tensor1, Tensor2, Tensor3, or Tensor4 type",
+            "expected Tensor0, Tensor1, Tensor2, Tensor3, or Tensor4 type",
         )
     })?;
     let rank = match segment.ident.to_string().as_str() {
+        "Tensor0" => 0,
         "Tensor1" => 1,
         "Tensor2" => 2,
         "Tensor3" => 3,
@@ -157,7 +158,7 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
         _ => {
             return Err(syn::Error::new(
                 segment.ident.span(),
-                "expected Tensor1<T, D0>, Tensor2<T, D0, D1>, Tensor3<T, D0, D1, D2>, or Tensor4<T, D0, D1, D2, D3>",
+                "expected Tensor0<T>, Tensor1<T, D0>, Tensor2<T, D0, D1>, Tensor3<T, D0, D1, D2>, or Tensor4<T, D0, D1, D2, D3>",
             ));
         }
     };
@@ -412,8 +413,8 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     CallOp::Concat(expect_one_const(&generics, &path.path, "concat")?)
                 }
                 "conv2d" => {
-                    reject_any_generics(&generics, &path.path, "conv2d")?;
-                    CallOp::Conv2d
+                    reject_target_type(&generics, &path.path, "conv2d")?;
+                    CallOp::Conv2d(parse_conv2d_options(&generics, &path.path)?)
                 }
                 "exp" => {
                     reject_any_generics(&generics, &path.path, "exp")?;
@@ -478,6 +479,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "pow" => {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
+                }
+                "permute" => {
+                    let target =
+                        expect_target_type(generics.target_ty.clone(), &path.path, "permute")?;
+                    CallOp::Permute {
+                        target,
+                        axes: generics.consts.clone(),
+                    }
                 }
                 "equal" => {
                     reject_any_generics(&generics, &path.path, "equal")?;
@@ -726,6 +735,27 @@ fn optional_axis(
         _ => Err(syn::Error::new(
             path.span(),
             format!("{op_name} accepts at most one axis const generic"),
+        )),
+    }
+}
+
+fn parse_conv2d_options(generics: &CallGenerics, path: &syn::Path) -> syn::Result<Conv2dOptions> {
+    match generics.consts.as_slice() {
+        [] => Ok(Conv2dOptions::default()),
+        [pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w] => Ok(Conv2dOptions {
+            pad_h: *pad_h,
+            pad_w: *pad_w,
+            stride_h: *stride_h,
+            stride_w: *stride_w,
+            dilation_h: *dilation_h,
+            dilation_w: *dilation_w,
+        }),
+        _ => Err(syn::Error::new(
+            path.span(),
+            format!(
+                "conv2d expects either no const generics or six const generics: PAD_H, PAD_W, STRIDE_H, STRIDE_W, DILATION_H, DILATION_W; got {}",
+                generics.consts.len()
+            ),
         )),
     }
 }

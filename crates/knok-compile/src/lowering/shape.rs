@@ -262,13 +262,9 @@ pub(super) fn reduction_output_shape(
         Some(axis) => {
             let mut shape = input_shape.to_vec();
             shape.remove(axis);
-            if shape.is_empty() {
-                vec![1]
-            } else {
-                shape
-            }
+            shape
         }
-        None => vec![1],
+        None => Vec::new(),
     }
 }
 
@@ -291,16 +287,20 @@ pub(super) fn reduction_output_map(
                 .join(", ");
             format!("({dims})")
         }
-        Some(_) if input_rank == 1 => "(0)".to_string(),
+        Some(_) if input_rank == 1 => "()".to_string(),
         Some(axis) => {
             let dims = (0..input_rank)
                 .filter(|index| *index != axis)
                 .map(|index| format!("d{index}"))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("({dims})")
+            if dims.is_empty() {
+                "()".to_string()
+            } else {
+                format!("({dims})")
+            }
         }
-        None => "(0)".to_string(),
+        None => "()".to_string(),
     }
 }
 

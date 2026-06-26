@@ -63,7 +63,7 @@ pub enum CallOp {
     Any(Option<usize>),
     Clip,
     Concat(usize),
-    Conv2d,
+    Conv2d(Conv2dOptions),
     Equal,
     Exp,
     Greater,
@@ -82,6 +82,10 @@ pub enum CallOp {
     Maximum,
     NotEqual,
     Pow,
+    Permute {
+        target: TensorType,
+        axes: Vec<usize>,
+    },
     Relu,
     Reshape(TensorType),
     Broadcast(TensorType),
@@ -104,6 +108,29 @@ pub enum CallOp {
     Unsqueeze(TensorType),
     Where,
     Graph(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Conv2dOptions {
+    pub pad_h: usize,
+    pub pad_w: usize,
+    pub stride_h: usize,
+    pub stride_w: usize,
+    pub dilation_h: usize,
+    pub dilation_w: usize,
+}
+
+impl Default for Conv2dOptions {
+    fn default() -> Self {
+        Self {
+            pad_h: 0,
+            pad_w: 0,
+            stride_h: 1,
+            stride_w: 1,
+            dilation_h: 1,
+            dilation_w: 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,6 +190,9 @@ impl TensorType {
     }
 
     pub fn mlir_type(&self) -> String {
+        if self.shape.is_empty() {
+            return format!("tensor<{}>", self.elem.mlir_type());
+        }
         let dims = self
             .shape
             .iter()

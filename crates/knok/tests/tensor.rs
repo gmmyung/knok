@@ -2,6 +2,19 @@ use knok::prelude::*;
 use knok::Error;
 
 #[test]
+fn tensor0_stores_one_scalar() {
+    let mut tensor = Tensor0::from_scalar(3.0);
+
+    assert_eq!(Tensor0::<f32>::SHAPE, &[]);
+    assert_eq!(tensor.as_slice(), &[3.0]);
+    assert_eq!(tensor.get(), &3.0);
+
+    *tensor.get_mut() = 4.0;
+    assert_eq!(tensor.into_vec(), vec![4.0]);
+    assert_eq!(Tensor0::from_array([5.0]).into_vec(), vec![5.0]);
+}
+
+#[test]
 fn tensor3_from_array_and_vec_share_row_major_layout() {
     let from_array = Tensor3::from_array([[[1.0, 2.0], [3.0, 4.0]]]);
     let from_vec = Tensor3::<f32, 1, 2, 2>::from_vec(vec![1.0, 2.0, 3.0, 4.0]).unwrap();
@@ -33,9 +46,21 @@ fn higher_rank_tensor_from_vec_validates_element_count() {
 }
 
 #[test]
+fn tensor0_from_vec_validates_single_element() {
+    let tensor = Tensor0::<f32>::from_vec(vec![1.0]).unwrap();
+    assert_eq!(tensor.into_vec(), vec![1.0]);
+
+    let error = Tensor0::<f32>::from_vec(Vec::new()).unwrap_err();
+    assert!(matches!(error, Error::Shape { expected: &[], .. }));
+}
+
+#[test]
 fn tensor_convenience_constructors_work() {
     let zeros = Tensor2::<f32, 2, 2>::zeros();
     assert_eq!(zeros.as_slice(), &[0.0, 0.0, 0.0, 0.0]);
+
+    let scalar_one = Tensor0::<i32>::ones();
+    assert_eq!(scalar_one.into_vec(), vec![1]);
 
     let ones = Tensor3::<f32, 1, 2, 2>::ones();
     assert_eq!(ones.as_slice(), &[1.0, 1.0, 1.0, 1.0]);

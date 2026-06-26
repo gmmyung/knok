@@ -1,8 +1,8 @@
 use proc_macro2::Span;
 
 use crate::{
-    CallOp, ElementType, Expr, Graph, GraphSignature, TensorType, TypedExpr, TypedGraph, TypedLet,
-    TypedValue,
+    CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, TensorType, TypedExpr,
+    TypedGraph, TypedLet, TypedValue,
 };
 
 pub fn type_check(
@@ -367,6 +367,12 @@ fn call_result_type(
             ty.shape.swap(0, 1);
             Ok(ty)
         }
+        CallOp::Permute { target, axes } => {
+            expect_arity(op, args, 1)?;
+            let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
+            validate_permute(&input, target, axes)?;
+            Ok(target.clone())
+        }
         CallOp::Reshape(target) => {
             expect_arity(op, args, 1)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
@@ -457,94 +463,13 @@ fn call_result_type(
             expect_arity(op, args, 2)?;
             let lhs = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
-            if lhs.elem != rhs.elem {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "matmul expects operands with the same element type",
-                ));
-            }
-            expect_numeric_element(lhs.elem, "matmul")?;
-            match (lhs.rank(), rhs.rank()) {
-                (2, 2) => {
-                    if lhs.shape[1] != rhs.shape[0] {
-                        return Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "matmul inner dimensions must match, got {} and {}",
-                                lhs.shape[1], rhs.shape[0]
-                            ),
-                        ));
-                    }
-                    Ok(TensorType {
-                        elem: lhs.elem,
-                        shape: vec![lhs.shape[0], rhs.shape[1]],
-                    })
-                }
-                (3, 3) => {
-                    if lhs.shape[0] != rhs.shape[0] {
-                        return Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "batched matmul batch dimensions must match, got {} and {}",
-                                lhs.shape[0], rhs.shape[0]
-                            ),
-                        ));
-                    }
-                    if lhs.shape[2] != rhs.shape[1] {
-                        return Err(syn::Error::new(
-                            Span::call_site(),
-                            format!(
-                                "batched matmul inner dimensions must match, got {} and {}",
-                                lhs.shape[2], rhs.shape[1]
-                            ),
-                        ));
-                    }
-                    Ok(TensorType {
-                        elem: lhs.elem,
-                        shape: vec![lhs.shape[0], lhs.shape[1], rhs.shape[2]],
-                    })
-                }
-                _ => Err(syn::Error::new(
-                    Span::call_site(),
-                    "matmul expects rank-2 operands or rank-3 batched operands",
-                )),
-            }
+            matmul_result_type(&lhs, &rhs)
         }
-        CallOp::Conv2d => {
+        CallOp::Conv2d(options) => {
             expect_arity(op, args, 2)?;
             let input = type_expr(&args[0], env, graph_signatures, current_graph)?.ty;
             let kernel = type_expr(&args[1], env, graph_signatures, current_graph)?.ty;
-            if input.rank() != 4 || kernel.rank() != 4 || input.elem != kernel.elem {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "conv2d expects NHWC input and HWCF kernel rank-4 tensors with the same element type",
-                ));
-            }
-            expect_numeric_element(input.elem, "conv2d")?;
-            if input.shape[3] != kernel.shape[2] {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    format!(
-                        "conv2d input channels must match kernel channels, got {} and {}",
-                        input.shape[3], kernel.shape[2]
-                    ),
-                ));
-            }
-            if input.shape[1] < kernel.shape[0] || input.shape[2] < kernel.shape[1] {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "conv2d kernel spatial dimensions must fit inside the input",
-                ));
-            }
-            Ok(TensorType {
-                elem: input.elem,
-                shape: vec![
-                    input.shape[0],
-                    input.shape[1] - kernel.shape[0] + 1,
-                    input.shape[2] - kernel.shape[1] + 1,
-                    kernel.shape[3],
-                ],
-            })
+            conv2d_result_type(&input, &kernel, options)
         }
         CallOp::Unsqueeze(target) => {
             expect_arity(op, args, 1)?;
@@ -625,16 +550,205 @@ fn graph_call_output_types(
     Ok(signature.outputs.clone())
 }
 
+fn validate_permute(input: &TensorType, target: &TensorType, axes: &[usize]) -> syn::Result<()> {
+    if input.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "permute input and output element types must match",
+        ));
+    }
+    if axes.len() != input.rank() || target.rank() != input.rank() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "permute expects one axis per input dimension and equal input/output rank, got input rank {}, output rank {}, axes {:?}",
+                input.rank(),
+                target.rank(),
+                axes
+            ),
+        ));
+    }
+    let mut seen = vec![false; input.rank()];
+    for &axis in axes {
+        if axis >= input.rank() || seen[axis] {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "permute axes must be a permutation of 0..{}, got {:?}",
+                    input.rank(),
+                    axes
+                ),
+            ));
+        }
+        seen[axis] = true;
+    }
+    let expected = axes
+        .iter()
+        .map(|axis| input.shape[*axis])
+        .collect::<Vec<_>>();
+    if expected != target.shape {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "permute target shape {:?} does not match input shape {:?} with axes {:?}; expected {:?}",
+                target.shape, input.shape, axes, expected
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn matmul_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
+    if lhs.elem != rhs.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "matmul expects operands with the same element type",
+        ));
+    }
+    expect_numeric_element(lhs.elem, "matmul")?;
+    if lhs.rank() == 0 || rhs.rank() == 0 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "matmul expects operands with rank at least 1",
+        ));
+    }
+    if lhs.rank() > 4 || rhs.rank() > 4 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "matmul currently supports ranks 1 through 4",
+        ));
+    }
+
+    let lhs_is_vector = lhs.rank() == 1;
+    let rhs_is_vector = rhs.rank() == 1;
+    let lhs_k = if lhs_is_vector {
+        lhs.shape[0]
+    } else {
+        lhs.shape[lhs.rank() - 1]
+    };
+    let rhs_k = if rhs_is_vector {
+        rhs.shape[0]
+    } else {
+        rhs.shape[rhs.rank() - 2]
+    };
+    if lhs_k != rhs_k {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("matmul inner dimensions must match, got {lhs_k} and {rhs_k}"),
+        ));
+    }
+
+    let lhs_batch = if lhs.rank() > 2 {
+        &lhs.shape[..lhs.rank() - 2]
+    } else {
+        &[]
+    };
+    let rhs_batch = if rhs.rank() > 2 {
+        &rhs.shape[..rhs.rank() - 2]
+    } else {
+        &[]
+    };
+    let mut shape = broadcast_shape_slices(lhs_batch, rhs_batch).map_err(|message| {
+        syn::Error::new(
+            Span::call_site(),
+            format!("matmul batch dimensions are not broadcastable: {message}"),
+        )
+    })?;
+
+    if !lhs_is_vector {
+        shape.push(lhs.shape[lhs.rank() - 2]);
+    }
+    if !rhs_is_vector {
+        shape.push(rhs.shape[rhs.rank() - 1]);
+    }
+
+    if shape.len() > 4 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "matmul result rank {} exceeds the current Tensor4 limit",
+                shape.len()
+            ),
+        ));
+    }
+
+    Ok(TensorType {
+        elem: lhs.elem,
+        shape,
+    })
+}
+
+fn conv2d_result_type(
+    input: &TensorType,
+    kernel: &TensorType,
+    options: &Conv2dOptions,
+) -> syn::Result<TensorType> {
+    if input.rank() != 4 || kernel.rank() != 4 || input.elem != kernel.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "conv2d expects NHWC input and HWCF kernel rank-4 tensors with the same element type",
+        ));
+    }
+    expect_numeric_element(input.elem, "conv2d")?;
+    if options.stride_h == 0
+        || options.stride_w == 0
+        || options.dilation_h == 0
+        || options.dilation_w == 0
+    {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "conv2d stride and dilation options must be non-zero",
+        ));
+    }
+    if kernel.shape[0] == 0 || kernel.shape[1] == 0 || kernel.shape[2] == 0 || kernel.shape[3] == 0
+    {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "conv2d kernel dimensions must be non-zero",
+        ));
+    }
+    if input.shape[3] != kernel.shape[2] {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "conv2d input channels must match kernel channels, got {} and {}",
+                input.shape[3], kernel.shape[2]
+            ),
+        ));
+    }
+
+    let effective_h = (kernel.shape[0] - 1) * options.dilation_h + 1;
+    let effective_w = (kernel.shape[1] - 1) * options.dilation_w + 1;
+    let padded_h = input.shape[1] + 2 * options.pad_h;
+    let padded_w = input.shape[2] + 2 * options.pad_w;
+    if padded_h < effective_h || padded_w < effective_w {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "conv2d effective kernel spatial dimensions must fit inside the padded input",
+        ));
+    }
+
+    Ok(TensorType {
+        elem: input.elem,
+        shape: vec![
+            input.shape[0],
+            (padded_h - effective_h) / options.stride_h + 1,
+            (padded_w - effective_w) / options.stride_w + 1,
+            kernel.shape[3],
+        ],
+    })
+}
+
 fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
 }
 
-fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {
-    let rank = lhs.rank().max(rhs.rank());
+fn broadcast_shape_slices(lhs: &[usize], rhs: &[usize]) -> Result<Vec<usize>, String> {
+    let rank = lhs.len().max(rhs.len());
     let mut shape = Vec::with_capacity(rank);
     for offset in 0..rank {
-        let lhs_dim = dim_from_trailing(&lhs.shape, rank, offset);
-        let rhs_dim = dim_from_trailing(&rhs.shape, rank, offset);
+        let lhs_dim = dim_from_trailing(lhs, rank, offset);
+        let rhs_dim = dim_from_trailing(rhs, rank, offset);
         let dim = match (lhs_dim, rhs_dim) {
             (Some(lhs_dim), Some(rhs_dim)) if lhs_dim == rhs_dim => lhs_dim,
             (Some(1), Some(rhs_dim)) => rhs_dim,
@@ -643,14 +757,17 @@ fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, Str
             (None, None) => unreachable!("rank is derived from at least one shape"),
             (Some(lhs_dim), Some(rhs_dim)) => {
                 return Err(format!(
-                    "dimension {} differs: {} vs {}",
-                    offset, lhs_dim, rhs_dim
+                    "dimension {offset} differs: {lhs_dim} vs {rhs_dim}"
                 ));
             }
         };
         shape.push(dim);
     }
     Ok(shape)
+}
+
+fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {
+    broadcast_shape_slices(&lhs.shape, &rhs.shape)
 }
 
 fn dim_from_trailing(shape: &[usize], rank: usize, offset: usize) -> Option<usize> {
@@ -707,9 +824,6 @@ fn take_result_type(input: &TensorType, axis: usize, index: usize) -> syn::Resul
     }
     let mut shape = input.shape.clone();
     shape.remove(axis);
-    if shape.is_empty() {
-        shape.push(1);
-    }
     Ok(TensorType {
         elem: input.elem,
         shape,
@@ -729,11 +843,6 @@ fn validate_squeeze(input: &TensorType, target: &TensorType) -> syn::Result<()> 
         .copied()
         .filter(|dim| *dim != 1)
         .collect::<Vec<_>>();
-    let squeezed = if squeezed.is_empty() {
-        vec![1]
-    } else {
-        squeezed
-    };
     if squeezed == target.shape {
         Ok(())
     } else {
@@ -837,13 +946,9 @@ fn reduction_output_type(input: &TensorType, axis: Option<usize>) -> syn::Result
         expect_axis(input, axis)?;
         let mut shape = input.shape.clone();
         shape.remove(axis);
-        if shape.is_empty() {
-            vec![1]
-        } else {
-            shape
-        }
+        shape
     } else {
-        vec![1]
+        Vec::new()
     };
     Ok(TensorType {
         elem: input.elem,

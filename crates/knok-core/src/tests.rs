@@ -160,12 +160,12 @@ fn infers_reshape_broadcast_and_sum_shapes() {
     assert_eq!(broadcast.body[0].ty, tensor(&[4]));
 
     let sum = parse(parse_quote! {
-        fn sum4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+        fn sum4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
             sum(x)
         }
     })
     .unwrap();
-    assert_eq!(sum.body[0].ty, tensor(&[1]));
+    assert_eq!(sum.body[0].ty, tensor(&[]));
 
     let axis_sum = parse(parse_quote! {
         fn sum_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
@@ -325,15 +325,15 @@ fn infers_scalar_classifier_op_shapes() {
     }
 
     let mean = parse(parse_quote! {
-        fn mean4(x: Tensor1<f32, 4>) -> Tensor1<f32, 1> {
+        fn mean4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
             mean(x)
         }
     })
     .unwrap();
-    assert_eq!(mean.body[0].ty, tensor(&[1]));
+    assert_eq!(mean.body[0].ty, tensor(&[]));
 
     let argmax = parse(parse_quote! {
-        fn argmax4(x: Tensor1<f32, 4>) -> Tensor1<i64, 1> {
+        fn argmax4(x: Tensor1<f32, 4>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -342,12 +342,12 @@ fn infers_scalar_classifier_op_shapes() {
         argmax.body[0].ty,
         TensorType {
             elem: ElementType::I64,
-            shape: vec![1]
+            shape: vec![]
         }
     );
 
     let integer_argmax = parse(parse_quote! {
-        fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor1<i64, 1> {
+        fn argmax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -355,7 +355,7 @@ fn infers_scalar_classifier_op_shapes() {
     assert_eq!(integer_argmax.body[0].ty, argmax.body[0].ty);
 
     let matrix_argmax = parse(parse_quote! {
-        fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 1> {
+        fn argmax2x3(x: Tensor2<f32, 2, 3>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -364,7 +364,7 @@ fn infers_scalar_classifier_op_shapes() {
         matrix_argmax.body[0].ty,
         TensorType {
             elem: ElementType::I64,
-            shape: vec![1]
+            shape: vec![]
         }
     );
 
@@ -386,7 +386,7 @@ fn infers_scalar_classifier_op_shapes() {
 #[test]
 fn rejects_empty_non_identity_reductions() {
     let empty_tensor = parse(parse_quote! {
-        fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor1<i64, 1> {
+        fn argmax_empty(x: Tensor1<f32, 0>) -> Tensor0<i64> {
             argmax(x)
         }
     })
@@ -539,7 +539,7 @@ fn infers_bool_predicate_selection_and_reduction_shapes() {
             }
         },
         parse_quote! {
-            fn all4(x: Tensor1<bool, 4>) -> Tensor1<bool, 1> {
+            fn all4(x: Tensor1<bool, 4>) -> Tensor0<bool> {
                 all(x)
             }
         },

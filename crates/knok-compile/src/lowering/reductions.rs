@@ -57,7 +57,7 @@ impl Lowerer<'_> {
             input.ty.mlir_type(),
             input.ty.mlir_type()
         ));
-        Ok(Value { name, ty: input.ty })
+        Ok(Value::tensor(name, input.ty))
     }
 
     pub(super) fn sigmoid(&mut self, input: Value) -> anyhow::Result<Value> {
@@ -193,6 +193,7 @@ impl Lowerer<'_> {
         Ok(Value {
             name: format!("{result}#0"),
             ty: index_ty,
+            kind: super::lowerer::ValueKind::Tensor,
         })
     }
 
@@ -310,7 +311,7 @@ impl Lowerer<'_> {
             ty.elem.mlir_type()
         ));
         self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value { name, ty })
+        Ok(Value::tensor(name, ty))
     }
 
     fn fill_tensor(&mut self, ty: &TensorType, value: &str, elem: ElementType) -> String {
