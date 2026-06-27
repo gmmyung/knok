@@ -467,6 +467,18 @@ fn infers_numpy_style_rank_parity_ops_through_rank6() {
             }
         },
         parse_quote! {
+            fn elementwise_math_rank0(x: Tensor0<f32>) -> Tensor0<f32> {
+                rint(round(ceil(floor(tan(cos(sin(exp2(expm1(log2(log10(log1p(square(reciprocal(x))))))))))))))
+            }
+        },
+        parse_quote! {
+            fn elementwise_math_rank6(
+                x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+            ) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                rint(round(ceil(floor(tan(cos(sin(exp2(expm1(log2(log10(log1p(square(reciprocal(x))))))))))))))
+            }
+        },
+        parse_quote! {
             fn binary_rank6(
                 x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
                 y: Tensor1<f32, 3>,

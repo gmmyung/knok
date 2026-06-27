@@ -38,12 +38,24 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             output.elem = ElementType::I64;
             Ok(output)
         }
-        CallOp::Exp
+        CallOp::Ceil
+        | CallOp::Cos
+        | CallOp::Exp
+        | CallOp::Exp2
+        | CallOp::ExpM1
+        | CallOp::Floor
         | CallOp::IsNan
         | CallOp::Log
+        | CallOp::Log1P
+        | CallOp::Log2
+        | CallOp::Log10
         | CallOp::Relu
+        | CallOp::Rint
+        | CallOp::Round
         | CallOp::Sigmoid
+        | CallOp::Sin
         | CallOp::Sqrt
+        | CallOp::Tan
         | CallOp::Tanh => {
             expect_arity(op, args, 1)?;
             let ty = args[0].clone();
@@ -56,6 +68,12 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             } else {
                 Ok(ty)
             }
+        }
+        CallOp::Reciprocal | CallOp::Square => {
+            expect_arity(op, args, 1)?;
+            let ty = args[0].clone();
+            expect_numeric_element(ty.elem, "elementwise math ops")?;
+            Ok(ty)
         }
         CallOp::Greater | CallOp::GreaterEqual | CallOp::Less | CallOp::LessEqual => {
             expect_arity(op, args, 2)?;

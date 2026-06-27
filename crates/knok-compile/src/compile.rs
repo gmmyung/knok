@@ -222,3 +222,33 @@ fn iree_compile_version(iree_compile: &str) -> String {
         Err(error) => format!("unavailable:{error}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use knok_core::parse_graph;
+    use quote::quote;
+    use syn::parse_quote;
+
+    use crate::lowering::lower_to_mlir;
+
+    use super::verify_with_melior;
+
+    #[test]
+    fn expm1_lowering_uses_direct_math_op() {
+        let graph = parse_graph(
+            quote!(backend = Backend::LlvmCpu),
+            parse_quote! {
+                fn expm1_graph(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                    expm1(x)
+                }
+            },
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert!(mlir.contains("math.expm1"), "{mlir}");
+        assert!(!mlir.contains(" = math.exp "), "{mlir}");
+        assert!(!mlir.contains("arith.subf"), "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+}
