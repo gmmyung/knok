@@ -79,6 +79,10 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 2)?;
             comparison_result_type(&args[0], &args[1])
         }
+        CallOp::Gather { target, axis } => {
+            expect_arity(op, args, 2)?;
+            gather_result_type(&args[0], &args[1], target, *axis)
+        }
         CallOp::Equal | CallOp::NotEqual => {
             expect_arity(op, args, 2)?;
             equality_result_type(&args[0], &args[1])
@@ -246,6 +250,10 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
         CallOp::Take { axis, index } => {
             expect_arity(op, args, 1)?;
             take_result_type(&args[0], *axis, *index)
+        }
+        CallOp::TakeAlongAxis { axis } => {
+            expect_arity(op, args, 2)?;
+            take_along_axis_result_type(&args[0], &args[1], *axis)
         }
         CallOp::Matmul => {
             expect_arity(op, args, 2)?;
@@ -494,6 +502,70 @@ fn take_result_type(input: &TensorType, axis: usize, index: usize) -> syn::Resul
     })
 }
 
+fn gather_result_type(
+    input: &TensorType,
+    indices: &TensorType,
+    target: &TensorType,
+    axis: usize,
+) -> syn::Result<TensorType> {
+    expect_axis(input, axis)?;
+    expect_index_element(indices.elem, "gather indices")?;
+    if input.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "gather input and output element types must match",
+        ));
+    }
+    let mut shape = Vec::with_capacity(input.rank() + indices.rank().saturating_sub(1));
+    shape.extend_from_slice(&input.shape[..axis]);
+    shape.extend_from_slice(&indices.shape);
+    shape.extend_from_slice(&input.shape[axis + 1..]);
+    if shape != target.shape {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "gather output shape must be input prefix + index shape + input suffix, got target {:?}, expected {:?}",
+                target.shape, shape
+            ),
+        ));
+    }
+    Ok(target.clone())
+}
+
+fn take_along_axis_result_type(
+    input: &TensorType,
+    indices: &TensorType,
+    axis: usize,
+) -> syn::Result<TensorType> {
+    expect_axis(input, axis)?;
+    expect_index_element(indices.elem, "take_along_axis indices")?;
+    if input.rank() != indices.rank() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "take_along_axis expects input and indices to have equal rank, got input rank {} and index rank {}",
+                input.rank(),
+                indices.rank()
+            ),
+        ));
+    }
+    for dim_axis in 0..input.rank() {
+        if dim_axis != axis && input.shape[dim_axis] != indices.shape[dim_axis] {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "take_along_axis dimension {dim_axis} must match outside axis {axis}, got input dimension {} and index dimension {}",
+                    input.shape[dim_axis], indices.shape[dim_axis]
+                ),
+            ));
+        }
+    }
+    Ok(TensorType {
+        elem: input.elem,
+        shape: indices.shape.clone(),
+    })
+}
+
 fn validate_squeeze(input: &TensorType, target: &TensorType) -> syn::Result<()> {
     if input.elem != target.elem {
         return Err(syn::Error::new(
@@ -702,6 +774,17 @@ pub(crate) fn expect_numeric_element(elem: ElementType, op_name: &str) -> syn::R
         Err(syn::Error::new(
             Span::call_site(),
             format!("{op_name} {verb} numeric tensors only"),
+        ))
+    }
+}
+
+fn expect_index_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+    if matches!(elem, ElementType::I32 | ElementType::I64) {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} must be i32 or i64"),
         ))
     }
 }

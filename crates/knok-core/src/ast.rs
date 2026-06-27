@@ -74,6 +74,10 @@ pub enum CallOp {
     FullLike,
     Greater,
     GreaterEqual,
+    Gather {
+        target: TensorType,
+        axis: usize,
+    },
     IsNan,
     Less,
     LessEqual,
@@ -121,6 +125,9 @@ pub enum CallOp {
     Take {
         axis: usize,
         index: usize,
+    },
+    TakeAlongAxis {
+        axis: usize,
     },
     Transpose,
     Unsqueeze(TensorType),
