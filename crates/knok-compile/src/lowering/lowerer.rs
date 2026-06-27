@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use knok_core::{BinaryOp, CallOp, Expr, TensorType, TypedGraph, UnaryOp};
+use knok_core::{
+    static_arange_literals, static_eye_literals, static_linspace_literals, BinaryOp, CallOp, Expr,
+    TensorType, TypedGraph, UnaryOp,
+};
 
 use crate::common::mlir_result_types;
 
@@ -183,6 +186,10 @@ impl<'a> Lowerer<'a> {
                 let input = self.lower_expr(&args[0])?;
                 self.argmax(input, *axis)
             }
+            CallOp::Argmin(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.argmin(input, *axis)
+            }
             CallOp::Any(axis) => {
                 let input = self.lower_expr(&args[0])?;
                 self.any(input, *axis)
@@ -194,6 +201,10 @@ impl<'a> Lowerer<'a> {
                 let clipped_high = self.minimum(value, max)?;
                 self.maximum(clipped_high, min)
             }
+            CallOp::Ceil => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.ceil", value)
+            }
             CallOp::Concat(axis) => {
                 let lhs = self.lower_expr(&args[0])?;
                 let rhs = self.lower_expr(&args[1])?;
@@ -204,9 +215,50 @@ impl<'a> Lowerer<'a> {
                 let kernel = self.lower_expr(&args[1])?;
                 self.conv2d(input, kernel, options)
             }
+            CallOp::Diagonal(axes) => {
+                let input = self.lower_expr(&args[0])?;
+                self.diagonal(input, *axes)
+            }
+            CallOp::Dot => {
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                self.dot(lhs, rhs)
+            }
+            CallOp::Arange(ty) => {
+                let values =
+                    static_arange_literals(ty, args).map_err(|message| anyhow::anyhow!(message))?;
+                self.dense_constant(ty, &values)
+            }
+            CallOp::Eye(ty) => {
+                let values = static_eye_literals(ty).map_err(|message| anyhow::anyhow!(message))?;
+                self.dense_constant(ty, &values)
+            }
+            CallOp::Cos => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.cos", value)
+            }
             CallOp::Exp => {
                 let value = self.lower_expr(&args[0])?;
                 self.emit_unary("math.exp", value)
+            }
+            CallOp::FullLike => {
+                let input = self.lower_expr(&args[0])?;
+                let fill = self.lower_expr(&args[1])?;
+                self.splat(fill, &input.ty)
+            }
+            CallOp::Exp2 => {
+                let value = self.lower_expr(&args[0])?;
+                let ln2 = self.constant("0.6931471805599453", value.ty.elem)?;
+                let scaled = self.binary_value(BinaryOp::Mul, value, ln2)?;
+                self.emit_unary("math.exp", scaled)
+            }
+            CallOp::ExpM1 => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.expm1", value)
+            }
+            CallOp::Floor => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.floor", value)
             }
             CallOp::Greater => {
                 let lhs = self.lower_expr(&args[0])?;
@@ -217,6 +269,11 @@ impl<'a> Lowerer<'a> {
                 let lhs = self.lower_expr(&args[0])?;
                 let rhs = self.lower_expr(&args[1])?;
                 self.comparison("oge", "sge", lhs, rhs)
+            }
+            CallOp::Gather { target, axis } => {
+                let input = self.lower_expr(&args[0])?;
+                let indices = self.lower_expr(&args[1])?;
+                self.gather(input, indices, *axis, target)
             }
             CallOp::IsNan => {
                 let value = self.lower_expr(&args[0])?;
@@ -232,9 +289,32 @@ impl<'a> Lowerer<'a> {
                 let rhs = self.lower_expr(&args[1])?;
                 self.comparison("ole", "sle", lhs, rhs)
             }
+            CallOp::Linspace(ty) => {
+                let values = static_linspace_literals(ty, args)
+                    .map_err(|message| anyhow::anyhow!(message))?;
+                self.dense_constant(ty, &values)
+            }
             CallOp::Log => {
                 let value = self.lower_expr(&args[0])?;
                 self.emit_unary("math.log", value)
+            }
+            CallOp::Log1P => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.log1p", value)
+            }
+            CallOp::Log2 => {
+                let value = self.lower_expr(&args[0])?;
+                let elem = value.ty.elem;
+                let log = self.emit_unary("math.log", value)?;
+                let ln2 = self.constant("0.6931471805599453", elem)?;
+                self.binary_value(BinaryOp::Div, log, ln2)
+            }
+            CallOp::Log10 => {
+                let value = self.lower_expr(&args[0])?;
+                let elem = value.ty.elem;
+                let log = self.emit_unary("math.log", value)?;
+                let ln10 = self.constant("2.302585092994046", elem)?;
+                self.binary_value(BinaryOp::Div, log, ln10)
             }
             CallOp::LogicalAnd => {
                 let lhs = self.lower_expr(&args[0])?;
@@ -255,6 +335,11 @@ impl<'a> Lowerer<'a> {
                 let rhs = self.lower_expr(&args[1])?;
                 self.logical_binary("arith.xori", lhs, rhs)
             }
+            CallOp::Inner => {
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                self.inner(lhs, rhs)
+            }
             CallOp::Relu => {
                 let value = self.lower_expr(&args[0])?;
                 let zero = self.zero_like(&value.ty)?;
@@ -264,10 +349,18 @@ impl<'a> Lowerer<'a> {
                 let input = self.lower_expr(&args[0])?;
                 self.mean(input, *axis)
             }
+            CallOp::Max(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.max(input, *axis)
+            }
             CallOp::Matmul => {
                 let lhs = self.lower_expr(&args[0])?;
                 let rhs = self.lower_expr(&args[1])?;
                 self.matmul(lhs, rhs)
+            }
+            CallOp::Min(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.min(input, *axis)
             }
             CallOp::Minimum => {
                 let lhs = self.lower_expr(&args[0])?;
@@ -289,6 +382,11 @@ impl<'a> Lowerer<'a> {
                 let rhs = self.lower_expr(&args[1])?;
                 self.comparison("une", "ne", lhs, rhs)
             }
+            CallOp::Outer => {
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                self.outer(lhs, rhs)
+            }
             CallOp::Flip(axes) => {
                 let input = self.lower_expr(&args[0])?;
                 self.flip(input, axes)
@@ -309,6 +407,18 @@ impl<'a> Lowerer<'a> {
                 let rhs = self.lower_expr(&args[1])?;
                 self.emit_binary("math.powf", lhs, rhs)
             }
+            CallOp::OnesLike => {
+                let input = self.lower_expr(&args[0])?;
+                self.one_like(&input.ty)
+            }
+            CallOp::Prod(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.prod(input, *axis)
+            }
+            CallOp::Ptp(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.ptp(input, *axis)
+            }
             CallOp::Permute { target, axes } => {
                 let input = self.lower_expr(&args[0])?;
                 self.permute(input, target, axes)
@@ -316,6 +426,11 @@ impl<'a> Lowerer<'a> {
             CallOp::PermuteDims(axes) => {
                 let input = self.lower_expr(&args[0])?;
                 self.permute_dims(input, axes)
+            }
+            CallOp::Reciprocal => {
+                let value = self.lower_expr(&args[0])?;
+                let one = self.one_like(&value.ty)?;
+                self.binary_value(BinaryOp::Div, one, value)
             }
             CallOp::Repeat { axis, count } => {
                 let input = self.lower_expr(&args[0])?;
@@ -325,6 +440,14 @@ impl<'a> Lowerer<'a> {
                 let value = self.lower_expr(&args[0])?;
                 self.sigmoid(value)
             }
+            CallOp::Rint | CallOp::Round => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.roundeven", value)
+            }
+            CallOp::Sin => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.sin", value)
+            }
             CallOp::Softmax(axis) => {
                 let value = self.lower_expr(&args[0])?;
                 self.softmax(value, *axis)
@@ -332,6 +455,14 @@ impl<'a> Lowerer<'a> {
             CallOp::Sqrt => {
                 let value = self.lower_expr(&args[0])?;
                 self.emit_unary("math.sqrt", value)
+            }
+            CallOp::Square => {
+                let value = self.lower_expr(&args[0])?;
+                self.binary_value(BinaryOp::Mul, value.clone(), value)
+            }
+            CallOp::Tan => {
+                let value = self.lower_expr(&args[0])?;
+                self.emit_unary("math.tan", value)
             }
             CallOp::Tanh => {
                 let value = self.lower_expr(&args[0])?;
@@ -366,6 +497,10 @@ impl<'a> Lowerer<'a> {
                 let rhs = self.lower_expr(&args[1])?;
                 self.stack(lhs, rhs, *axis)
             }
+            CallOp::Std(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.std(input, *axis)
+            }
             CallOp::SwapAxes { axis0, axis1 } => {
                 let input = self.lower_expr(&args[0])?;
                 self.swapaxes(input, *axis0, *axis1)
@@ -381,6 +516,15 @@ impl<'a> Lowerer<'a> {
                 let input = self.lower_expr(&args[0])?;
                 self.take(input, *axis, *index)
             }
+            CallOp::Trace(axes) => {
+                let input = self.lower_expr(&args[0])?;
+                self.trace(input, *axes)
+            }
+            CallOp::TakeAlongAxis { axis } => {
+                let input = self.lower_expr(&args[0])?;
+                let indices = self.lower_expr(&args[1])?;
+                self.take_along_axis(input, indices, *axis)
+            }
             CallOp::Tile(multiples) => {
                 let input = self.lower_expr(&args[0])?;
                 self.tile(input, multiples)
@@ -389,11 +533,24 @@ impl<'a> Lowerer<'a> {
                 let input = self.lower_expr(&args[0])?;
                 self.reshape(input, ty)
             }
+            CallOp::Vecdot(axis) => {
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                self.vecdot(lhs, rhs, *axis)
+            }
+            CallOp::Var(axis) => {
+                let input = self.lower_expr(&args[0])?;
+                self.var(input, *axis)
+            }
             CallOp::Where => {
                 let condition = self.lower_expr(&args[0])?;
                 let true_value = self.lower_expr(&args[1])?;
                 let false_value = self.lower_expr(&args[2])?;
                 self.where_select(condition, true_value, false_value)
+            }
+            CallOp::ZerosLike => {
+                let input = self.lower_expr(&args[0])?;
+                self.zero_like(&input.ty)
             }
             CallOp::Graph(name) => {
                 let args = args

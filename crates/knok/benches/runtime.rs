@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use knok::prelude::*;
 use knok::{Engine, RuntimeConfig};
 use nalgebra::DMatrix;
-use ndarray::{s, Array2, Array3, Array4};
+use ndarray::{s, Array2, Array3, Array4, Axis};
 use std::hint::black_box;
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -21,6 +21,14 @@ fn batched_matmul_16x128x128(
     y: Tensor3<f32, 16, 128, 128>,
 ) -> Tensor3<f32, 16, 128, 128> {
     matmul(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn vecdot_128x1024_axis1(
+    x: Tensor2<f32, 128, 1024>,
+    y: Tensor2<f32, 128, 1024>,
+) -> Tensor1<f32, 128> {
+    vecdot::<1>(x, y)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -107,6 +115,16 @@ fn large_knok_benches(criterion: &mut Criterion) {
         })
     });
 
+    let vecdot_lhs = patterned_vec(128 * 1024);
+    let vecdot_rhs = patterned_vec(128 * 1024);
+    group.bench_function("vecdot_128x1024_axis1_reusable_engine", |bencher| {
+        bencher.iter(|| {
+            let lhs = Tensor2::<f32, 128, 1024>::from_vec(black_box(vecdot_lhs.clone())).unwrap();
+            let rhs = Tensor2::<f32, 128, 1024>::from_vec(black_box(vecdot_rhs.clone())).unwrap();
+            black_box(vecdot_128x1024_axis1_run(&engine, lhs, rhs).unwrap())
+        })
+    });
+
     let conv_input = patterned_vec(16 * 32 * 32 * 3);
     let conv_kernel = patterned_vec(3 * 3 * 3 * 16);
     group.bench_function("conv2d_nhwc_16x32x32x3_hwcf_3x3x3x16", |bencher| {
@@ -164,6 +182,13 @@ fn ndarray_comparison_benches(criterion: &mut Criterion) {
             }
             black_box(output)
         })
+    });
+
+    let vecdot_lhs = Array2::from_shape_vec((128, 1024), patterned_vec(128 * 1024)).unwrap();
+    let vecdot_rhs = Array2::from_shape_vec((128, 1024), patterned_vec(128 * 1024)).unwrap();
+    group.bench_function("vecdot_128x1024_axis1", |bencher| {
+        bencher
+            .iter(|| black_box((black_box(&vecdot_lhs) * black_box(&vecdot_rhs)).sum_axis(Axis(1))))
     });
 
     let conv_input =

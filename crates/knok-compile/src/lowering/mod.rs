@@ -1,5 +1,6 @@
 mod conv;
 mod emit;
+mod linalg;
 mod lowerer;
 mod matmul;
 mod reductions;
