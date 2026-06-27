@@ -357,7 +357,7 @@ impl Lowerer<'_> {
         }
         let (initial_value, reducer_op) = match input.ty.elem {
             ElementType::Bool => ("0", "arith.ori"),
-            elem if elem.is_float() => (min_numeric_literal(elem), "arith.maximumf"),
+            elem if elem.is_float() => (negative_infinity_literal(elem), "arith.maximumf"),
             elem => (min_numeric_literal(elem), "arith.maxsi"),
         };
         self.reduce(input, initial_value, reducer_op, axis, keep_dims)
@@ -370,7 +370,7 @@ impl Lowerer<'_> {
         }
         let (initial_value, reducer_op) = match input.ty.elem {
             ElementType::Bool => ("1", "arith.andi"),
-            elem if elem.is_float() => (max_numeric_literal(elem), "arith.minimumf"),
+            elem if elem.is_float() => (positive_infinity_literal(elem), "arith.minimumf"),
             elem => (max_numeric_literal(elem), "arith.minsi"),
         };
         self.reduce(input, initial_value, reducer_op, axis, false)
@@ -480,6 +480,26 @@ fn max_numeric_literal(elem: ElementType) -> &'static str {
         ElementType::BF16 => "3.38953139E+38",
         ElementType::I32 => "2147483647",
         ElementType::I64 => "9223372036854775807",
+    }
+}
+
+fn negative_infinity_literal(elem: ElementType) -> &'static str {
+    match elem {
+        ElementType::F32 => "0xFF800000",
+        ElementType::F64 => "0xFFF0000000000000",
+        ElementType::F16 => "0xFC00",
+        ElementType::BF16 => "0xFF80",
+        _ => unreachable!("negative infinity seed requested for non-float element"),
+    }
+}
+
+fn positive_infinity_literal(elem: ElementType) -> &'static str {
+    match elem {
+        ElementType::F32 => "0x7F800000",
+        ElementType::F64 => "0x7FF0000000000000",
+        ElementType::F16 => "0x7C00",
+        ElementType::BF16 => "0x7F80",
+        _ => unreachable!("positive infinity seed requested for non-float element"),
     }
 }
 

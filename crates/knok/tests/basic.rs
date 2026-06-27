@@ -173,6 +173,11 @@ fn max2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn max1_f32(x: Tensor1<f32, 1>) -> Tensor0<f32> {
+    max(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn amax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
     amax(x)
 }
@@ -180,6 +185,11 @@ fn amax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn min2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     min::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn min1_f32(x: Tensor1<f32, 1>) -> Tensor0<f32> {
+    min(x)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -234,6 +244,11 @@ fn ptp4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
 
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn ptp2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    ptp::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp2x1_axis1(x: Tensor2<f32, 2, 1>) -> Tensor1<f32, 2> {
     ptp::<1>(x)
 }
 
@@ -1209,14 +1224,27 @@ fn axis_reduction_graphs_run() {
     let max_axis0 = max2x3_axis0(x.clone()).unwrap();
     assert_eq!(max_axis0.into_vec(), vec![10.0, 20.0, 30.0]);
 
+    let neg_inf_max = max1_f32(Tensor1::from_array([f32::NEG_INFINITY])).unwrap();
+    assert_eq!(neg_inf_max.into_vec(), vec![f32::NEG_INFINITY]);
+
     let min_axis1 = min2x3_axis1(x.clone()).unwrap();
     assert_eq!(min_axis1.into_vec(), vec![1.0, 10.0]);
+
+    let inf_min = min1_f32(Tensor1::from_array([f32::INFINITY])).unwrap();
+    assert_eq!(inf_min.into_vec(), vec![f32::INFINITY]);
 
     let var_axis1 = var2x3_axis1(x.clone()).unwrap();
     assert_close(&var_axis1.into_vec(), &[0.6666667, 66.666664]);
 
     let ptp_axis1 = ptp2x3_axis1(x.clone()).unwrap();
     assert_eq!(ptp_axis1.into_vec(), vec![2.0, 20.0]);
+
+    let ptp_infinite_axis1 =
+        ptp2x1_axis1(Tensor2::from_array([[f32::NEG_INFINITY], [f32::INFINITY]])).unwrap();
+    assert!(ptp_infinite_axis1
+        .into_vec()
+        .iter()
+        .all(|value| value.is_nan()));
 
     let bool_input = Tensor2::from_array([[true, true, false], [false, false, false]]);
     let bool_min = bool_min2x3_axis1(bool_input.clone()).unwrap();
