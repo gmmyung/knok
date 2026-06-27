@@ -125,12 +125,47 @@ not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 They expose `from_array`, `from_vec`, `TryFrom<Vec<_>>`, `zeros`, `ones`,
 `filled`, `as_slice`, `as_mut_slice`, `into_vec`, and checked indexing helpers.
 `Tensor0<T>` represents a rank-0 scalar tensor and stores exactly one element.
+Those associated functions are host-side tensor constructors for preparing
+inputs and checking outputs; they are separate from graph ops parsed inside
+`#[knok::graph]` bodies.
 
 ## Static graph syntax
 
 Graph bodies intentionally accept a small, static subset of Rust. Function-like
 ops are parsed by the macro, so they do not need ordinary Rust functions in
 scope.
+
+Static creation ops are graph operations, not dynamic host array constructors.
+Their shape and dtype are known at macro expansion time:
+
+```rust
+fn make_bias(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> {
+    full_like(x, 0.25)
+}
+
+fn make_positions() -> Tensor1<i32, 4> {
+    arange::<Tensor1<i32, 4>>(0, 8, 2)
+}
+
+fn make_grid() -> Tensor1<f32, 5> {
+    linspace::<Tensor1<f32, 5>>(0.0, 1.0)
+}
+
+fn make_identity() -> Tensor2<f32, 3, 3> {
+    eye::<Tensor2<f32, 3, 3>>()
+}
+```
+
+`zeros_like(x)` and `ones_like(x)` return a tensor with `x`'s static type.
+`full_like(x, value)` requires `value` to be a rank-0 scalar with the same
+element type as `x`. `arange::<Target>(stop)`,
+`arange::<Target>(start, stop)`, and `arange::<Target>(start, stop, step)`
+require numeric literal parameters and a rank-1 numeric `Target` whose length
+matches the generated sequence. `linspace::<Target>(start, stop)` requires
+numeric literal endpoints and a rank-1 numeric `Target`; integer targets are
+accepted only when the endpoints divide evenly across the target length.
+`eye::<Target>()` and `identity::<Target>()` require a rank-2 square `Target`
+and support bool, integer, and floating-point element types.
 
 Shape-changing ops are type-directed:
 
@@ -238,13 +273,14 @@ They cover the recommended hosted workflow:
   `pow`, `square`, `reciprocal`, `relu`, NumPy-style `matmul` for ranks 1-6,
   NHWC/HWCF `conv2d` with static `Pad<TOP, BOTTOM, LEFT, RIGHT>`,
   `Stride<H, W>`, and `Dilation<H, W>`, and `Groups<N>` options, rank-2
-  `transpose`, explicit
-  `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
-  `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
-  binary `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware
-  `mean`, full-tensor and axis-aware `softmax`, full-tensor and axis-aware
-  `argmax`, `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`,
-  `floor`, `ceil`, `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`.
+  `transpose`, explicit `permute::<Target, AXES...>`, reshape across ranks 0-6,
+  `broadcast`, `squeeze`, `unsqueeze`, static `slice`, static `take`,
+  `zeros_like`, `ones_like`, `full_like`, static literal `arange`, static
+  literal `linspace`, static square `eye`/`identity`, binary `concat`, binary
+  `stack`, full-tensor and axis-aware `sum`, full-tensor and axis-aware `mean`,
+  full-tensor and axis-aware `softmax`, full-tensor and axis-aware `argmax`,
+  `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `floor`,
+  `ceil`, `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `mean::<0>(x)`, `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
@@ -257,8 +293,10 @@ They cover the recommended hosted workflow:
   `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`) require a
   floating-point element type. Backend support for `f16`/`bf16` math can vary.
   Integer tensors support arithmetic, `abs`, `square`, `reciprocal`,
-  `minimum`, `maximum`, `clip`, reshape/broadcast, sum, `argmax`, matmul, and
-  conv lowering where IREE accepts the resulting MLIR.
+  `minimum`, `maximum`, `clip`, reshape/broadcast, static creators, sum,
+  `argmax`, matmul, and conv lowering where IREE accepts the resulting MLIR.
+  Bool tensors support `zeros_like`, `ones_like`, `full_like`, and
+  `eye`/`identity`; `arange` and `linspace` require numeric targets.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
 - The compiler, MLIR lowering, and hosted runtime wrappers support real bool

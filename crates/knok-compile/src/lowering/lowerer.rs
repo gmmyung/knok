@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use knok_core::{BinaryOp, CallOp, Expr, TensorType, TypedGraph, UnaryOp};
+use knok_core::{
+    static_arange_literals, static_eye_literals, static_linspace_literals, BinaryOp, CallOp, Expr,
+    TensorType, TypedGraph, UnaryOp,
+};
 
 use crate::common::mlir_result_types;
 
@@ -191,6 +194,16 @@ impl<'a> Lowerer<'a> {
                     let kernel = self.lower_expr(&args[1])?;
                     self.conv2d(input, kernel, options)
                 }
+                CallOp::Arange(ty) => {
+                    let values = static_arange_literals(ty, args)
+                        .map_err(|message| anyhow::anyhow!(message))?;
+                    self.dense_constant(ty, &values)
+                }
+                CallOp::Eye(ty) => {
+                    let values =
+                        static_eye_literals(ty).map_err(|message| anyhow::anyhow!(message))?;
+                    self.dense_constant(ty, &values)
+                }
                 CallOp::Cos => {
                     let value = self.lower_expr(&args[0])?;
                     self.emit_unary("math.cos", value)
@@ -198,6 +211,11 @@ impl<'a> Lowerer<'a> {
                 CallOp::Exp => {
                     let value = self.lower_expr(&args[0])?;
                     self.emit_unary("math.exp", value)
+                }
+                CallOp::FullLike => {
+                    let input = self.lower_expr(&args[0])?;
+                    let fill = self.lower_expr(&args[1])?;
+                    self.splat(fill, &input.ty)
                 }
                 CallOp::Exp2 => {
                     let value = self.lower_expr(&args[0])?;
@@ -236,6 +254,11 @@ impl<'a> Lowerer<'a> {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.comparison("ole", "sle", lhs, rhs)
+                }
+                CallOp::Linspace(ty) => {
+                    let values = static_linspace_literals(ty, args)
+                        .map_err(|message| anyhow::anyhow!(message))?;
+                    self.dense_constant(ty, &values)
                 }
                 CallOp::Log => {
                     let value = self.lower_expr(&args[0])?;
@@ -316,6 +339,10 @@ impl<'a> Lowerer<'a> {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.emit_binary("math.powf", lhs, rhs)
+                }
+                CallOp::OnesLike => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.one_like(&input.ty)
                 }
                 CallOp::Permute { target, axes } => {
                     let input = self.lower_expr(&args[0])?;
@@ -400,6 +427,10 @@ impl<'a> Lowerer<'a> {
                     let true_value = self.lower_expr(&args[1])?;
                     let false_value = self.lower_expr(&args[2])?;
                     self.where_select(condition, true_value, false_value)
+                }
+                CallOp::ZerosLike => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.zero_like(&input.ty)
                 }
                 CallOp::Graph(name) => {
                     let args = args

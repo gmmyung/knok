@@ -39,6 +39,34 @@ impl Lowerer<'_> {
         Ok(Value::tensor(name, ty.clone()))
     }
 
+    pub(super) fn dense_constant(
+        &mut self,
+        ty: &TensorType,
+        values: &[String],
+    ) -> anyhow::Result<Value> {
+        if ty.rank() == 0 {
+            let value = values
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("rank-0 dense constant requires one value"))?;
+            return self.constant(value, ty.elem);
+        }
+        let expected_len: usize = ty.shape.iter().product();
+        if values.len() != expected_len {
+            anyhow::bail!(
+                "dense constant for {:?} expected {expected_len} values, got {}",
+                ty,
+                values.len()
+            );
+        }
+        let name = self.fresh();
+        let literal = nested_dense_literal(values, &ty.shape);
+        self.lines.push(format!(
+            "    {name} = arith.constant dense<{literal}> : {}",
+            ty.mlir_type()
+        ));
+        Ok(Value::tensor(name, ty.clone()))
+    }
+
     pub(super) fn zero_initialized_tensor(&mut self, ty: &TensorType) -> anyhow::Result<String> {
         let empty = self.fresh();
         self.lines
@@ -528,4 +556,30 @@ impl Lowerer<'_> {
             }
         }
     }
+}
+
+fn nested_dense_literal(values: &[String], shape: &[usize]) -> String {
+    if shape.is_empty() {
+        return values
+            .first()
+            .expect("scalar dense literal has one value")
+            .clone();
+    }
+    if shape[0] == 0 {
+        return "[]".to_string();
+    }
+    let chunk_len = shape[1..].iter().product::<usize>();
+    let items = (0..shape[0])
+        .map(|index| {
+            if chunk_len == 0 {
+                nested_dense_literal(&[], &shape[1..])
+            } else {
+                let start = index * chunk_len;
+                let end = start + chunk_len;
+                nested_dense_literal(&values[start..end], &shape[1..])
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{items}]")
 }
