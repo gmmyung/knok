@@ -250,7 +250,7 @@ They cover the recommended hosted workflow:
   axis of same-shaped numeric tensors, and `vecdot::<AXIS>(x, y)` contracts a
   specific axis. `inner(x, y)` contracts the last axis of both numeric operands
   and treats scalar operands as elementwise multiplication. `outer(x, y)`
-  concatenates operand ranks and is limited by the current Tensor6 maximum.
+  flattens both operands and returns a rank-2 outer product.
 - `trace(x)` and `diagonal(x)` use the last two axes by default; pass
   `trace::<AXIS0, AXIS1>(x)` or `diagonal::<AXIS0, AXIS1>(x)` to select explicit
   axes. `trace` requires equal diagonal dimensions and numeric tensors.

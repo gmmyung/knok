@@ -168,12 +168,12 @@ fn infers_linalg_contraction_shapes() {
     assert_eq!(inner.body[0].ty, tensor(&[2, 4]));
 
     let outer = parse(parse_quote! {
-        fn vector_outer(x: Tensor1<f32, 2>, y: Tensor2<f32, 3, 4>) -> Tensor3<f32, 2, 3, 4> {
+        fn vector_outer(x: Tensor1<f32, 2>, y: Tensor2<f32, 3, 4>) -> Tensor2<f32, 2, 12> {
             outer(x, y)
         }
     })
     .unwrap();
-    assert_eq!(outer.body[0].ty, tensor(&[2, 3, 4]));
+    assert_eq!(outer.body[0].ty, tensor(&[2, 12]));
 
     let trace = parse(parse_quote! {
         fn batched_trace(x: Tensor3<f32, 2, 3, 3>) -> Tensor1<f32, 2> {

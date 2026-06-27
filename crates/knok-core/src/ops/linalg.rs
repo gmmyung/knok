@@ -79,14 +79,9 @@ pub(crate) fn inner_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Resu
 
 pub(crate) fn outer_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
     expect_same_numeric_element(lhs, rhs, "outer")?;
-    let mut shape = lhs.shape.clone();
-    shape.extend_from_slice(&rhs.shape);
-    if shape.len() > MAX_TENSOR_RANK {
-        return Err(result_rank_error("outer", shape.len()));
-    }
     Ok(TensorType {
         elem: lhs.elem,
-        shape,
+        shape: vec![element_count(lhs), element_count(rhs)],
     })
 }
 
@@ -195,6 +190,10 @@ fn remove_axes_shape(input: &TensorType, axis0: usize, axis1: usize) -> Vec<usiz
         .enumerate()
         .filter_map(|(axis, dim)| (axis != axis0 && axis != axis1).then_some(*dim))
         .collect()
+}
+
+fn element_count(input: &TensorType) -> usize {
+    input.shape.iter().copied().product()
 }
 
 fn result_rank_error(op_name: &str, rank: usize) -> syn::Error {

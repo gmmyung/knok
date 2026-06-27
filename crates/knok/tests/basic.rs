@@ -138,6 +138,11 @@ fn outer2x3(x: Tensor1<f32, 2>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn outer_vector_matrix(x: Tensor1<f32, 2>, y: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 6> {
+    outer(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn trace2x2(x: Tensor2<f32, 2, 2>) -> Tensor0<f32> {
     trace(x)
 }
@@ -1020,6 +1025,16 @@ fn linalg_contraction_graphs_run() {
     )
     .unwrap();
     assert_eq!(outer.into_vec(), vec![20.0, 40.0, 60.0, 30.0, 60.0, 90.0]);
+
+    let outer = outer_vector_matrix(
+        Tensor1::from_array([2.0, 3.0]),
+        Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]),
+    )
+    .unwrap();
+    assert_eq!(
+        outer.into_vec(),
+        vec![2.0, 4.0, 6.0, 20.0, 40.0, 60.0, 3.0, 6.0, 9.0, 30.0, 60.0, 90.0,]
+    );
 
     let trace = trace2x2(Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]])).unwrap();
     assert_eq!(trace.into_vec(), vec![5.0]);

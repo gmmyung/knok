@@ -1,7 +1,7 @@
 use knok_core::{BinaryOp, TensorType};
 
 use super::lowerer::{Lowerer, Value, ValueKind};
-use super::shape::{format_dim_list, parallel_iterators};
+use super::shape::{element_count, format_dim_list, parallel_iterators};
 
 impl Lowerer<'_> {
     pub(super) fn dot(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
@@ -65,32 +65,25 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn outer(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
-        let mut shape = lhs.ty.shape.clone();
-        shape.extend_from_slice(&rhs.ty.shape);
+        let lhs_flat_ty = TensorType {
+            elem: lhs.ty.elem,
+            shape: vec![element_count(&lhs.ty)],
+        };
+        let rhs_flat_ty = TensorType {
+            elem: rhs.ty.elem,
+            shape: vec![element_count(&rhs.ty)],
+        };
         let ty = TensorType {
             elem: lhs.ty.elem,
-            shape,
+            shape: vec![lhs_flat_ty.shape[0], rhs_flat_ty.shape[0]],
         };
-        if ty.rank() == 0 {
-            return self.binary_value(BinaryOp::Mul, lhs, rhs);
-        }
-        let lhs = self.ensure_tensor_value(lhs)?;
-        let rhs = self.ensure_tensor_value(rhs)?;
-        let lhs_indices = (0..lhs.ty.rank())
-            .map(|axis| format!("d{axis}"))
-            .collect::<Vec<_>>();
-        let rhs_indices = (0..rhs.ty.rank())
-            .map(|axis| format!("d{}", lhs.ty.rank() + axis))
-            .collect::<Vec<_>>();
-        let output_indices = (0..ty.rank())
-            .map(|axis| format!("d{axis}"))
-            .collect::<Vec<_>>();
+        let lhs = self.reshape(lhs, &lhs_flat_ty)?;
+        let rhs = self.reshape(rhs, &rhs_flat_ty)?;
         let empty = self.fresh();
         self.lines
             .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
         let name = self.fresh();
         let product = self.fresh();
-        let dims = format_dim_list(ty.rank());
         let mul_op = if ty.elem.is_float() {
             "arith.mulf"
         } else {
@@ -98,15 +91,10 @@ impl Lowerer<'_> {
         };
         self.lines.push(format!("    {name} = linalg.generic {{"));
         self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {}>, affine_map<({dims}) -> {}>, affine_map<({dims}) -> {}>],",
-            affine_tuple(&lhs_indices),
-            affine_tuple(&rhs_indices),
-            affine_tuple(&output_indices)
+            "      indexing_maps = [affine_map<(d0, d1) -> (d0)>, affine_map<(d0, d1) -> (d1)>, affine_map<(d0, d1) -> (d0, d1)>],"
         ));
-        self.lines.push(format!(
-            "      iterator_types = [{}]",
-            parallel_iterators(ty.rank())
-        ));
+        self.lines
+            .push("      iterator_types = [\"parallel\", \"parallel\"]".to_string());
         self.lines.push(format!(
             "    }} ins({}, {} : {}, {}) outs({empty} : {}) {{",
             lhs.name,
