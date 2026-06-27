@@ -255,6 +255,63 @@ fn infers_static_creator_shapes() {
 }
 
 #[test]
+fn static_creator_float_literals_preserve_tiny_values() {
+    let f32_target = TensorType {
+        elem: ElementType::F32,
+        shape: vec![3],
+    };
+    let arange = static_arange_literals(
+        &f32_target,
+        &[
+            Expr::Const {
+                value: "1e-20".to_string(),
+                elem: ElementType::F32,
+            },
+            Expr::Const {
+                value: "4e-20".to_string(),
+                elem: ElementType::F32,
+            },
+            Expr::Const {
+                value: "1e-20".to_string(),
+                elem: ElementType::F32,
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(arange.len(), 3);
+    for literal in &arange {
+        assert_ne!(literal, "0.0");
+        assert_ne!(literal.parse::<f64>().unwrap(), 0.0);
+    }
+
+    let f64_target = TensorType {
+        elem: ElementType::F64,
+        shape: vec![3],
+    };
+    let linspace = static_linspace_literals(
+        &f64_target,
+        &[
+            Expr::Const {
+                value: "1e-20".to_string(),
+                elem: ElementType::F64,
+            },
+            Expr::Const {
+                value: "3e-20".to_string(),
+                elem: ElementType::F64,
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(linspace.len(), 3);
+    for literal in &linspace {
+        assert_ne!(literal, "0.0");
+        assert_ne!(literal.parse::<f64>().unwrap(), 0.0);
+    }
+}
+
+#[test]
 fn infers_static_shape_and_indexing_ops() {
     for item in [
         parse_quote! {

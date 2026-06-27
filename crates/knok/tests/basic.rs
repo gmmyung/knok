@@ -158,8 +158,18 @@ fn arange_f32_descending() -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn arange_f32_tiny() -> Tensor1<f32, 3> {
+    arange::<Tensor1<f32, 3>>(1.0e-20, 4.0e-20, 1.0e-20)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn linspace_f32_0_1() -> Tensor1<f32, 5> {
     linspace::<Tensor1<f32, 5>>(0.0, 1.0)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn linspace_f64_tiny() -> Tensor1<f64, 3> {
+    linspace::<Tensor1<f64, 3>>(1.0e-20f64, 3.0e-20f64)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -1139,8 +1149,14 @@ fn static_creator_graphs_run() {
     let arange_f32 = arange_f32_descending().unwrap();
     assert_eq!(arange_f32.into_vec(), vec![1.5, 1.0, 0.5, 0.0]);
 
+    let arange_tiny = arange_f32_tiny().unwrap().into_vec();
+    assert_close_with_tolerance(&arange_tiny, &[1.0e-20, 2.0e-20, 3.0e-20], 1.0e-25);
+
     let linspace_f32 = linspace_f32_0_1().unwrap().into_vec();
     assert_close(&linspace_f32, &[0.0, 0.25, 0.5, 0.75, 1.0]);
+
+    let linspace_tiny = linspace_f64_tiny().unwrap().into_vec();
+    assert_close_f64(&linspace_tiny, &[1.0e-20, 2.0e-20, 3.0e-20]);
 
     let linspace_i64 = linspace_i64_2_8().unwrap();
     assert_eq!(linspace_i64.into_vec(), vec![2, 4, 6, 8]);
@@ -1646,10 +1662,24 @@ fn ravel_index(indices: &[usize], shape: &[usize]) -> usize {
 }
 
 fn assert_close(actual: &[f32], expected: &[f32]) {
+    assert_close_with_tolerance(actual, expected, 1.0e-4);
+}
+
+fn assert_close_with_tolerance(actual: &[f32], expected: &[f32], tolerance: f32) {
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(expected) {
         assert!(
-            (actual - expected).abs() < 1.0e-4,
+            (actual - expected).abs() < tolerance,
+            "expected {expected}, got {actual}"
+        );
+    }
+}
+
+fn assert_close_f64(actual: &[f64], expected: &[f64]) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() < 1.0e-30,
             "expected {expected}, got {actual}"
         );
     }

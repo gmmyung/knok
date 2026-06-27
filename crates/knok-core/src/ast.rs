@@ -569,10 +569,9 @@ fn float_literal(value: f64) -> String {
     if value == 0.0 {
         return "0.0".to_string();
     }
-    let text = format!("{value:.17}");
-    let text = text.trim_end_matches('0').trim_end_matches('.');
+    let text = value.to_string();
     if text.contains('.') || text.contains('e') || text.contains('E') {
-        text.to_string()
+        text
     } else {
         format!("{text}.0")
     }
