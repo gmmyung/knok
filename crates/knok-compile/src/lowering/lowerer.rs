@@ -207,9 +207,7 @@ impl<'a> Lowerer<'a> {
                 }
                 CallOp::ExpM1 => {
                     let value = self.lower_expr(&args[0])?;
-                    let exp = self.emit_unary("math.exp", value)?;
-                    let one = self.one_like(&exp.ty)?;
-                    self.binary_value(BinaryOp::Sub, exp, one)
+                    self.emit_unary("math.expm1", value)
                 }
                 CallOp::Floor => {
                     let value = self.lower_expr(&args[0])?;

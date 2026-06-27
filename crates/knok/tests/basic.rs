@@ -1370,11 +1370,19 @@ fn math_op_graphs_run() {
     );
 
     let (exp2_output, expm1_output) =
-        exp_variants4(Tensor1::from_array([0.0, 1.0, 2.0, -1.0])).unwrap();
-    assert_close(&exp2_output.into_vec(), &[1.0, 2.0, 4.0, 0.5]);
-    assert_close(
-        &expm1_output.into_vec(),
-        &[0.0, 1.7182817, 6.389056, -0.63212055],
+        exp_variants4(Tensor1::from_array([0.0, 1.0e-8, -1.0e-8, 1.0])).unwrap();
+    assert_close(&exp2_output.into_vec(), &[1.0, 1.0, 1.0, 2.0]);
+    let expm1_values = expm1_output.into_vec();
+    assert_close(&expm1_values, &[0.0, 1.0e-8, -1.0e-8, 1.7182817]);
+    assert!(
+        expm1_values[1] > 5.0e-9 && expm1_values[1] < 1.5e-8,
+        "expected expm1(1e-8) to preserve a small positive signal, got {}",
+        expm1_values[1]
+    );
+    assert!(
+        expm1_values[2] < -5.0e-9 && expm1_values[2] > -1.5e-8,
+        "expected expm1(-1e-8) to preserve a small negative signal, got {}",
+        expm1_values[2]
     );
 
     let log_output = log4(Tensor1::from_array([1.0, core::f32::consts::E, 4.0, 8.0])).unwrap();
