@@ -2,7 +2,8 @@ use proc_macro2::Span;
 
 use crate::ops::{broadcast_shape_slices, expect_numeric_element, infer_call_result};
 use crate::{
-    CallOp, Expr, Graph, GraphSignature, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue,
+    static_arange_literals, static_eye_literals, static_linspace_literals, CallOp, Expr, Graph,
+    GraphSignature, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue,
 };
 
 pub fn type_check(
@@ -158,6 +159,31 @@ fn call_result_type(
             ));
         }
         return Ok(outputs[0].clone());
+    }
+
+    match op {
+        CallOp::Arange(target) => {
+            static_arange_literals(target, args)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            return Ok(target.clone());
+        }
+        CallOp::Linspace(target) => {
+            static_linspace_literals(target, args)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            return Ok(target.clone());
+        }
+        CallOp::Eye(target) => {
+            if !args.is_empty() {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!("Eye expects 0 arguments, got {}", args.len()),
+                ));
+            }
+            static_eye_literals(target)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            return Ok(target.clone());
+        }
+        _ => {}
     }
 
     let arg_tys = args

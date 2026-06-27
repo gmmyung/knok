@@ -188,6 +188,61 @@ fn broadcast1to4(x: Tensor1<f32, 1>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn zeros_like6d_i32(x: Tensor6<i32, 1, 1, 1, 1, 2, 3>) -> Tensor6<i32, 1, 1, 1, 1, 2, 3> {
+    zeros_like(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ones_like_bool2x2(x: Tensor2<bool, 2, 2>) -> Tensor2<bool, 2, 2> {
+    ones_like(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn full_like4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    full_like(x, 3.5)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn arange_i32_0_8_2() -> Tensor1<i32, 4> {
+    arange::<Tensor1<i32, 4>>(0, 8, 2)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn arange_f32_descending() -> Tensor1<f32, 4> {
+    arange::<Tensor1<f32, 4>>(1.5, -0.5, -0.5)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn arange_f32_tiny() -> Tensor1<f32, 3> {
+    arange::<Tensor1<f32, 3>>(1.0e-20, 4.0e-20, 1.0e-20)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn linspace_f32_0_1() -> Tensor1<f32, 5> {
+    linspace::<Tensor1<f32, 5>>(0.0, 1.0)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn linspace_f64_tiny() -> Tensor1<f64, 3> {
+    linspace::<Tensor1<f64, 3>>(1.0e-20f64, 3.0e-20f64)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn linspace_i64_2_8() -> Tensor1<i64, 4> {
+    linspace::<Tensor1<i64, 4>>(2i64, 8i64)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn eye3_f32() -> Tensor2<f32, 3, 3> {
+    eye::<Tensor2<f32, 3, 3>>()
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn identity2_bool() -> Tensor2<bool, 2, 2> {
+    identity::<Tensor2<bool, 2, 2>>()
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sum4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
     sum(x)
 }
@@ -210,6 +265,101 @@ fn sum2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn mean2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     mean::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn prod4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
+    prod(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn prod2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    prod::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn max2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+    max::<0>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn max1_f32(x: Tensor1<f32, 1>) -> Tensor0<f32> {
+    max(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn amax4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
+    amax(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn min2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    min::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn min1_f32(x: Tensor1<f32, 1>) -> Tensor0<f32> {
+    min(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn amin4_i64(x: Tensor1<i64, 4>) -> Tensor0<i64> {
+    amin(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn bool_min2x3_axis1(x: Tensor2<bool, 2, 3>) -> Tensor1<bool, 2> {
+    min::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn bool_max2x3_axis1(x: Tensor2<bool, 2, 3>) -> Tensor1<bool, 2> {
+    max::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmin2x3(x: Tensor2<f32, 2, 3>) -> Tensor0<i64> {
+    argmin(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmin2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<i64, 2> {
+    argmin::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn var4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
+    var(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn var2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    var::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn std4(x: Tensor1<f32, 4>) -> Tensor0<f32> {
+    std(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn std2x3_axis0(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 3> {
+    std::<0>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp4_i32(x: Tensor1<i32, 4>) -> Tensor0<i32> {
+    ptp(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp2x3_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    ptp::<1>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp2x1_axis1(x: Tensor2<f32, 2, 1>) -> Tensor1<f32, 2> {
+    ptp::<1>(x)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -294,6 +444,50 @@ fn take4d_axis3(x: Tensor4<f32, 1, 2, 2, 3>) -> Tensor3<f32, 1, 2, 2> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn gather2x3_axis0_i64(x: Tensor2<f32, 2, 3>, indices: Tensor1<i64, 2>) -> Tensor2<f32, 2, 3> {
+    gather::<Tensor2<f32, 2, 3>, 0>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather2x3_axis1_i32(
+    x: Tensor2<f32, 2, 3>,
+    indices: Tensor2<i32, 2, 2>,
+) -> Tensor3<f32, 2, 2, 2> {
+    gather::<Tensor3<f32, 2, 2, 2>, 1>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn take_along_axis2x3_axis1_i64(
+    x: Tensor2<i32, 2, 3>,
+    indices: Tensor2<i64, 2, 2>,
+) -> Tensor2<i32, 2, 2> {
+    take_along_axis::<1>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather_bool1_axis0(x: Tensor1<bool, 3>, indices: Tensor1<i64, 2>) -> Tensor1<bool, 2> {
+    gather::<Tensor1<bool, 2>, 0>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather1_scalar_index(x: Tensor1<f32, 3>, index: Tensor0<i64>) -> Tensor0<f32> {
+    gather::<Tensor0<f32>, 0>(x, index)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather1_scalar_index_i32(x: Tensor1<f32, 3>, index: Tensor0<i32>) -> Tensor0<f32> {
+    gather::<Tensor0<f32>, 0>(x, index)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn gather6d_axis5(
+    x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+    indices: Tensor1<i64, 2>,
+) -> Tensor6<f32, 1, 1, 1, 1, 2, 2> {
+    gather::<Tensor6<f32, 1, 1, 1, 1, 2, 2>, 5>(x, indices)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn squeeze1x2x1x3(x: Tensor4<f32, 1, 2, 1, 3>) -> Tensor2<f32, 2, 3> {
     squeeze::<Tensor2<f32, 2, 3>>(x)
 }
@@ -337,8 +531,33 @@ fn flatten4d(x: Tensor4<f32, 1, 2, 2, 1>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn square4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    square(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn square4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    square(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn reciprocal4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+    reciprocal(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn reciprocal4_i32(x: Tensor1<i32, 4>) -> Tensor1<i32, 4> {
+    reciprocal(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn exp4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     exp(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn exp_variants4(x: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (exp2(x), expm1(x))
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -347,8 +566,34 @@ fn log4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn log_variants4(
+    x: Tensor1<f32, 4>,
+    y: Tensor1<f32, 4>,
+    z: Tensor1<f32, 4>,
+) -> (Tensor1<f32, 4>, Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (log2(x), log10(y), log1p(z))
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn sqrt4(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
     sqrt(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn rounding4(
+    x: Tensor1<f32, 4>,
+) -> (
+    Tensor1<f32, 4>,
+    Tensor1<f32, 4>,
+    Tensor1<f32, 4>,
+    Tensor1<f32, 4>,
+) {
+    (floor(x), ceil(x), round(x), rint(x))
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn trig4(x: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>, Tensor1<f32, 4>) {
+    (sin(x), cos(x), tan(x))
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -504,6 +749,26 @@ fn mean6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2
 #[knok::graph(backend = Backend::LlvmCpu)]
 fn argmax6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
     argmax::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn prod6d_axis5(x: Tensor6<i32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i32, 1, 1, 1, 1, 2> {
+    prod::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn argmin6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+    argmin::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn var6d_axis5(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor5<f32, 1, 1, 1, 1, 2> {
+    var::<5>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn ptp6d_axis5(x: Tensor6<i64, 1, 1, 1, 1, 2, 3>) -> Tensor5<i64, 1, 1, 1, 1, 2> {
+    ptp::<5>(x)
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
@@ -1212,6 +1477,46 @@ fn broadcast_graph_runs() {
 }
 
 #[test]
+fn static_creator_graphs_run() {
+    let zeros = zeros_like6d_i32(Tensor6::<i32, 1, 1, 1, 1, 2, 3>::filled(9)).unwrap();
+    assert_eq!(zeros.into_vec(), vec![0; 6]);
+
+    let bool_ones =
+        ones_like_bool2x2(Tensor2::from_array([[false, true], [false, false]])).unwrap();
+    assert_eq!(bool_ones.into_vec(), vec![true, true, true, true]);
+
+    let full = full_like4(Tensor1::from_array([0.0, 1.0, 2.0, 3.0])).unwrap();
+    assert_eq!(full.into_vec(), vec![3.5, 3.5, 3.5, 3.5]);
+
+    let arange_i32 = arange_i32_0_8_2().unwrap();
+    assert_eq!(arange_i32.into_vec(), vec![0, 2, 4, 6]);
+
+    let arange_f32 = arange_f32_descending().unwrap();
+    assert_eq!(arange_f32.into_vec(), vec![1.5, 1.0, 0.5, 0.0]);
+
+    let arange_tiny = arange_f32_tiny().unwrap().into_vec();
+    assert_close_with_tolerance(&arange_tiny, &[1.0e-20, 2.0e-20, 3.0e-20], 1.0e-25);
+
+    let linspace_f32 = linspace_f32_0_1().unwrap().into_vec();
+    assert_close(&linspace_f32, &[0.0, 0.25, 0.5, 0.75, 1.0]);
+
+    let linspace_tiny = linspace_f64_tiny().unwrap().into_vec();
+    assert_close_f64(&linspace_tiny, &[1.0e-20, 2.0e-20, 3.0e-20]);
+
+    let linspace_i64 = linspace_i64_2_8().unwrap();
+    assert_eq!(linspace_i64.into_vec(), vec![2, 4, 6, 8]);
+
+    let eye = eye3_f32().unwrap();
+    assert_eq!(
+        eye.into_vec(),
+        vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    );
+
+    let identity = identity2_bool().unwrap();
+    assert_eq!(identity.into_vec(), vec![true, false, false, true]);
+}
+
+#[test]
 fn sum_graph_runs() {
     let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
     let output = sum4(x).unwrap();
@@ -1235,8 +1540,42 @@ fn axis_reduction_graphs_run() {
     let axis1 = sum2x3_axis1(x.clone()).unwrap();
     assert_eq!(axis1.into_vec(), vec![6.0, 60.0]);
 
-    let mean = mean2x3_axis1(x).unwrap();
+    let mean = mean2x3_axis1(x.clone()).unwrap();
     assert_eq!(mean.into_vec(), vec![2.0, 20.0]);
+
+    let prod_axis1 = prod2x3_axis1(x.clone()).unwrap();
+    assert_eq!(prod_axis1.into_vec(), vec![6.0, 6000.0]);
+
+    let max_axis0 = max2x3_axis0(x.clone()).unwrap();
+    assert_eq!(max_axis0.into_vec(), vec![10.0, 20.0, 30.0]);
+
+    let neg_inf_max = max1_f32(Tensor1::from_array([f32::NEG_INFINITY])).unwrap();
+    assert_eq!(neg_inf_max.into_vec(), vec![f32::NEG_INFINITY]);
+
+    let min_axis1 = min2x3_axis1(x.clone()).unwrap();
+    assert_eq!(min_axis1.into_vec(), vec![1.0, 10.0]);
+
+    let inf_min = min1_f32(Tensor1::from_array([f32::INFINITY])).unwrap();
+    assert_eq!(inf_min.into_vec(), vec![f32::INFINITY]);
+
+    let var_axis1 = var2x3_axis1(x.clone()).unwrap();
+    assert_close(&var_axis1.into_vec(), &[0.6666667, 66.666664]);
+
+    let ptp_axis1 = ptp2x3_axis1(x.clone()).unwrap();
+    assert_eq!(ptp_axis1.into_vec(), vec![2.0, 20.0]);
+
+    let ptp_infinite_axis1 =
+        ptp2x1_axis1(Tensor2::from_array([[f32::NEG_INFINITY], [f32::INFINITY]])).unwrap();
+    assert!(ptp_infinite_axis1
+        .into_vec()
+        .iter()
+        .all(|value| value.is_nan()));
+
+    let bool_input = Tensor2::from_array([[true, true, false], [false, false, false]]);
+    let bool_min = bool_min2x3_axis1(bool_input.clone()).unwrap();
+    assert_eq!(bool_min.into_vec(), vec![false, false]);
+    let bool_max = bool_max2x3_axis1(bool_input).unwrap();
+    assert_eq!(bool_max.into_vec(), vec![true, false]);
 
     let x4 = Tensor4::from_array([[
         [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
@@ -1288,6 +1627,28 @@ fn rank6_numpy_style_reductions_run() {
 
     let argmax = argmax6d_axis5(input).unwrap();
     assert_eq!(argmax.into_vec(), vec![2, 0]);
+
+    let prod =
+        prod6d_axis5(Tensor6::<i32, 1, 1, 1, 1, 2, 3>::from_vec(vec![1, 2, 3, 4, 5, 6]).unwrap())
+            .unwrap();
+    assert_eq!(prod.into_vec(), vec![6, 120]);
+
+    let argmin = argmin6d_axis5(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec(vec![2.0, 1.0, 1.0, 3.0, -1.0, -1.0]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(argmin.into_vec(), vec![1, 1]);
+
+    let var = var6d_axis5(
+        Tensor6::<f32, 1, 1, 1, 1, 2, 3>::from_vec(vec![1.0, 2.0, 3.0, 2.0, 2.0, 2.0]).unwrap(),
+    )
+    .unwrap();
+    assert_close(&var.into_vec(), &[0.6666667, 0.0]);
+
+    let ptp =
+        ptp6d_axis5(Tensor6::<i64, 1, 1, 1, 1, 2, 3>::from_vec(vec![1, 7, 3, -5, -1, -9]).unwrap())
+            .unwrap();
+    assert_eq!(ptp.into_vec(), vec![6, 8]);
 
     let any = any6d_axis5(
         Tensor6::<bool, 1, 1, 1, 1, 2, 3>::from_vec(vec![false, false, true, false, false, false])
@@ -1380,6 +1741,59 @@ fn shape_and_indexing_graphs_run() {
         vec![8.0, 9.0, 11.0, 12.0]
     );
 
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let gathered = gather2x3_axis0_i64(x.clone(), Tensor1::from_array([1, 0]))
+        .unwrap()
+        .into_vec();
+    assert_eq!(gathered, vec![10.0, 20.0, 30.0, 1.0, 2.0, 3.0]);
+
+    let gathered = gather2x3_axis1_i32(x, Tensor2::from_array([[2, 0], [1, 2]]))
+        .unwrap()
+        .into_vec();
+    assert_eq!(gathered, vec![3.0, 1.0, 2.0, 3.0, 30.0, 10.0, 20.0, 30.0]);
+
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let gathered = gather2x3_axis1_i32(x, Tensor2::from_array([[-1, 0], [1, -2]]))
+        .unwrap()
+        .into_vec();
+    assert_eq!(gathered, vec![3.0, 1.0, 2.0, 2.0, 30.0, 10.0, 20.0, 20.0]);
+
+    let taken = take_along_axis2x3_axis1_i64(
+        Tensor2::from_array([[1, 2, 3], [10, 20, 30]]),
+        Tensor2::from_array([[2, 0], [1, 2]]),
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(taken, vec![3, 1, 20, 30]);
+
+    let gathered = gather_bool1_axis0(
+        Tensor1::from_array([true, false, true]),
+        Tensor1::from_array([1, 2]),
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(gathered, vec![false, true]);
+
+    let gathered = gather1_scalar_index(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor0::from_scalar(2),
+    )
+    .unwrap();
+    assert_eq!(*gathered.get(), 3.0);
+
+    let gathered = gather1_scalar_index_i32(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor0::from_scalar(-1),
+    )
+    .unwrap();
+    assert_eq!(*gathered.get(), 3.0);
+
+    let out_of_bounds = gather1_scalar_index_i32(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor0::from_scalar(-4),
+    );
+    assert!(out_of_bounds.is_err());
+
     let x4 = Tensor4::from_array([[[[1.0, 2.0, 3.0]], [[10.0, 20.0, 30.0]]]]);
     let squeezed = squeeze1x2x1x3(x4).unwrap();
     assert_eq!(squeezed.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
@@ -1387,6 +1801,14 @@ fn shape_and_indexing_graphs_run() {
     let x2 = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
     let unsqueezed = unsqueeze2x3(x2).unwrap();
     assert_eq!(unsqueezed.into_vec(), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]);
+
+    let gathered = gather6d_axis5(
+        Tensor6::from_vec(vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]).unwrap(),
+        Tensor1::from_array([2, 0]),
+    )
+    .unwrap()
+    .into_vec();
+    assert_eq!(gathered, vec![3.0, 1.0, 30.0, 10.0]);
 
     let rows = concat_rows2x2(
         Tensor2::from_array([[1.0, 2.0]]),
@@ -1435,17 +1857,84 @@ fn rank3_and_rank4_tensors_run() {
 
 #[test]
 fn math_op_graphs_run() {
+    let square_output = square4(Tensor1::from_array([-2.0, -1.5, 0.5, 3.0])).unwrap();
+    assert_close(&square_output.into_vec(), &[4.0, 2.25, 0.25, 9.0]);
+
+    let square_i32_output = square4_i32(Tensor1::from_array([-2, -1, 3, 4])).unwrap();
+    assert_eq!(square_i32_output.into_vec(), vec![4, 1, 9, 16]);
+
+    let reciprocal_output = reciprocal4(Tensor1::from_array([1.0, 2.0, 4.0, -0.5])).unwrap();
+    assert_close(&reciprocal_output.into_vec(), &[1.0, 0.5, 0.25, -2.0]);
+
+    let reciprocal_i32_output = reciprocal4_i32(Tensor1::from_array([1, -1, 2, -2])).unwrap();
+    assert_eq!(reciprocal_i32_output.into_vec(), vec![1, -1, 0, 0]);
+
     let exp_output = exp4(Tensor1::from_array([0.0, 1.0, 2.0, 3.0])).unwrap();
     assert_close(
         &exp_output.into_vec(),
         &[1.0, core::f32::consts::E, 7.389056, 20.085537],
     );
 
+    let (exp2_output, expm1_output) =
+        exp_variants4(Tensor1::from_array([0.0, 1.0e-8, -1.0e-8, 1.0])).unwrap();
+    assert_close(&exp2_output.into_vec(), &[1.0, 1.0, 1.0, 2.0]);
+    let expm1_values = expm1_output.into_vec();
+    assert_close(&expm1_values, &[0.0, 1.0e-8, -1.0e-8, 1.7182817]);
+    assert!(
+        expm1_values[1] > 5.0e-9 && expm1_values[1] < 1.5e-8,
+        "expected expm1(1e-8) to preserve a small positive signal, got {}",
+        expm1_values[1]
+    );
+    assert!(
+        expm1_values[2] < -5.0e-9 && expm1_values[2] > -1.5e-8,
+        "expected expm1(-1e-8) to preserve a small negative signal, got {}",
+        expm1_values[2]
+    );
+
     let log_output = log4(Tensor1::from_array([1.0, core::f32::consts::E, 4.0, 8.0])).unwrap();
     assert_close(&log_output.into_vec(), &[0.0, 1.0, 1.3862944, 2.0794415]);
 
+    let (log2_output, log10_output, log1p_output) = log_variants4(
+        Tensor1::from_array([1.0, 2.0, 4.0, 8.0]),
+        Tensor1::from_array([1.0, 10.0, 100.0, 1000.0]),
+        Tensor1::from_array([0.0, 1.0, 3.0, 9.0]),
+    )
+    .unwrap();
+    assert_close(&log2_output.into_vec(), &[0.0, 1.0, 2.0, 3.0]);
+    assert_close(&log10_output.into_vec(), &[0.0, 1.0, 2.0, 3.0]);
+    assert_close(
+        &log1p_output.into_vec(),
+        &[
+            0.0,
+            core::f32::consts::LN_2,
+            core::f32::consts::LN_2 * 2.0,
+            core::f32::consts::LN_10,
+        ],
+    );
+
     let sqrt_output = sqrt4(Tensor1::from_array([1.0, 4.0, 9.0, 16.0])).unwrap();
     assert_close(&sqrt_output.into_vec(), &[1.0, 2.0, 3.0, 4.0]);
+
+    let (floor_output, ceil_output, round_output, rint_output) =
+        rounding4(Tensor1::from_array([-1.7, -0.5, 1.5, 2.3])).unwrap();
+    assert_close(&floor_output.into_vec(), &[-2.0, -1.0, 1.0, 2.0]);
+    assert_close(&ceil_output.into_vec(), &[-1.0, 0.0, 2.0, 3.0]);
+    assert_close(&round_output.into_vec(), &[-2.0, 0.0, 2.0, 2.0]);
+    assert_close(&rint_output.into_vec(), &[-2.0, 0.0, 2.0, 2.0]);
+
+    let (sin_output, cos_output, tan_output) = trig4(Tensor1::from_array([
+        0.0,
+        core::f32::consts::FRAC_PI_6,
+        core::f32::consts::FRAC_PI_4,
+        -core::f32::consts::FRAC_PI_4,
+    ]))
+    .unwrap();
+    assert_close(&sin_output.into_vec(), &[0.0, 0.5, 0.70710677, -0.70710677]);
+    assert_close(
+        &cos_output.into_vec(),
+        &[1.0, 0.8660254, 0.70710677, 0.70710677],
+    );
+    assert_close(&tan_output.into_vec(), &[0.0, 0.57735026, 1.0, -1.0]);
 
     let tanh_output = tanh4(Tensor1::from_array([0.0, 1.0, -1.0, 2.0])).unwrap();
     assert_close(
@@ -1478,6 +1967,15 @@ fn reduction_and_classifier_op_graphs_run() {
     let mean_output = mean4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
     assert_close(&mean_output.into_vec(), &[2.5]);
 
+    let prod_i32 = prod4_i32(Tensor1::from_array([1, 2, 3, 4])).unwrap();
+    assert_eq!(prod_i32.into_vec(), vec![24]);
+
+    let max_i32 = amax4_i32(Tensor1::from_array([1, 10, 3, 4])).unwrap();
+    assert_eq!(max_i32.into_vec(), vec![10]);
+
+    let min_i64 = amin4_i64(Tensor1::from_array([1, -10, 3, 4])).unwrap();
+    assert_eq!(min_i64.into_vec(), vec![-10]);
+
     let argmax_output = argmax4(Tensor1::from_array([1.0, 10.0, 3.0, 4.0])).unwrap();
     assert_eq!(argmax_output.into_vec(), vec![1i64]);
 
@@ -1491,6 +1989,27 @@ fn reduction_and_classifier_op_graphs_run() {
     let argmax_axis_output =
         argmax2x3_axis1(Tensor2::from_array([[1.0, 9.0, 3.0], [7.0, 2.0, 8.0]])).unwrap();
     assert_eq!(argmax_axis_output.into_vec(), vec![1i64, 2i64]);
+
+    let argmin_full_output =
+        argmin2x3(Tensor2::from_array([[1.0, -9.0, 3.0], [7.0, -9.0, 8.0]])).unwrap();
+    assert_eq!(argmin_full_output.into_vec(), vec![1i64]);
+
+    let argmin_axis_output =
+        argmin2x3_axis1(Tensor2::from_array([[1.0, -9.0, -9.0], [7.0, 2.0, 8.0]])).unwrap();
+    assert_eq!(argmin_axis_output.into_vec(), vec![1i64, 1i64]);
+
+    let var_output = var4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
+    assert_close(&var_output.into_vec(), &[1.25]);
+
+    let std_output = std4(Tensor1::from_array([1.0, 2.0, 3.0, 4.0])).unwrap();
+    assert_close(&std_output.into_vec(), &[1.118034]);
+
+    let std_axis0_output =
+        std2x3_axis0(Tensor2::from_array([[1.0, 2.0, 3.0], [3.0, 6.0, 9.0]])).unwrap();
+    assert_close(&std_axis0_output.into_vec(), &[1.0, 2.0, 3.0]);
+
+    let ptp_i32 = ptp4_i32(Tensor1::from_array([1, 10, -3, 4])).unwrap();
+    assert_eq!(ptp_i32.into_vec(), vec![13]);
 
     let argmax4d_output = argmax4d_axis3(Tensor4::from_array([[
         [[1.0, 5.0, 3.0], [4.0, 2.0, 6.0]],
@@ -1702,10 +2221,24 @@ fn ravel_index(indices: &[usize], shape: &[usize]) -> usize {
 }
 
 fn assert_close(actual: &[f32], expected: &[f32]) {
+    assert_close_with_tolerance(actual, expected, 1.0e-4);
+}
+
+fn assert_close_with_tolerance(actual: &[f32], expected: &[f32], tolerance: f32) {
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(expected) {
         assert!(
-            (actual - expected).abs() < 1.0e-4,
+            (actual - expected).abs() < tolerance,
+            "expected {expected}, got {actual}"
+        );
+    }
+}
+
+fn assert_close_f64(actual: &[f64], expected: &[f64]) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() < 1.0e-30,
             "expected {expected}, got {actual}"
         );
     }

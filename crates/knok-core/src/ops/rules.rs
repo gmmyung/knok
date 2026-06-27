@@ -4,7 +4,7 @@ use super::{
     conv2d_result_type, diagonal_result_type, dot_result_type, inner_result_type,
     matmul_result_type, outer_result_type, trace_result_type, validate_permute, vecdot_result_type,
 };
-use crate::{AxisSpec, CallOp, ElementType, TensorType};
+use crate::{static_eye_literals, AxisSpec, CallOp, ElementType, TensorType};
 
 pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
     match op {
@@ -18,35 +18,40 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
             expect_bool_element(input.elem, "bool reductions")?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "bool reductions expect a tensor input",
-                ));
-            }
             reduction_output_type(&input, *axis)
         }
-        CallOp::Argmax(axis) => {
+        CallOp::Argmax(axis) | CallOp::Argmin(axis) => {
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
-            expect_numeric_element(input.elem, "argmax")?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "argmax expects a tensor input",
-                ));
-            }
-            expect_non_empty_reduction(&input, *axis, "argmax")?;
+            let op_name = if matches!(op, CallOp::Argmax(_)) {
+                "argmax"
+            } else {
+                "argmin"
+            };
+            expect_ordered_element(input.elem, op_name)?;
+            expect_non_empty_reduction(&input, *axis, op_name)?;
             let mut output = reduction_output_type(&input, *axis)?;
             output.elem = ElementType::I64;
             Ok(output)
         }
-        CallOp::Exp
+        CallOp::Ceil
+        | CallOp::Cos
+        | CallOp::Exp
+        | CallOp::Exp2
+        | CallOp::ExpM1
+        | CallOp::Floor
         | CallOp::IsNan
         | CallOp::Log
+        | CallOp::Log1P
+        | CallOp::Log2
+        | CallOp::Log10
         | CallOp::Relu
+        | CallOp::Rint
+        | CallOp::Round
         | CallOp::Sigmoid
+        | CallOp::Sin
         | CallOp::Sqrt
+        | CallOp::Tan
         | CallOp::Tanh => {
             expect_arity(op, args, 1)?;
             let ty = args[0].clone();
@@ -60,13 +65,48 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
                 Ok(ty)
             }
         }
+        CallOp::Reciprocal | CallOp::Square => {
+            expect_arity(op, args, 1)?;
+            let ty = args[0].clone();
+            expect_numeric_element(ty.elem, "elementwise math ops")?;
+            Ok(ty)
+        }
         CallOp::Greater | CallOp::GreaterEqual | CallOp::Less | CallOp::LessEqual => {
             expect_arity(op, args, 2)?;
             comparison_result_type(&args[0], &args[1])
         }
+        CallOp::Gather { target, axis } => {
+            expect_arity(op, args, 2)?;
+            gather_result_type(&args[0], &args[1], target, *axis)
+        }
         CallOp::Equal | CallOp::NotEqual => {
             expect_arity(op, args, 2)?;
             equality_result_type(&args[0], &args[1])
+        }
+        CallOp::Eye(target) => {
+            expect_arity(op, args, 0)?;
+            static_eye_literals(target)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            Ok(target.clone())
+        }
+        CallOp::FullLike => {
+            expect_arity(op, args, 2)?;
+            if args[1].rank() != 0 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!("full_like fill value must be rank-0, got {:?}", args[1]),
+                ));
+            }
+            if args[0].elem != args[1].elem {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "full_like input and fill element types must match, got {:?} and {:?}",
+                        args[0], args[1]
+                    ),
+                ));
+            }
+            Ok(args[0].clone())
         }
         CallOp::LogicalAnd | CallOp::LogicalOr | CallOp::LogicalXor => {
             expect_arity(op, args, 2)?;
@@ -83,6 +123,18 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_numeric_element(args[0].elem, "min/max ops")?;
             expect_numeric_element(args[1].elem, "min/max ops")?;
             binary_result_type(&args[0], &args[1])
+        }
+        CallOp::Max(axis) | CallOp::Min(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            let op_name = if matches!(op, CallOp::Max(_)) {
+                "max"
+            } else {
+                "min"
+            };
+            expect_ordered_element(input.elem, op_name)?;
+            expect_non_empty_reduction(&input, *axis, op_name)?;
+            reduction_output_type(&input, *axis)
         }
         CallOp::Clip => {
             expect_arity(op, args, 3)?;
@@ -178,34 +230,51 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 2)?;
             stack_result_type(&args[0], &args[1], *axis)
         }
+        CallOp::Prod(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            expect_numeric_element(input.elem, "prod")?;
+            reduction_output_type(&input, *axis)
+        }
+        CallOp::Ptp(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            expect_numeric_element(input.elem, "ptp")?;
+            expect_non_empty_reduction(&input, *axis, "ptp")?;
+            reduction_output_type(&input, *axis)
+        }
+        CallOp::Std(axis) | CallOp::Var(axis) => {
+            expect_arity(op, args, 1)?;
+            let input = args[0].clone();
+            let op_name = if matches!(op, CallOp::Std(_)) {
+                "std"
+            } else {
+                "var"
+            };
+            expect_float(op, input.elem)?;
+            expect_non_empty_reduction(&input, *axis, op_name)?;
+            reduction_output_type(&input, *axis)
+        }
         CallOp::Sum(axis) => {
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
             expect_numeric_element(input.elem, "sum")?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "sum expects a tensor input",
-                ));
-            }
             reduction_output_type(&input, *axis)
         }
         CallOp::Mean(axis) => {
             expect_arity(op, args, 1)?;
             let input = args[0].clone();
             expect_float(op, input.elem)?;
-            if input.rank() == 0 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "mean expects a tensor input",
-                ));
-            }
             expect_non_empty_reduction(&input, *axis, "mean")?;
             reduction_output_type(&input, *axis)
         }
         CallOp::Take { axis, index } => {
             expect_arity(op, args, 1)?;
             take_result_type(&args[0], *axis, *index)
+        }
+        CallOp::TakeAlongAxis { axis } => {
+            expect_arity(op, args, 2)?;
+            take_along_axis_result_type(&args[0], &args[1], *axis)
         }
         CallOp::Matmul => {
             expect_arity(op, args, 2)?;
@@ -231,6 +300,24 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
             expect_arity(op, args, 2)?;
             outer_result_type(&args[0], &args[1])
         }
+        CallOp::Arange(target) => {
+            if !target.elem.is_numeric() || target.rank() != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "arange target must be a rank-1 numeric tensor",
+                ));
+            }
+            Ok(target.clone())
+        }
+        CallOp::Linspace(target) => {
+            if !target.elem.is_numeric() || target.rank() != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "linspace target must be a rank-1 numeric tensor",
+                ));
+            }
+            Ok(target.clone())
+        }
         CallOp::Unsqueeze(target) => {
             expect_arity(op, args, 1)?;
             validate_unsqueeze(&args[0], target)?;
@@ -247,6 +334,10 @@ pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result
         CallOp::Where => {
             expect_arity(op, args, 3)?;
             where_result_type(&args[0], &args[1], &args[2])
+        }
+        CallOp::OnesLike | CallOp::ZerosLike => {
+            expect_arity(op, args, 1)?;
+            Ok(args[0].clone())
         }
         CallOp::Graph(_) => Err(syn::Error::new(
             Span::call_site(),
@@ -453,6 +544,70 @@ fn take_result_type(input: &TensorType, axis: usize, index: usize) -> syn::Resul
     Ok(TensorType {
         elem: input.elem,
         shape,
+    })
+}
+
+fn gather_result_type(
+    input: &TensorType,
+    indices: &TensorType,
+    target: &TensorType,
+    axis: usize,
+) -> syn::Result<TensorType> {
+    expect_axis(input, axis)?;
+    expect_index_element(indices.elem, "gather indices")?;
+    if input.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "gather input and output element types must match",
+        ));
+    }
+    let mut shape = Vec::with_capacity(input.rank() + indices.rank().saturating_sub(1));
+    shape.extend_from_slice(&input.shape[..axis]);
+    shape.extend_from_slice(&indices.shape);
+    shape.extend_from_slice(&input.shape[axis + 1..]);
+    if shape != target.shape {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "gather output shape must be input prefix + index shape + input suffix, got target {:?}, expected {:?}",
+                target.shape, shape
+            ),
+        ));
+    }
+    Ok(target.clone())
+}
+
+fn take_along_axis_result_type(
+    input: &TensorType,
+    indices: &TensorType,
+    axis: usize,
+) -> syn::Result<TensorType> {
+    expect_axis(input, axis)?;
+    expect_index_element(indices.elem, "take_along_axis indices")?;
+    if input.rank() != indices.rank() {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "take_along_axis expects input and indices to have equal rank, got input rank {} and index rank {}",
+                input.rank(),
+                indices.rank()
+            ),
+        ));
+    }
+    for dim_axis in 0..input.rank() {
+        if dim_axis != axis && input.shape[dim_axis] != indices.shape[dim_axis] {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "take_along_axis dimension {dim_axis} must match outside axis {axis}, got input dimension {} and index dimension {}",
+                    input.shape[dim_axis], indices.shape[dim_axis]
+                ),
+            ));
+        }
+    }
+    Ok(TensorType {
+        elem: input.elem,
+        shape: indices.shape.clone(),
     })
 }
 
@@ -664,6 +819,28 @@ pub(crate) fn expect_numeric_element(elem: ElementType, op_name: &str) -> syn::R
         Err(syn::Error::new(
             Span::call_site(),
             format!("{op_name} {verb} numeric tensors only"),
+        ))
+    }
+}
+
+fn expect_ordered_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+    if elem.is_numeric() || elem.is_bool() {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} supports ordered tensor elements only"),
+        ))
+    }
+}
+
+fn expect_index_element(elem: ElementType, op_name: &str) -> syn::Result<()> {
+    if matches!(elem, ElementType::I32 | ElementType::I64) {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} must be i32 or i64"),
         ))
     }
 }
