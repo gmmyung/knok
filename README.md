@@ -285,21 +285,31 @@ They cover the recommended hosted workflow:
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
   `pow`, `square`, `reciprocal`, `relu`, NumPy-style `matmul` for ranks 1-6,
-  NHWC/HWCF `conv2d` with static `Pad<TOP, BOTTOM, LEFT, RIGHT>`,
-  `Stride<H, W>`, and `Dilation<H, W>`, and `Groups<N>` options, rank-2
-  `transpose`, explicit `permute::<Target, AXES...>`, reshape across ranks 0-6,
-  `broadcast`, `squeeze`, `unsqueeze`, static `slice`, static `take`,
-  tensor-index `gather`, `take_along_axis`,
-  `zeros_like`, `ones_like`, `full_like`, static literal `arange`, static
-  literal `linspace`, static square `eye`/`identity`, binary `concat`, binary
-  `stack`, full-tensor and axis-aware `sum`, `prod`, `mean`, `max` / `amax`,
-  `min` / `amin`, `argmax`, `argmin`, `var`, `std`, and `ptp`,
-  full-tensor and axis-aware `softmax`,
-  `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `floor`,
-  `ceil`, `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`.
+  `dot`, `vecdot`, `inner`, `outer`, `trace`, `diagonal`, NHWC/HWCF `conv2d`
+  with static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
+  `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
+  `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
+  `squeeze`, `unsqueeze`, static `slice`, static `take`, tensor-index
+  `gather`, `take_along_axis`, `zeros_like`, `ones_like`, `full_like`, static
+  literal `arange`, static literal `linspace`, static square `eye`/`identity`,
+  binary `concat`, binary `stack`, full-tensor and axis-aware `sum`, `prod`,
+  `mean`, `max` / `amax`, `min` / `amin`, `argmax`, `argmin`, `var`, `std`,
+  and `ptp`, full-tensor and axis-aware `softmax`, `exp`, `exp2`, `expm1`,
+  `log`, `log2`, `log10`, `log1p`, `sqrt`, `floor`, `ceil`, `round`, `rint`,
+  `sin`, `cos`, `tan`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `prod::<1>(x)`, `mean::<0>(x)`, `amax::<1>(x)`, `var::<1>(x)`,
   `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
+- `dot(x, y)` accepts rank-1 numeric vectors. `vecdot(x, y)` contracts the last
+  axis of same-shaped numeric tensors, and `vecdot::<AXIS>(x, y)` contracts a
+  specific axis. `inner(x, y)` contracts the last axis of both numeric operands
+  and treats scalar operands as elementwise multiplication. `outer(x, y)`
+  flattens both operands and returns a rank-2 outer product.
+- `trace(x)` and `diagonal(x)` use the last two axes by default; pass
+  `trace::<AXIS0, AXIS1>(x)` or `diagonal::<AXIS0, AXIS1>(x)` to select explicit
+  axes. `trace` requires equal diagonal dimensions and numeric tensors.
+  `diagonal` supports all tensor element types and also requires equal diagonal
+  dimensions.
 - `conv2d(x, k)` defaults to valid convolution. Options use type-style generic
   markers, for example `conv2d::<Pad<1, 1, 1, 1>, Stride<2, 2>>(x, k)`.
   `Groups<N>` follows PyTorch-style grouped convolution shape rules: input
@@ -313,7 +323,7 @@ They cover the recommended hosted workflow:
   Integer tensors support arithmetic, `abs`, `square`, `reciprocal`,
   `minimum`, `maximum`, `clip`, reshape/broadcast, static creators, `sum`,
   `prod`, `max` / `amax`, `min` / `amin`, `ptp`, `argmax`, `argmin`, matmul,
-  and conv lowering where IREE accepts the resulting MLIR.
+  linalg contractions, and conv lowering where IREE accepts the resulting MLIR.
   Bool tensors support `zeros_like`, `ones_like`, `full_like`, and
   `eye`/`identity`; `arange` and `linspace` require numeric targets.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
@@ -413,10 +423,12 @@ shapes currently include:
 - `matmul_128x128`: `Tensor2<f32, 128, 128> @ Tensor2<f32, 128, 128>`
 - `batched_matmul_16x128x128`: `Tensor3<f32, 16, 128, 128>` where each batch
   computes `128x128 @ 128x128`
+- `vecdot_128x1024_axis1`: row-wise vector dot over `Tensor2<f32, 128, 1024>`
 - `conv2d_nhwc_16x32x32x3_hwcf_3x3x3x16`
 - `mlp_128x128x64`: `128x128 @ 128x64 + 128x64`, then `relu`
 - `softmax_64x1000`: `Tensor2<f32, 64, 1000>`
 
 Comparison groups include `ndarray` equivalents for matmul, batched matmul,
-MLP, softmax, and a direct NHWC/HWCF convolution loop over `ndarray::Array4`;
-`nalgebra` is included for dense `128x128` matrix multiplication.
+vecdot, MLP, softmax, and a direct NHWC/HWCF convolution loop over
+`ndarray::Array4`; `nalgebra` is included for dense `128x128` matrix
+multiplication.

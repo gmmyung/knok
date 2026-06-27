@@ -198,6 +198,15 @@ impl<'a> Lowerer<'a> {
                     let kernel = self.lower_expr(&args[1])?;
                     self.conv2d(input, kernel, options)
                 }
+                CallOp::Diagonal(axes) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.diagonal(input, *axes)
+                }
+                CallOp::Dot => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.dot(lhs, rhs)
+                }
                 CallOp::Arange(ty) => {
                     let values = static_arange_literals(ty, args)
                         .map_err(|message| anyhow::anyhow!(message))?;
@@ -310,6 +319,11 @@ impl<'a> Lowerer<'a> {
                     let rhs = self.lower_expr(&args[1])?;
                     self.logical_binary("arith.xori", lhs, rhs)
                 }
+                CallOp::Inner => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.inner(lhs, rhs)
+                }
                 CallOp::Relu => {
                     let value = self.lower_expr(&args[0])?;
                     let zero = self.zero_like(&value.ty)?;
@@ -356,6 +370,11 @@ impl<'a> Lowerer<'a> {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.emit_binary("math.powf", lhs, rhs)
+                }
+                CallOp::Outer => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.outer(lhs, rhs)
                 }
                 CallOp::OnesLike => {
                     let input = self.lower_expr(&args[0])?;
@@ -447,6 +466,10 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.take(input, *axis, *index)
                 }
+                CallOp::Trace(axes) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.trace(input, *axes)
+                }
                 CallOp::TakeAlongAxis { axis } => {
                     let input = self.lower_expr(&args[0])?;
                     let indices = self.lower_expr(&args[1])?;
@@ -455,6 +478,11 @@ impl<'a> Lowerer<'a> {
                 CallOp::Unsqueeze(ty) => {
                     let input = self.lower_expr(&args[0])?;
                     self.reshape(input, ty)
+                }
+                CallOp::Vecdot(axis) => {
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    self.vecdot(lhs, rhs, *axis)
                 }
                 CallOp::Var(axis) => {
                     let input = self.lower_expr(&args[0])?;

@@ -17,6 +17,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Added `Tensor5` and `Tensor6` containers and rank-6 graph support.
 - Added rank-6 NumPy-style shape, broadcasting, selection, and reduction test
   coverage for existing graph ops.
+- Added static linalg contraction graph ops: `dot`, `vecdot`, `inner`, `outer`,
+  `trace`, and `diagonal`.
 - Added full-tensor and axis-aware `prod`, `max` / `amax`, `min` / `amin`,
   `argmin`, `var`, `std`, and `ptp` graph ops.
 - Added tensor-index `gather` and `take_along_axis` graph operations with

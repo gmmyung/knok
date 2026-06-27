@@ -113,6 +113,61 @@ fn mm2x2(x: Tensor2<f32, 2, 2>, y: Tensor2<f32, 2, 2>) -> Tensor2<f32, 2, 2> {
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn linalg_dot4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor0<f32> {
+    dot(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn vecdot2x3_axis1(x: Tensor2<f32, 2, 3>, y: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
+    vecdot::<1>(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn inner2x3_4x3(x: Tensor2<f32, 2, 3>, y: Tensor2<f32, 4, 3>) -> Tensor2<f32, 2, 4> {
+    inner(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn inner_scalar_vector(x: Tensor0<f32>, y: Tensor1<f32, 3>) -> Tensor1<f32, 3> {
+    inner(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn outer2x3(x: Tensor1<f32, 2>, y: Tensor1<f32, 3>) -> Tensor2<f32, 2, 3> {
+    outer(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn outer_vector_matrix(x: Tensor1<f32, 2>, y: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 6> {
+    outer(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn trace2x2(x: Tensor2<f32, 2, 2>) -> Tensor0<f32> {
+    trace(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn trace3d_axes(x: Tensor3<f32, 2, 3, 2>) -> Tensor1<f32, 3> {
+    trace::<0, 2>(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn diagonal2x2(x: Tensor2<f32, 2, 2>) -> Tensor1<f32, 2> {
+    diagonal(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn diagonal_bool2x2(x: Tensor2<bool, 2, 2>) -> Tensor1<bool, 2> {
+    diagonal(x)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
+fn linalg_dot4_i32(x: Tensor1<i32, 4>, y: Tensor1<i32, 4>) -> Tensor0<i32> {
+    dot(x, y)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn transpose2x3(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 3, 2> {
     transpose(x)
 }
@@ -1189,6 +1244,86 @@ fn matmul_graph_runs() {
     let y = Tensor2::from_array([[5.0, 6.0], [7.0, 8.0]]);
     let output = mm2x2(x, y).unwrap();
     assert_eq!(output.into_vec(), vec![19.0, 22.0, 43.0, 50.0]);
+}
+
+#[test]
+fn linalg_contraction_graphs_run() {
+    let dot = linalg_dot4(
+        Tensor1::from_array([1.0, 2.0, 3.0, 4.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0, 40.0]),
+    )
+    .unwrap();
+    assert_eq!(dot.into_vec(), vec![300.0]);
+
+    let vecdot = vecdot2x3_axis1(
+        Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+        Tensor2::from_array([[10.0, 20.0, 30.0], [1.0, 2.0, 3.0]]),
+    )
+    .unwrap();
+    assert_eq!(vecdot.into_vec(), vec![140.0, 32.0]);
+
+    let inner = inner2x3_4x3(
+        Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+        Tensor2::from_array([
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [10.0, 20.0, 30.0],
+        ]),
+    )
+    .unwrap();
+    assert_eq!(
+        inner.into_vec(),
+        vec![1.0, 2.0, 3.0, 140.0, 4.0, 5.0, 6.0, 320.0]
+    );
+
+    let scaled = inner_scalar_vector(
+        Tensor0::from_scalar(2.0),
+        Tensor1::from_array([3.0, 4.0, 5.0]),
+    )
+    .unwrap();
+    assert_eq!(scaled.into_vec(), vec![6.0, 8.0, 10.0]);
+
+    let outer = outer2x3(
+        Tensor1::from_array([2.0, 3.0]),
+        Tensor1::from_array([10.0, 20.0, 30.0]),
+    )
+    .unwrap();
+    assert_eq!(outer.into_vec(), vec![20.0, 40.0, 60.0, 30.0, 60.0, 90.0]);
+
+    let outer = outer_vector_matrix(
+        Tensor1::from_array([2.0, 3.0]),
+        Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]),
+    )
+    .unwrap();
+    assert_eq!(
+        outer.into_vec(),
+        vec![2.0, 4.0, 6.0, 20.0, 40.0, 60.0, 3.0, 6.0, 9.0, 30.0, 60.0, 90.0,]
+    );
+
+    let trace = trace2x2(Tensor2::from_array([[1.0, 2.0], [3.0, 4.0]])).unwrap();
+    assert_eq!(trace.into_vec(), vec![5.0]);
+
+    let trace_axes = trace3d_axes(Tensor3::from_array([
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+        [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]],
+    ]))
+    .unwrap();
+    assert_eq!(trace_axes.into_vec(), vec![21.0, 43.0, 65.0]);
+
+    let diagonal = diagonal2x2(Tensor2::from_array([[1.0, 2.0], [4.0, 5.0]])).unwrap();
+    assert_eq!(diagonal.into_vec(), vec![1.0, 5.0]);
+
+    let diagonal_bool =
+        diagonal_bool2x2(Tensor2::from_array([[true, false], [false, true]])).unwrap();
+    assert_eq!(diagonal_bool.into_vec(), vec![true, true]);
+
+    let dot_i32 = linalg_dot4_i32(
+        Tensor1::from_array([1, 2, 3, 4]),
+        Tensor1::from_array([10, 20, 30, 40]),
+    )
+    .unwrap();
+    assert_eq!(dot_i32.into_vec(), vec![300]);
 }
 
 #[test]
