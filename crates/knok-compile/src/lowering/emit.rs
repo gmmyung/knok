@@ -26,6 +26,19 @@ impl Lowerer<'_> {
         Ok(Value::tensor(name, ty.clone()))
     }
 
+    pub(super) fn one_like(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
+        if ty.rank() == 0 {
+            return self.constant(ty.elem.one_literal(), ty.elem);
+        }
+        let name = self.fresh();
+        self.lines.push(format!(
+            "    {name} = arith.constant dense<{}> : {}",
+            ty.elem.one_literal(),
+            ty.mlir_type()
+        ));
+        Ok(Value::tensor(name, ty.clone()))
+    }
+
     pub(super) fn zero_initialized_tensor(&mut self, ty: &TensorType) -> anyhow::Result<String> {
         let empty = self.fresh();
         self.lines
