@@ -1,6 +1,8 @@
 use proc_macro2::Span;
 
-use crate::ops::{broadcast_shape_slices, expect_numeric_element, infer_call_result};
+use crate::ops::{
+    broadcast_shape_slices, expect_numeric_element, infer_call_result, infer_call_results,
+};
 use crate::{
     static_arange_literals, static_eye_literals, static_linspace_literals, CallOp, Expr, Graph,
     GraphSignature, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue,
@@ -72,12 +74,29 @@ fn type_let_value(
             op: CallOp::Graph(name),
             args,
         } => graph_call_output_types(name, args, env, graph_signatures, current_graph)?,
+        Expr::Call { op, args } => {
+            call_output_types(op, args, env, graph_signatures, current_graph)?
+        }
         _ => vec![type_expr(expr, env, graph_signatures, current_graph)?.ty],
     };
     Ok(TypedValue {
         kind: expr.clone(),
         tys,
     })
+}
+
+fn call_output_types(
+    op: &CallOp,
+    args: &[Expr],
+    env: &[(String, TensorType)],
+    graph_signatures: &[(String, GraphSignature)],
+    current_graph: &str,
+) -> syn::Result<Vec<TensorType>> {
+    let arg_tys = args
+        .iter()
+        .map(|arg| type_expr(arg, env, graph_signatures, current_graph).map(|typed| typed.ty))
+        .collect::<syn::Result<Vec<_>>>()?;
+    infer_call_results(op, &arg_tys)
 }
 
 fn type_expr(

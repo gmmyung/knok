@@ -9,16 +9,51 @@ use super::shape::{
 };
 
 impl Lowerer<'_> {
-    pub(super) fn transpose(&mut self, input: Value) -> anyhow::Result<Value> {
+    pub(super) fn transpose(&mut self, input: Value, axes: &[usize]) -> anyhow::Result<Value> {
         if input.ty.rank() <= 1 {
             return Ok(input);
         }
+        if axes.is_empty() {
+            let ty = TensorType {
+                elem: input.ty.elem,
+                shape: input.ty.shape.iter().rev().copied().collect(),
+            };
+            let axes = (0..input.ty.rank()).rev().collect::<Vec<_>>();
+            self.permute(input, &ty, &axes)
+        } else {
+            self.permute_dims(input, axes)
+        }
+    }
+
+    pub(super) fn permute_dims(&mut self, input: Value, axes: &[usize]) -> anyhow::Result<Value> {
         let ty = TensorType {
             elem: input.ty.elem,
-            shape: input.ty.shape.iter().rev().copied().collect(),
+            shape: axes.iter().map(|axis| input.ty.shape[*axis]).collect(),
         };
-        let axes = (0..input.ty.rank()).rev().collect::<Vec<_>>();
-        self.permute(input, &ty, &axes)
+        self.permute(input, &ty, axes)
+    }
+
+    pub(super) fn swapaxes(
+        &mut self,
+        input: Value,
+        axis0: usize,
+        axis1: usize,
+    ) -> anyhow::Result<Value> {
+        let mut axes = (0..input.ty.rank()).collect::<Vec<_>>();
+        axes.swap(axis0, axis1);
+        self.permute_dims(input, &axes)
+    }
+
+    pub(super) fn moveaxis(
+        &mut self,
+        input: Value,
+        source: usize,
+        destination: usize,
+    ) -> anyhow::Result<Value> {
+        let mut axes = (0..input.ty.rank()).collect::<Vec<_>>();
+        let axis = axes.remove(source);
+        axes.insert(destination, axis);
+        self.permute_dims(input, &axes)
     }
 
     pub(super) fn permute(
@@ -109,6 +144,30 @@ impl Lowerer<'_> {
             ty.mlir_type()
         ));
         Ok(Value::tensor(name, ty.clone()))
+    }
+
+    pub(super) fn split(
+        &mut self,
+        input: Value,
+        axis: usize,
+        sections: &[usize],
+    ) -> anyhow::Result<Vec<Value>> {
+        let mut offset = 0;
+        sections
+            .iter()
+            .map(|section| {
+                let mut starts = vec![0; input.ty.rank()];
+                starts[axis] = offset;
+                let mut shape = input.ty.shape.clone();
+                shape[axis] = *section;
+                let ty = TensorType {
+                    elem: input.ty.elem,
+                    shape,
+                };
+                offset += *section;
+                self.slice(input.clone(), &ty, &starts)
+            })
+            .collect()
     }
 
     pub(super) fn take(
@@ -405,6 +464,192 @@ impl Lowerer<'_> {
         let lhs = self.expand_insert_axis(lhs, &unit_ty, axis)?;
         let rhs = self.expand_insert_axis(rhs, &unit_ty, axis)?;
         self.concat(lhs, rhs, axis)
+    }
+
+    pub(super) fn tile(&mut self, input: Value, multiples: &[usize]) -> anyhow::Result<Value> {
+        if input.ty.rank() == 0 {
+            return Ok(input);
+        }
+        let final_ty = TensorType {
+            elem: input.ty.elem,
+            shape: input
+                .ty
+                .shape
+                .iter()
+                .zip(multiples)
+                .map(|(dim, multiple)| dim * multiple)
+                .collect(),
+        };
+        if multiples.contains(&0) {
+            return self.empty_tensor(&final_ty);
+        }
+        let mut value = input;
+        for (axis, multiple) in multiples.iter().copied().enumerate() {
+            if multiple <= 1 {
+                continue;
+            }
+            let pieces = (0..multiple).map(|_| value.clone()).collect::<Vec<_>>();
+            value = self.concat_many(pieces, axis)?;
+        }
+        Ok(value)
+    }
+
+    pub(super) fn repeat(
+        &mut self,
+        input: Value,
+        axis: usize,
+        count: usize,
+    ) -> anyhow::Result<Value> {
+        let mut output_ty = input.ty.clone();
+        output_ty.shape[axis] *= count;
+        if count == 0 || input.ty.shape[axis] == 0 {
+            return self.empty_tensor(&output_ty);
+        }
+        if count == 1 {
+            return Ok(input);
+        }
+
+        let mut pieces = Vec::new();
+        for index in 0..input.ty.shape[axis] {
+            let mut starts = vec![0; input.ty.rank()];
+            starts[axis] = index;
+            let mut unit_shape = input.ty.shape.clone();
+            unit_shape[axis] = 1;
+            let unit_ty = TensorType {
+                elem: input.ty.elem,
+                shape: unit_shape,
+            };
+            let unit = self.slice(input.clone(), &unit_ty, &starts)?;
+            pieces.push(self.concat_many((0..count).map(|_| unit.clone()).collect(), axis)?);
+        }
+        self.concat_many(pieces, axis)
+    }
+
+    pub(super) fn flip(&mut self, input: Value, axes: &[usize]) -> anyhow::Result<Value> {
+        let axes = if axes.is_empty() {
+            (0..input.ty.rank()).collect::<Vec<_>>()
+        } else {
+            axes.to_vec()
+        };
+        let mut value = input;
+        for axis in axes {
+            let dim = value.ty.shape[axis];
+            if dim <= 1 {
+                continue;
+            }
+            let mut pieces = Vec::with_capacity(dim);
+            for index in (0..dim).rev() {
+                let mut starts = vec![0; value.ty.rank()];
+                starts[axis] = index;
+                let mut unit_shape = value.ty.shape.clone();
+                unit_shape[axis] = 1;
+                let unit_ty = TensorType {
+                    elem: value.ty.elem,
+                    shape: unit_shape,
+                };
+                pieces.push(self.slice(value.clone(), &unit_ty, &starts)?);
+            }
+            value = self.concat_many(pieces, axis)?;
+        }
+        Ok(value)
+    }
+
+    pub(super) fn roll(
+        &mut self,
+        input: Value,
+        axis: usize,
+        shift: usize,
+    ) -> anyhow::Result<Value> {
+        let dim = input.ty.shape[axis];
+        if dim <= 1 {
+            return Ok(input);
+        }
+        let offset = shift % dim;
+        if offset == 0 {
+            return Ok(input);
+        }
+        let split = dim - offset;
+        let mut high_starts = vec![0; input.ty.rank()];
+        high_starts[axis] = split;
+        let mut high_shape = input.ty.shape.clone();
+        high_shape[axis] = offset;
+        let high_ty = TensorType {
+            elem: input.ty.elem,
+            shape: high_shape,
+        };
+        let high = self.slice(input.clone(), &high_ty, &high_starts)?;
+
+        let low_starts = vec![0; input.ty.rank()];
+        let mut low_shape = input.ty.shape.clone();
+        low_shape[axis] = split;
+        let low_ty = TensorType {
+            elem: input.ty.elem,
+            shape: low_shape,
+        };
+        let low = self.slice(input, &low_ty, &low_starts)?;
+        self.concat(high, low, axis)
+    }
+
+    pub(super) fn pad(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        lows: &[usize],
+    ) -> anyhow::Result<Value> {
+        let highs = ty
+            .shape
+            .iter()
+            .zip(&input.ty.shape)
+            .zip(lows)
+            .map(|((output, input), low)| output - input - low)
+            .collect::<Vec<_>>();
+        if lows.iter().all(|low| *low == 0) && highs.iter().all(|high| *high == 0) {
+            return Ok(input);
+        }
+        let zero = self.fresh();
+        self.lines.push(format!(
+            "    {zero} = arith.constant {} : {}",
+            ty.elem.zero_literal(),
+            ty.elem.mlir_type()
+        ));
+        let name = self.fresh();
+        let lows = format_usize_list(lows);
+        let highs = format_usize_list(&highs);
+        self.lines.push(format!(
+            "    {name} = tensor.pad {} low{lows} high{highs} {{",
+            input.name
+        ));
+        let block_args = (0..ty.rank())
+            .map(|axis| format!("%d{axis}: index"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.lines.push(format!("    ^bb0({block_args}):"));
+        self.lines.push(format!(
+            "      tensor.yield {zero} : {}",
+            ty.elem.mlir_type()
+        ));
+        self.lines.push(format!(
+            "    }} : {} to {}",
+            input.ty.mlir_type(),
+            ty.mlir_type()
+        ));
+        Ok(Value::tensor(name, ty.clone()))
+    }
+
+    fn concat_many(&mut self, mut values: Vec<Value>, axis: usize) -> anyhow::Result<Value> {
+        let Some(first) = values.first().cloned() else {
+            anyhow::bail!("internal error: concat_many needs at least one tensor");
+        };
+        values
+            .drain(1..)
+            .try_fold(first, |acc, value| self.concat(acc, value, axis))
+    }
+
+    fn empty_tensor(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
+        let empty = self.fresh();
+        self.lines
+            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        Ok(Value::tensor(empty, ty.clone()))
     }
 
     fn insert_slice(

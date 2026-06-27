@@ -571,6 +571,25 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "maximum")?;
                     CallOp::Maximum
                 }
+                "flip" => {
+                    reject_types(&generics, &path.path, "flip")?;
+                    CallOp::Flip(generics.consts.clone())
+                }
+                "moveaxis" => {
+                    reject_types(&generics, &path.path, "moveaxis")?;
+                    let values = expect_const_count(&generics, &path.path, "moveaxis", 2)?;
+                    CallOp::MoveAxis {
+                        source: values[0],
+                        destination: values[1],
+                    }
+                }
+                "pad" => {
+                    let target = expect_target_type(&generics, &path.path, "pad")?;
+                    CallOp::Pad {
+                        target,
+                        lows: generics.consts.clone(),
+                    }
+                }
                 "pow" => {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
@@ -594,6 +613,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                         axes: generics.consts.clone(),
                     }
                 }
+                "permute_dims" => {
+                    reject_types(&generics, &path.path, "permute_dims")?;
+                    CallOp::PermuteDims(generics.consts.clone())
+                }
                 "equal" => {
                     reject_any_generics(&generics, &path.path, "equal")?;
                     CallOp::Equal
@@ -610,6 +633,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "relu")?;
                     CallOp::Relu
                 }
+                "repeat" => {
+                    reject_types(&generics, &path.path, "repeat")?;
+                    let values = expect_const_count(&generics, &path.path, "repeat", 2)?;
+                    CallOp::Repeat {
+                        axis: values[0],
+                        count: values[1],
+                    }
+                }
                 "reciprocal" => {
                     reject_any_generics(&generics, &path.path, "reciprocal")?;
                     CallOp::Reciprocal
@@ -617,6 +648,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "reshape" => {
                     reject_consts(&generics, &path.path, "reshape")?;
                     CallOp::Reshape(expect_target_type(&generics, &path.path, "reshape")?)
+                }
+                "roll" => {
+                    reject_types(&generics, &path.path, "roll")?;
+                    let values = expect_const_count(&generics, &path.path, "roll", 2)?;
+                    CallOp::Roll {
+                        axis: values[0],
+                        shift: values[1],
+                    }
                 }
                 "rint" => {
                     reject_any_generics(&generics, &path.path, "rint")?;
@@ -653,6 +692,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "sqrt")?;
                     CallOp::Sqrt
                 }
+                "split" => {
+                    reject_types(&generics, &path.path, "split")?;
+                    let values = expect_min_const_count(&generics, &path.path, "split", 2)?;
+                    CallOp::Split {
+                        axis: values[0],
+                        sections: values[1..].to_vec(),
+                    }
+                }
                 "square" => {
                     reject_any_generics(&generics, &path.path, "square")?;
                     CallOp::Square
@@ -664,6 +711,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "stack" => {
                     reject_types(&generics, &path.path, "stack")?;
                     CallOp::Stack(expect_one_const(&generics, &path.path, "stack")?)
+                }
+                "swapaxes" => {
+                    reject_types(&generics, &path.path, "swapaxes")?;
+                    let values = expect_const_count(&generics, &path.path, "swapaxes", 2)?;
+                    CallOp::SwapAxes {
+                        axis0: values[0],
+                        axis1: values[1],
+                    }
                 }
                 "std" => {
                     reject_types(&generics, &path.path, "std")?;
@@ -700,8 +755,12 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     }
                 }
                 "transpose" => {
-                    reject_any_generics(&generics, &path.path, "transpose")?;
-                    CallOp::Transpose
+                    reject_types(&generics, &path.path, "transpose")?;
+                    CallOp::Transpose(generics.consts.clone())
+                }
+                "tile" => {
+                    reject_types(&generics, &path.path, "tile")?;
+                    CallOp::Tile(generics.consts.clone())
                 }
                 "where" | "r#where" => {
                     reject_any_generics(&generics, &path.path, "where")?;
@@ -1051,6 +1110,25 @@ fn expect_const_count<'a>(
             path.span(),
             format!(
                 "{op_name} expects {expected} const generic arguments, got {}",
+                generics.consts.len()
+            ),
+        ))
+    }
+}
+
+fn expect_min_const_count<'a>(
+    generics: &'a CallGenerics,
+    path: &syn::Path,
+    op_name: &str,
+    min: usize,
+) -> syn::Result<&'a [usize]> {
+    if generics.consts.len() >= min {
+        Ok(&generics.consts)
+    } else {
+        Err(syn::Error::new(
+            path.span(),
+            format!(
+                "{op_name} expects at least {min} const generic arguments, got {}",
                 generics.consts.len()
             ),
         ))
