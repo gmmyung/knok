@@ -1,5 +1,9 @@
 # knok
 
+[![CI](https://github.com/gmmyung/knok/actions/workflows/rust.yml/badge.svg)](https://github.com/gmmyung/knok/actions/workflows/rust.yml)
+[![docs.rs](https://docs.rs/knok/badge.svg)](https://docs.rs/knok)
+[![crates.io](https://img.shields.io/crates/v/knok.svg)](https://crates.io/crates/knok)
+
 `knok` is an experimental Rust linalg graph frontend that compiles restricted
 Rust function blocks into IREE VM bytecode at compile time.
 
