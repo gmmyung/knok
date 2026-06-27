@@ -269,6 +269,117 @@ fn infers_reshape_broadcast_and_sum_shapes() {
 }
 
 #[test]
+fn infers_static_creator_shapes() {
+    for item in [
+        parse_quote! {
+            fn zeros_like_rank6(x: Tensor6<i32, 1, 1, 1, 1, 2, 3>) -> Tensor6<i32, 1, 1, 1, 1, 2, 3> {
+                zeros_like(x)
+            }
+        },
+        parse_quote! {
+            fn ones_like_bool(x: Tensor2<bool, 2, 2>) -> Tensor2<bool, 2, 2> {
+                ones_like(x)
+            }
+        },
+        parse_quote! {
+            fn full_like_vec(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
+                full_like(x, 3.5)
+            }
+        },
+        parse_quote! {
+            fn arange_i32() -> Tensor1<i32, 4> {
+                arange::<Tensor1<i32, 4>>(0, 8, 2)
+            }
+        },
+        parse_quote! {
+            fn arange_f32() -> Tensor1<f32, 4> {
+                arange::<Tensor1<f32, 4>>(1.5, -0.5, -0.5)
+            }
+        },
+        parse_quote! {
+            fn linspace_f32() -> Tensor1<f32, 5> {
+                linspace::<Tensor1<f32, 5>>(0.0, 1.0)
+            }
+        },
+        parse_quote! {
+            fn linspace_i64() -> Tensor1<i64, 4> {
+                linspace::<Tensor1<i64, 4>>(2i64, 8i64)
+            }
+        },
+        parse_quote! {
+            fn eye3() -> Tensor2<f32, 3, 3> {
+                eye::<Tensor2<f32, 3, 3>>()
+            }
+        },
+        parse_quote! {
+            fn identity_bool() -> Tensor2<bool, 2, 2> {
+                identity::<Tensor2<bool, 2, 2>>()
+            }
+        },
+    ] {
+        let graph = parse(item).unwrap();
+        assert_eq!(graph.body[0].ty, graph.outputs[0]);
+    }
+}
+
+#[test]
+fn static_creator_float_literals_preserve_tiny_values() {
+    let f32_target = TensorType {
+        elem: ElementType::F32,
+        shape: vec![3],
+    };
+    let arange = static_arange_literals(
+        &f32_target,
+        &[
+            Expr::Const {
+                value: "1e-20".to_string(),
+                elem: ElementType::F32,
+            },
+            Expr::Const {
+                value: "4e-20".to_string(),
+                elem: ElementType::F32,
+            },
+            Expr::Const {
+                value: "1e-20".to_string(),
+                elem: ElementType::F32,
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(arange.len(), 3);
+    for literal in &arange {
+        assert_ne!(literal, "0.0");
+        assert_ne!(literal.parse::<f64>().unwrap(), 0.0);
+    }
+
+    let f64_target = TensorType {
+        elem: ElementType::F64,
+        shape: vec![3],
+    };
+    let linspace = static_linspace_literals(
+        &f64_target,
+        &[
+            Expr::Const {
+                value: "1e-20".to_string(),
+                elem: ElementType::F64,
+            },
+            Expr::Const {
+                value: "3e-20".to_string(),
+                elem: ElementType::F64,
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(linspace.len(), 3);
+    for literal in &linspace {
+        assert_ne!(literal, "0.0");
+        assert_ne!(literal.parse::<f64>().unwrap(), 0.0);
+    }
+}
+
+#[test]
 fn infers_static_shape_and_indexing_ops() {
     for item in [
         parse_quote! {
@@ -279,6 +390,30 @@ fn infers_static_shape_and_indexing_ops() {
         parse_quote! {
             fn take_axis1(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
                 take::<1, 2>(x)
+            }
+        },
+        parse_quote! {
+            fn gather_axis0(
+                x: Tensor2<f32, 2, 3>,
+                indices: Tensor1<i64, 2>,
+            ) -> Tensor2<f32, 2, 3> {
+                gather::<Tensor2<f32, 2, 3>, 0>(x, indices)
+            }
+        },
+        parse_quote! {
+            fn gather_axis1_matrix_indices(
+                x: Tensor2<f32, 2, 3>,
+                indices: Tensor2<i32, 2, 2>,
+            ) -> Tensor3<f32, 2, 2, 2> {
+                gather::<Tensor3<f32, 2, 2, 2>, 1>(x, indices)
+            }
+        },
+        parse_quote! {
+            fn take_along_axis1(
+                x: Tensor2<f32, 2, 3>,
+                indices: Tensor2<i64, 2, 2>,
+            ) -> Tensor2<f32, 2, 2> {
+                take_along_axis::<1>(x, indices)
             }
         },
         parse_quote! {
@@ -421,6 +556,18 @@ fn infers_numpy_style_rank_parity_ops_through_rank6() {
         parse_quote! {
             fn unary_rank6(x: Tensor6<f32, 1, 1, 1, 1, 2, 3>) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
                 sigmoid(tanh(sqrt(exp(log(abs(x))))))
+            }
+        },
+        parse_quote! {
+            fn elementwise_math_rank0(x: Tensor0<f32>) -> Tensor0<f32> {
+                rint(round(ceil(floor(tan(cos(sin(exp2(expm1(log2(log10(log1p(square(reciprocal(x))))))))))))))
+            }
+        },
+        parse_quote! {
+            fn elementwise_math_rank6(
+                x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
+            ) -> Tensor6<f32, 1, 1, 1, 1, 2, 3> {
+                rint(round(ceil(floor(tan(cos(sin(exp2(expm1(log2(log10(log1p(square(reciprocal(x))))))))))))))
             }
         },
         parse_quote! {
@@ -1037,6 +1184,52 @@ fn rejects_invalid_reshape_and_broadcast_shapes() {
     })
     .unwrap_err();
     assert!(take.to_string().contains("out of bounds"));
+
+    let gather_dtype = parse(parse_quote! {
+        fn bad_gather_dtype(
+            x: Tensor2<f32, 2, 4>,
+            indices: Tensor1<f32, 2>,
+        ) -> Tensor2<f32, 2, 4> {
+            gather::<Tensor2<f32, 2, 4>, 0>(x, indices)
+        }
+    })
+    .unwrap_err();
+    assert!(gather_dtype.to_string().contains("must be i32 or i64"));
+
+    let gather_shape = parse(parse_quote! {
+        fn bad_gather_shape(
+            x: Tensor2<f32, 2, 4>,
+            indices: Tensor1<i64, 2>,
+        ) -> Tensor2<f32, 3, 2> {
+            gather::<Tensor2<f32, 3, 2>, 1>(x, indices)
+        }
+    })
+    .unwrap_err();
+    assert!(gather_shape.to_string().contains("gather output shape"));
+
+    let take_along_rank = parse(parse_quote! {
+        fn bad_take_along_rank(
+            x: Tensor2<f32, 2, 4>,
+            indices: Tensor1<i64, 2>,
+        ) -> Tensor1<f32, 2> {
+            take_along_axis::<1>(x, indices)
+        }
+    })
+    .unwrap_err();
+    assert!(take_along_rank.to_string().contains("equal rank"));
+
+    let take_along_shape = parse(parse_quote! {
+        fn bad_take_along_shape(
+            x: Tensor2<f32, 2, 4>,
+            indices: Tensor2<i64, 3, 2>,
+        ) -> Tensor2<f32, 3, 2> {
+            take_along_axis::<1>(x, indices)
+        }
+    })
+    .unwrap_err();
+    assert!(take_along_shape
+        .to_string()
+        .contains("must match outside axis"));
 }
 
 #[test]

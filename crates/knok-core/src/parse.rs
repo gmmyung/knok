@@ -430,14 +430,46 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "clip")?;
                     CallOp::Clip
                 }
+                "ceil" => {
+                    reject_any_generics(&generics, &path.path, "ceil")?;
+                    CallOp::Ceil
+                }
                 "concat" => {
                     reject_types(&generics, &path.path, "concat")?;
                     CallOp::Concat(expect_one_const(&generics, &path.path, "concat")?)
                 }
                 "conv2d" => CallOp::Conv2d(parse_conv2d_options(&generics, &path.path)?),
+                "arange" => {
+                    reject_consts(&generics, &path.path, "arange")?;
+                    CallOp::Arange(expect_target_type(&generics, &path.path, "arange")?)
+                }
+                "eye" | "identity" => {
+                    reject_consts(&generics, &path.path, "eye")?;
+                    CallOp::Eye(expect_target_type(&generics, &path.path, "eye")?)
+                }
+                "cos" => {
+                    reject_any_generics(&generics, &path.path, "cos")?;
+                    CallOp::Cos
+                }
                 "exp" => {
                     reject_any_generics(&generics, &path.path, "exp")?;
                     CallOp::Exp
+                }
+                "full_like" => {
+                    reject_any_generics(&generics, &path.path, "full_like")?;
+                    CallOp::FullLike
+                }
+                "exp2" => {
+                    reject_any_generics(&generics, &path.path, "exp2")?;
+                    CallOp::Exp2
+                }
+                "expm1" => {
+                    reject_any_generics(&generics, &path.path, "expm1")?;
+                    CallOp::ExpM1
+                }
+                "floor" => {
+                    reject_any_generics(&generics, &path.path, "floor")?;
+                    CallOp::Floor
                 }
                 "greater" => {
                     reject_any_generics(&generics, &path.path, "greater")?;
@@ -446,6 +478,14 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "greater_equal" => {
                     reject_any_generics(&generics, &path.path, "greater_equal")?;
                     CallOp::GreaterEqual
+                }
+                "gather" => {
+                    let target = expect_target_type(&generics, &path.path, "gather")?;
+                    let values = expect_const_count(&generics, &path.path, "gather", 1)?;
+                    CallOp::Gather {
+                        target,
+                        axis: values[0],
+                    }
                 }
                 "isnan" => {
                     reject_any_generics(&generics, &path.path, "isnan")?;
@@ -459,9 +499,25 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "less_equal")?;
                     CallOp::LessEqual
                 }
+                "linspace" => {
+                    reject_consts(&generics, &path.path, "linspace")?;
+                    CallOp::Linspace(expect_target_type(&generics, &path.path, "linspace")?)
+                }
                 "log" => {
                     reject_any_generics(&generics, &path.path, "log")?;
                     CallOp::Log
+                }
+                "log1p" => {
+                    reject_any_generics(&generics, &path.path, "log1p")?;
+                    CallOp::Log1P
+                }
+                "log2" => {
+                    reject_any_generics(&generics, &path.path, "log2")?;
+                    CallOp::Log2
+                }
+                "log10" => {
+                    reject_any_generics(&generics, &path.path, "log10")?;
+                    CallOp::Log10
                 }
                 "logical_and" => {
                     reject_any_generics(&generics, &path.path, "logical_and")?;
@@ -507,6 +563,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "pow")?;
                     CallOp::Pow
                 }
+                "ones_like" => {
+                    reject_any_generics(&generics, &path.path, "ones_like")?;
+                    CallOp::OnesLike
+                }
                 "prod" => {
                     reject_types(&generics, &path.path, "prod")?;
                     CallOp::Prod(optional_axis(&generics, &path.path, "prod")?)
@@ -534,9 +594,21 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "relu")?;
                     CallOp::Relu
                 }
+                "reciprocal" => {
+                    reject_any_generics(&generics, &path.path, "reciprocal")?;
+                    CallOp::Reciprocal
+                }
                 "reshape" => {
                     reject_consts(&generics, &path.path, "reshape")?;
                     CallOp::Reshape(expect_target_type(&generics, &path.path, "reshape")?)
+                }
+                "rint" => {
+                    reject_any_generics(&generics, &path.path, "rint")?;
+                    CallOp::Rint
+                }
+                "round" => {
+                    reject_any_generics(&generics, &path.path, "round")?;
+                    CallOp::Round
                 }
                 "broadcast" => {
                     reject_consts(&generics, &path.path, "broadcast")?;
@@ -545,6 +617,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "sigmoid" => {
                     reject_any_generics(&generics, &path.path, "sigmoid")?;
                     CallOp::Sigmoid
+                }
+                "sin" => {
+                    reject_any_generics(&generics, &path.path, "sin")?;
+                    CallOp::Sin
                 }
                 "softmax" => {
                     reject_types(&generics, &path.path, "softmax")?;
@@ -560,6 +636,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "sqrt" => {
                     reject_any_generics(&generics, &path.path, "sqrt")?;
                     CallOp::Sqrt
+                }
+                "square" => {
+                    reject_any_generics(&generics, &path.path, "square")?;
+                    CallOp::Square
                 }
                 "squeeze" => {
                     reject_consts(&generics, &path.path, "squeeze")?;
@@ -581,12 +661,22 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                     reject_any_generics(&generics, &path.path, "tanh")?;
                     CallOp::Tanh
                 }
+                "tan" => {
+                    reject_any_generics(&generics, &path.path, "tan")?;
+                    CallOp::Tan
+                }
                 "take" => {
                     reject_types(&generics, &path.path, "take")?;
                     let values = expect_const_count(&generics, &path.path, "take", 2)?;
                     CallOp::Take {
                         axis: values[0],
                         index: values[1],
+                    }
+                }
+                "take_along_axis" => {
+                    reject_types(&generics, &path.path, "take_along_axis")?;
+                    CallOp::TakeAlongAxis {
+                        axis: expect_one_const(&generics, &path.path, "take_along_axis")?,
                     }
                 }
                 "transpose" => {
@@ -596,6 +686,10 @@ fn parse_expr(expr: &SynExpr) -> syn::Result<Expr> {
                 "where" | "r#where" => {
                     reject_any_generics(&generics, &path.path, "where")?;
                     CallOp::Where
+                }
+                "zeros_like" => {
+                    reject_any_generics(&generics, &path.path, "zeros_like")?;
+                    CallOp::ZerosLike
                 }
                 "unsqueeze" => {
                     reject_consts(&generics, &path.path, "unsqueeze")?;

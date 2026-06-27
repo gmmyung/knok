@@ -125,12 +125,47 @@ not support `Tensor<T, [D0, D1]>` as a const-generic type parameter.
 They expose `from_array`, `from_vec`, `TryFrom<Vec<_>>`, `zeros`, `ones`,
 `filled`, `as_slice`, `as_mut_slice`, `into_vec`, and checked indexing helpers.
 `Tensor0<T>` represents a rank-0 scalar tensor and stores exactly one element.
+Those associated functions are host-side tensor constructors for preparing
+inputs and checking outputs; they are separate from graph ops parsed inside
+`#[knok::graph]` bodies.
 
 ## Static graph syntax
 
 Graph bodies intentionally accept a small, static subset of Rust. Function-like
 ops are parsed by the macro, so they do not need ordinary Rust functions in
 scope.
+
+Static creation ops are graph operations, not dynamic host array constructors.
+Their shape and dtype are known at macro expansion time:
+
+```rust
+fn make_bias(x: Tensor2<f32, 2, 3>) -> Tensor2<f32, 2, 3> {
+    full_like(x, 0.25)
+}
+
+fn make_positions() -> Tensor1<i32, 4> {
+    arange::<Tensor1<i32, 4>>(0, 8, 2)
+}
+
+fn make_grid() -> Tensor1<f32, 5> {
+    linspace::<Tensor1<f32, 5>>(0.0, 1.0)
+}
+
+fn make_identity() -> Tensor2<f32, 3, 3> {
+    eye::<Tensor2<f32, 3, 3>>()
+}
+```
+
+`zeros_like(x)` and `ones_like(x)` return a tensor with `x`'s static type.
+`full_like(x, value)` requires `value` to be a rank-0 scalar with the same
+element type as `x`. `arange::<Target>(stop)`,
+`arange::<Target>(start, stop)`, and `arange::<Target>(start, stop, step)`
+require numeric literal parameters and a rank-1 numeric `Target` whose length
+matches the generated sequence. `linspace::<Target>(start, stop)` requires
+numeric literal endpoints and a rank-1 numeric `Target`; integer targets are
+accepted only when the endpoints divide evenly across the target length.
+`eye::<Target>()` and `identity::<Target>()` require a rank-2 square `Target`
+and support bool, integer, and floating-point element types.
 
 Shape-changing ops are type-directed:
 
@@ -158,11 +193,25 @@ fn middle_columns(x: Tensor2<f32, 2, 4>) -> Tensor2<f32, 2, 2> {
 fn last_column(x: Tensor2<f32, 2, 3>) -> Tensor1<f32, 2> {
     take::<1, 2>(x)
 }
+
+fn rows_by_index(x: Tensor2<f32, 2, 3>, indices: Tensor1<i64, 2>) -> Tensor2<f32, 2, 3> {
+    gather::<Tensor2<f32, 2, 3>, 0>(x, indices)
+}
+
+fn columns_by_row(x: Tensor2<f32, 2, 3>, indices: Tensor2<i64, 2, 2>) -> Tensor2<f32, 2, 2> {
+    take_along_axis::<1>(x, indices)
+}
 ```
 
 `slice::<Target, START...>(x)` keeps rank and uses the target shape as static
 slice sizes. `take::<AXIS, INDEX>(x)` removes one axis and returns `Tensor0<_>`
-when that is the remaining scalar. `concat::<AXIS>(a, b)` joins two tensors
+when that is the remaining scalar. `gather::<Target, AXIS>(x, indices)` is
+NumPy-style `take` with an `i32` or `i64` index tensor; the output shape must be
+`input[..AXIS] + indices.shape + input[AXIS + 1..]`. `take_along_axis::<AXIS>(x,
+indices)` uses an `i32` or `i64` index tensor with the same rank as `x`; all
+dimensions except `AXIS` must match, and the result shape is `indices.shape`.
+Negative runtime indices wrap from the end of the selected axis. Out-of-bounds
+runtime indices fail the invocation. `concat::<AXIS>(a, b)` joins two tensors
 along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
 
 Predicate tensors use `TensorN<bool, ...>` and lower to MLIR `i1`, not numeric
@@ -235,15 +284,19 @@ They cover the recommended hosted workflow:
   broadcasting, comparisons (`greater`, `greater_equal`, `less`, `less_equal`,
   `equal`, `not_equal`), `r#where`, `logical_and`, `logical_or`, `logical_not`,
   `logical_xor`, `all`, `any`, `isnan`, `abs`, `minimum`, `maximum`, `clip`,
-  `pow`, `relu`, NumPy-style `matmul` for ranks 1-6, NHWC/HWCF `conv2d` with
-  static `Pad<TOP, BOTTOM, LEFT, RIGHT>`, `Stride<H, W>`, and
-  `Dilation<H, W>`, and `Groups<N>` options, rank-2 `transpose`, explicit
-  `permute::<Target, AXES...>`, reshape across ranks 0-6, `broadcast`,
-  `squeeze`, `unsqueeze`, static `slice`, static `take`, binary `concat`,
-  binary `stack`, full-tensor and axis-aware `sum`, `prod`, `mean`, `max` /
-  `amax`, `min` / `amin`, `argmax`, `argmin`, `var`, `std`, and `ptp`,
-  full-tensor and axis-aware `softmax`, `exp`, `log`, `sqrt`, `tanh`, and
-  `sigmoid`.
+  `pow`, `square`, `reciprocal`, `relu`, NumPy-style `matmul` for ranks 1-6,
+  NHWC/HWCF `conv2d` with static `Pad<TOP, BOTTOM, LEFT, RIGHT>`,
+  `Stride<H, W>`, and `Dilation<H, W>`, and `Groups<N>` options, rank-2
+  `transpose`, explicit `permute::<Target, AXES...>`, reshape across ranks 0-6,
+  `broadcast`, `squeeze`, `unsqueeze`, static `slice`, static `take`,
+  tensor-index `gather`, `take_along_axis`,
+  `zeros_like`, `ones_like`, `full_like`, static literal `arange`, static
+  literal `linspace`, static square `eye`/`identity`, binary `concat`, binary
+  `stack`, full-tensor and axis-aware `sum`, `prod`, `mean`, `max` / `amax`,
+  `min` / `amin`, `argmax`, `argmin`, `var`, `std`, and `ptp`,
+  full-tensor and axis-aware `softmax`,
+  `exp`, `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `floor`,
+  `ceil`, `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`.
 - Axis-aware reductions use const generic syntax, for example `sum::<1>(x)`,
   `prod::<1>(x)`, `mean::<0>(x)`, `amax::<1>(x)`, `var::<1>(x)`,
   `softmax::<1>(logits)`, and `argmax::<1>(logits)`.
@@ -253,12 +306,16 @@ They cover the recommended hosted workflow:
   channels and output channels must both be divisible by `N`, and kernel input
   channels must equal `input_channels / N`.
 - Floating-point classifier/math/statistics ops (`relu`, `mean`, `var`, `std`,
-  `softmax`, `pow`, `exp`, `log`, `sqrt`, `tanh`, and `sigmoid`) require a
+  `softmax`, `pow`, `exp`,
+  `exp2`, `expm1`, `log`, `log2`, `log10`, `log1p`, `sqrt`, `floor`, `ceil`,
+  `round`, `rint`, `sin`, `cos`, `tan`, `tanh`, and `sigmoid`) require a
   floating-point element type. Backend support for `f16`/`bf16` math can vary.
-  Integer tensors support arithmetic, `abs`, `minimum`, `maximum`, `clip`,
-  reshape/broadcast, `sum`, `prod`, `max` / `amax`, `min` / `amin`, `ptp`,
-  `argmax`, `argmin`, matmul, and conv lowering where IREE accepts the
-  resulting MLIR.
+  Integer tensors support arithmetic, `abs`, `square`, `reciprocal`,
+  `minimum`, `maximum`, `clip`, reshape/broadcast, static creators, `sum`,
+  `prod`, `max` / `amax`, `min` / `amin`, `ptp`, `argmax`, `argmin`, matmul,
+  and conv lowering where IREE accepts the resulting MLIR.
+  Bool tensors support `zeros_like`, `ones_like`, `full_like`, and
+  `eye`/`identity`; `arange` and `linspace` require numeric targets.
 - `isfinite` and `isinf` are not exposed yet; the current lowering only adds
   `isnan`, which maps cleanly to `arith.cmpf uno`.
 - The compiler, MLIR lowering, and hosted runtime wrappers support real bool
@@ -298,7 +355,7 @@ scalar bool predicate is valid.
 | `bf16` | `half` feature | `half` feature | `half` feature | Uses `half::bf16`; currently best treated as typed storage/roundtrip unless the selected backend accepts the op. |
 | `i32` | yes | yes | yes | Arithmetic, reductions, shape/index ops, matmul/conv where IREE accepts the MLIR. |
 | `i64` | yes | yes | yes | Same policy as `i32`. |
-| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, `max`, `min`, `argmax`, `argmin`, and `isnan`. |
+| `bool` | yes | yes | yes | Lowers to MLIR `i1`; used for comparisons, logical ops, `r#where`, `all`, `any`, `max`, `min`, `argmax`, `argmin`, `isnan`, and value tensors in indexing ops. |
 | quantized ints | no | no | no | Deferred; requires explicit scale/zero-point semantics, not just smaller integer storage. |
 
 There is no implicit promotion, mixed numeric dtype execution, complex dtype,

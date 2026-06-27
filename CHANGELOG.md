@@ -19,11 +19,21 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   coverage for existing graph ops.
 - Added full-tensor and axis-aware `prod`, `max` / `amax`, `min` / `amin`,
   `argmin`, `var`, `std`, and `ptp` graph ops.
+- Added tensor-index `gather` and `take_along_axis` graph operations with
+  static dtype, rank, and shape validation.
+- Added static graph tensor creation helpers: `zeros_like`, `ones_like`,
+  `full_like`, static literal `arange`, static literal `linspace`, and
+  `eye`/`identity`.
+- Added NumPy-style elementwise math graph ops: `square`, `reciprocal`,
+  `floor`, `ceil`, `round`, `rint`, `sin`, `cos`, `tan`, `log2`, `log10`,
+  `log1p`, `exp2`, and `expm1`.
 - Added contributor, developer, agent, and changelog documentation.
 - Added tag-triggered release automation with release metadata validation.
 
 ### Changed
 
+- Changed `GraphArtifact` metadata from shape-only fields to typed
+  `input_descs` and `output_descs`, and exported `DType` and `TensorDesc`.
 - Replaced string backend and driver macro attributes with typed `Backend` and
   `Driver` paths.
 - Changed `transpose` to match NumPy's default rank-N axis reversal instead of
