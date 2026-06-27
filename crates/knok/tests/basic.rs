@@ -270,6 +270,11 @@ fn gather1_scalar_index(x: Tensor1<f32, 3>, index: Tensor0<i64>) -> Tensor0<f32>
 }
 
 #[knok::graph(backend = Backend::LlvmCpu)]
+fn gather1_scalar_index_i32(x: Tensor1<f32, 3>, index: Tensor0<i32>) -> Tensor0<f32> {
+    gather::<Tensor0<f32>, 0>(x, index)
+}
+
+#[knok::graph(backend = Backend::LlvmCpu)]
 fn gather6d_axis5(
     x: Tensor6<f32, 1, 1, 1, 1, 2, 3>,
     indices: Tensor1<i64, 2>,
@@ -1295,6 +1300,12 @@ fn shape_and_indexing_graphs_run() {
         .into_vec();
     assert_eq!(gathered, vec![3.0, 1.0, 2.0, 3.0, 30.0, 10.0, 20.0, 30.0]);
 
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]);
+    let gathered = gather2x3_axis1_i32(x, Tensor2::from_array([[-1, 0], [1, -2]]))
+        .unwrap()
+        .into_vec();
+    assert_eq!(gathered, vec![3.0, 1.0, 2.0, 2.0, 30.0, 10.0, 20.0, 20.0]);
+
     let taken = take_along_axis2x3_axis1_i64(
         Tensor2::from_array([[1, 2, 3], [10, 20, 30]]),
         Tensor2::from_array([[2, 0], [1, 2]]),
@@ -1317,6 +1328,19 @@ fn shape_and_indexing_graphs_run() {
     )
     .unwrap();
     assert_eq!(*gathered.get(), 3.0);
+
+    let gathered = gather1_scalar_index_i32(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor0::from_scalar(-1),
+    )
+    .unwrap();
+    assert_eq!(*gathered.get(), 3.0);
+
+    let out_of_bounds = gather1_scalar_index_i32(
+        Tensor1::from_array([1.0, 2.0, 3.0]),
+        Tensor0::from_scalar(-4),
+    );
+    assert!(out_of_bounds.is_err());
 
     let x4 = Tensor4::from_array([[[[1.0, 2.0, 3.0]], [[10.0, 20.0, 30.0]]]]);
     let squeezed = squeeze1x2x1x3(x4).unwrap();

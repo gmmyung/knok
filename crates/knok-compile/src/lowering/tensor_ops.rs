@@ -169,7 +169,15 @@ impl Lowerer<'_> {
                 }
             })
             .collect::<Vec<_>>();
-        self.gather_with_maps(input, indices, ty, &index_axes, &input_axes)
+        let indexed_axis_size = input.ty.shape[axis];
+        self.gather_with_maps(
+            input,
+            indices,
+            ty,
+            &index_axes,
+            &input_axes,
+            indexed_axis_size,
+        )
     }
 
     pub(super) fn take_along_axis(
@@ -192,7 +200,15 @@ impl Lowerer<'_> {
                 }
             })
             .collect::<Vec<_>>();
-        self.gather_with_maps(input, indices, &ty, &index_axes, &input_axes)
+        let indexed_axis_size = input.ty.shape[axis];
+        self.gather_with_maps(
+            input,
+            indices,
+            &ty,
+            &index_axes,
+            &input_axes,
+            indexed_axis_size,
+        )
     }
 
     fn gather_with_maps(
@@ -202,11 +218,13 @@ impl Lowerer<'_> {
         ty: &TensorType,
         index_axes: &[usize],
         input_axes: &[GatherInputAxis],
+        indexed_axis_size: usize,
     ) -> anyhow::Result<Value> {
         let index_ty = indices.ty.clone();
         let indices = self.coerce_to_kind(indices, &index_ty, ValueKind::Tensor)?;
         if ty.rank() == 0 {
             let index_value = self.extract_index_value(&indices, &[])?;
+            let index_value = self.normalize_gather_index(&index_value, indexed_axis_size, "    ");
             let value = self.extract_gather_value(input, &index_value, input_axes)?;
             return self.splat(value, ty);
         }
@@ -245,6 +263,7 @@ impl Lowerer<'_> {
             })
             .collect::<Vec<_>>();
         let index_value = self.index_cast("%index_value", indices.ty.elem.mlir_type(), "      ");
+        let index_value = self.normalize_gather_index(&index_value, indexed_axis_size, "      ");
         let input_indices = input_axes
             .iter()
             .map(|axis| match axis {
@@ -314,6 +333,49 @@ impl Lowerer<'_> {
             "{indent}{index} = arith.index_cast {value} : {elem_type} to index"
         ));
         index
+    }
+
+    fn normalize_gather_index(
+        &mut self,
+        index_value: &str,
+        axis_size: usize,
+        indent: &str,
+    ) -> String {
+        let zero = self.fresh();
+        self.lines
+            .push(format!("{indent}{zero} = arith.constant 0 : index"));
+        let dim = self.fresh();
+        self.lines.push(format!(
+            "{indent}{dim} = arith.constant {axis_size} : index"
+        ));
+        let is_negative = self.fresh();
+        self.lines.push(format!(
+            "{indent}{is_negative} = arith.cmpi slt, {index_value}, {zero} : index"
+        ));
+        let wrapped = self.fresh();
+        self.lines.push(format!(
+            "{indent}{wrapped} = arith.addi {index_value}, {dim} : index"
+        ));
+        let normalized = self.fresh();
+        self.lines.push(format!(
+            "{indent}{normalized} = arith.select {is_negative}, {wrapped}, {index_value} : index"
+        ));
+        let lower_ok = self.fresh();
+        self.lines.push(format!(
+            "{indent}{lower_ok} = arith.cmpi sge, {normalized}, {zero} : index"
+        ));
+        let upper_ok = self.fresh();
+        self.lines.push(format!(
+            "{indent}{upper_ok} = arith.cmpi slt, {normalized}, {dim} : index"
+        ));
+        let in_bounds = self.fresh();
+        self.lines.push(format!(
+            "{indent}{in_bounds} = arith.andi {lower_ok}, {upper_ok} : i1"
+        ));
+        self.lines.push(format!(
+            "{indent}cf.assert {in_bounds}, \"index out of bounds\""
+        ));
+        normalized
     }
 
     pub(super) fn concat(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {

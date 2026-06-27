@@ -175,9 +175,9 @@ NumPy-style `take` with an `i32` or `i64` index tensor; the output shape must be
 `input[..AXIS] + indices.shape + input[AXIS + 1..]`. `take_along_axis::<AXIS>(x,
 indices)` uses an `i32` or `i64` index tensor with the same rank as `x`; all
 dimensions except `AXIS` must match, and the result shape is `indices.shape`.
-Runtime index values must be in bounds for the selected axis. `concat::<AXIS>(a,
-b)` joins two tensors along one existing axis. `stack::<AXIS>(a, b)` inserts a
-new axis of size 2.
+Negative runtime indices wrap from the end of the selected axis. Out-of-bounds
+runtime indices fail the invocation. `concat::<AXIS>(a, b)` joins two tensors
+along one existing axis. `stack::<AXIS>(a, b)` inserts a new axis of size 2.
 
 Predicate tensors use `TensorN<bool, ...>` and lower to MLIR `i1`, not numeric
 masks. Comparisons return bool tensors and can feed logical ops, bool
