@@ -169,6 +169,10 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.argmax(input, *axis)
                 }
+                CallOp::Argmin(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.argmin(input, *axis)
+                }
                 CallOp::Any(axis) => {
                     let input = self.lower_expr(&args[0])?;
                     self.any(input, *axis)
@@ -315,10 +319,18 @@ impl<'a> Lowerer<'a> {
                     let input = self.lower_expr(&args[0])?;
                     self.mean(input, *axis)
                 }
+                CallOp::Max(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.max(input, *axis)
+                }
                 CallOp::Matmul => {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     self.matmul(lhs, rhs)
+                }
+                CallOp::Min(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.min(input, *axis)
                 }
                 CallOp::Minimum => {
                     let lhs = self.lower_expr(&args[0])?;
@@ -348,6 +360,14 @@ impl<'a> Lowerer<'a> {
                 CallOp::OnesLike => {
                     let input = self.lower_expr(&args[0])?;
                     self.one_like(&input.ty)
+                }
+                CallOp::Prod(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.prod(input, *axis)
+                }
+                CallOp::Ptp(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.ptp(input, *axis)
                 }
                 CallOp::Permute { target, axes } => {
                     let input = self.lower_expr(&args[0])?;
@@ -415,6 +435,10 @@ impl<'a> Lowerer<'a> {
                     let rhs = self.lower_expr(&args[1])?;
                     self.stack(lhs, rhs, *axis)
                 }
+                CallOp::Std(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.std(input, *axis)
+                }
                 CallOp::Sum(axis) => {
                     let input = self.lower_expr(&args[0])?;
                     self.sum(input, *axis)
@@ -431,6 +455,10 @@ impl<'a> Lowerer<'a> {
                 CallOp::Unsqueeze(ty) => {
                     let input = self.lower_expr(&args[0])?;
                     self.reshape(input, ty)
+                }
+                CallOp::Var(axis) => {
+                    let input = self.lower_expr(&args[0])?;
+                    self.var(input, *axis)
                 }
                 CallOp::Where => {
                     let condition = self.lower_expr(&args[0])?;

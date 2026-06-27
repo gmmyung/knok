@@ -1,4 +1,4 @@
-use knok_core::{AxisSpec, ElementType, TensorType};
+use knok_core::{AxisSpec, TensorType};
 
 pub(super) fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
@@ -297,16 +297,5 @@ pub(super) fn reduction_output_map(input_rank: usize, axis: AxisSpec, keep_dims:
             }
         }
         AxisSpec::All => "()".to_string(),
-    }
-}
-
-pub(super) fn min_float_literal(elem: ElementType) -> &'static str {
-    match elem {
-        ElementType::Bool => "0",
-        ElementType::F32 => "-3.40282347E+38",
-        ElementType::F64 => "-1.7976931348623157E+308",
-        ElementType::F16 => "-65504.0",
-        ElementType::BF16 => "-3.38953139E+38",
-        ElementType::I32 | ElementType::I64 => "0",
     }
 }
