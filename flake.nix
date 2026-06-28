@@ -121,9 +121,9 @@
                   export DYLD_FALLBACK_LIBRARY_PATH="${llvm.mlir}/lib:$LIB_IREE_COMPILER''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
                   ;;
                 Linux)
-                  export RUSTFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath=$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath=${llvm.mlir}/lib ''${RUSTFLAGS:-}"
-                  export RUSTDOCFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath=$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath=${llvm.mlir}/lib ''${RUSTDOCFLAGS:-}"
-                  export LD_LIBRARY_PATH="${llvm.mlir}/lib:$LIB_IREE_COMPILER''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                  export RUSTFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.stdenv.cc.cc.lib}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath=$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath=${llvm.mlir}/lib -C link-arg=-Wl,-rpath=${pkgs.stdenv.cc.cc.lib}/lib ''${RUSTFLAGS:-}"
+                  export RUSTDOCFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.stdenv.cc.cc.lib}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath=$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath=${llvm.mlir}/lib -C link-arg=-Wl,-rpath=${pkgs.stdenv.cc.cc.lib}/lib ''${RUSTDOCFLAGS:-}"
+                  export LD_LIBRARY_PATH="${llvm.mlir}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LIB_IREE_COMPILER''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                   ;;
               esac
             '';
