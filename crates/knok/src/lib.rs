@@ -36,6 +36,7 @@ pub mod backend;
 pub mod __private {
     pub use crate::private::*;
 }
+pub mod ops;
 mod private;
 pub mod runtime;
 pub mod tensor;

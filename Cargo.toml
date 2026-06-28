@@ -20,9 +20,9 @@ blake3 = "1.8"
 criterion = "0.7"
 eerie = { version = "0.5.0", default-features = false }
 half = { version = "2.7", default-features = false }
-knok-core = { path = "crates/knok-core", version = "0.1.0" }
-knok-compile = { path = "crates/knok-compile", version = "0.1.0" }
-knok-macros = { path = "crates/knok-macros", version = "0.1.0" }
+knok-core = { path = "crates/knok-core", version = "0.2.0" }
+knok-compile = { path = "crates/knok-compile", version = "0.2.0" }
+knok-macros = { path = "crates/knok-macros", version = "0.2.0" }
 melior = "0.27"
 nalgebra = { version = "0.34", default-features = false, features = ["std"] }
 ndarray = "0.17"
