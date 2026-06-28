@@ -11,6 +11,7 @@ pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
     lower_to_mlir_with_registry(graph, &BTreeMap::new())
 }
 
+/// Lowers a typed graph to an MLIR module, resolving graph calls from `graphs`.
 pub fn lower_to_mlir_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,

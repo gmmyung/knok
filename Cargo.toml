@@ -5,7 +5,6 @@ members = [
     "crates/knok-build-macros",
     "crates/knok-core",
     "crates/knok-compile",
-    "crates/knok-macros",
     "crates/knok/tests/build-tracing-smoke",
     "crates/knok/tests/build-tracing-runtime",
     "crates/knok/tests/no-std-smoke",
@@ -22,12 +21,12 @@ authors = ["Gyungmin Myung"]
 anyhow = "1.0"
 blake3 = "1.8"
 eerie = { version = "0.5.0", default-features = false }
+fs2 = "0.4"
 half = { version = "2.7", default-features = false }
 knok-core = { path = "crates/knok-core", version = "0.2.0" }
 knok-build = { path = "crates/knok-build", version = "0.2.0" }
 knok-build-macros = { path = "crates/knok-build-macros", version = "0.2.0" }
 knok-compile = { path = "crates/knok-compile", version = "0.2.0" }
-knok-macros = { path = "crates/knok-macros", version = "0.2.0" }
 melior = "0.27"
 proc-macro2 = "1.0"
 quote = "1.0"

@@ -98,25 +98,24 @@ fn main() {
 
 Stub artifacts compile generated wrappers but are not executable.
 
-## MLIR Imports
+## IREE Compiler Helper
 
-Local MLIR files can still be compiled into embedded artifacts with
-`knok::mlir_model!`:
+Build-time graph compilation uses `melior` in the build script process and runs
+IREE compilation in a separate helper process that uses the `eerie` compiler
+binding. Put `knok-iree-compile-helper` on `PATH`, or point
+`KNOK_IREE_COMPILE_HELPER` at it:
 
-```rust
-knok::mlir_model! {
-    name: imported_add4,
-    path: "tests/fixtures/add4.mlir",
-    backend: Backend::LlvmCpu,
-    function: "imported.add4",
-    inputs: [Tensor1<f32, 4>, Tensor1<f32, 4>],
-    output: Tensor1<f32, 4>,
-}
+```sh
+cargo build -p knok-compile --features compiler-helper --bin knok-iree-compile-helper
+export KNOK_IREE_COMPILE_HELPER="$PWD/target/debug/knok-iree-compile-helper"
 ```
+
+`scripts/release-check.sh` and `scripts/coverage.sh` build and export the
+helper automatically.
 
 ## Feature Modes
 
-- Default features enable `std`, hosted runtime execution, and `mlir_model!`.
+- Default features enable `std` and hosted runtime execution.
 - `default-features = false` builds `knok` as `no_std + alloc`.
 - `features = ["half"]` enables `half::f16` and `half::bf16` tensor element
   types and re-exports them as `knok::half::{f16, bf16}`.
@@ -133,8 +132,7 @@ scripts/release-check.sh
 ```
 
 The check covers formatting, core/lowering/build tracing tests, no-std wrapper
-checks, docs, imported MLIR tests, and an end-to-end build.rs traced runtime
-fixture.
+checks, docs, and an end-to-end build.rs traced runtime fixture.
 
 Coverage reports are available through the Nix shell:
 

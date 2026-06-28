@@ -7,10 +7,9 @@ automation-specific rules.
 ## Workspace Layout
 
 - `knok-core`: graph IR, op definitions, and type checking.
-- `knok-compile`: MLIR lowering, IREE compilation, and MLIR import codegen.
+- `knok-compile`: MLIR lowering and IREE compilation.
 - `knok-build`: build-script tracing frontend and generated wrapper codegen.
 - `knok-build-macros`: build-time graph registration macros.
-- `knok-macros`: local MLIR import procedural macro entrypoint.
 - `knok`: public tensors, runtime engine API, feature gates, examples, tests,
   and generated graph imports.
 
@@ -19,9 +18,11 @@ automation-specific rules.
 `#[knok_build::graph]` marks graph functions that live in `build.rs` or modules
 included by `build.rs`. The macro records signature/backend metadata and emits
 registration glue; `compile_graphs!` executes the function with traced tensor
-inputs on the build host, typechecks the resulting graph, emits MLIR with
-`melior`, invokes the IREE compiler, writes VMFB bytes to `OUT_DIR`, and
-generates target wrapper modules.
+inputs on the build host, typechecks the resulting graph, emits textual MLIR,
+validates it with `melior`, invokes the `knok-iree-compile-helper` process, and
+generates target wrapper modules. The helper is the only process that loads the
+IREE compiler through `eerie`; this keeps IREE's compiler libraries isolated
+from the host process that uses `melior`.
 
 Multi-output graph ops such as `split` are represented as tuple projection
 expressions with a per-call `tuple_id`. Lowering caches projections by
@@ -34,16 +35,12 @@ Cloning a traced tensor handle preserves the `node_id` and reuses the lowered
 SSA value; calling the same Rust op expression a second time creates a new
 `node_id` and remains a separate graph operation.
 
-`knok::mlir_model!` follows the same artifact path but starts from a local MLIR
-file and an optional typed signature.
-
 ## Runtime Flow
 
 The hosted path uses `Engine` for repeated inference. Generated
-`graphs::<name>::run` and MLIR `invoke_run` wrappers reuse the engine's IREE
-instance, driver, device, loaded module, and compiled artifact. Convenience
-wrappers are useful for examples and small one-off calls but include runtime
-setup cost.
+`graphs::<name>::run` wrappers reuse the engine's IREE instance, driver, device,
+loaded module, and compiled artifact. Convenience wrappers are useful for
+examples and small one-off calls but include runtime setup cost.
 
 No-default-features builds expose compile-time artifacts but do not provide the
 hosted runtime convenience path.
@@ -68,8 +65,7 @@ Publishing order is scripted as:
 2. `knok-compile`
 3. `knok-build-macros`
 4. `knok-build`
-5. `knok-macros`
-6. `knok`
+5. `knok`
 
 Push a `vMAJOR.MINOR.PATCH` tag on the release commit to publish from GitHub
 Actions:

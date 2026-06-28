@@ -1,3 +1,8 @@
+//! Procedural macros for build-script graph tracing.
+//!
+//! These macros only generate Rust registration glue. Actual graph tracing and
+//! IREE compilation happen when the user's `build.rs` runs.
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -5,6 +10,7 @@ use syn::{
     Pat, Path, ReturnType, Token,
 };
 
+/// Marks a build-script function as a traceable `knok` graph.
 #[proc_macro_attribute]
 pub fn graph(attr: TokenStream, item: TokenStream) -> TokenStream {
     match expand_traced_graph(attr.into(), item.into()) {
@@ -13,12 +19,14 @@ pub fn graph(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+/// Compiles registered graph functions with default build options.
 #[proc_macro]
 pub fn compile_graphs(input: TokenStream) -> TokenStream {
     let paths = parse_macro_input!(input with Punctuated::<Path, Token![,]>::parse_terminated);
     expand_compile_graphs(paths, quote!(::knok_build::BuildOptions::default())).into()
 }
 
+/// Compiles registered graph functions with an explicit [`knok_build::BuildOptions`] expression.
 #[proc_macro]
 pub fn compile_graphs_with_options(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as CompileGraphsWithOptions);

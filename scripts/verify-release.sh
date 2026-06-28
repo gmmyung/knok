@@ -25,7 +25,6 @@ crate_paths = {
     "knok-compile": root / "crates/knok-compile/Cargo.toml",
     "knok-build-macros": root / "crates/knok-build-macros/Cargo.toml",
     "knok-build": root / "crates/knok-build/Cargo.toml",
-    "knok-macros": root / "crates/knok-macros/Cargo.toml",
     "knok": root / "crates/knok/Cargo.toml",
 }
 
@@ -37,7 +36,7 @@ for crate, path in crate_paths.items():
 
 workspace = tomllib.loads((root / "Cargo.toml").read_text())
 deps = workspace["workspace"]["dependencies"]
-for crate in ["knok-core", "knok-build", "knok-build-macros", "knok-compile", "knok-macros"]:
+for crate in ["knok-core", "knok-build", "knok-build-macros", "knok-compile"]:
     dep = deps.get(crate)
     actual = dep.get("version") if isinstance(dep, dict) else None
     if actual != version:

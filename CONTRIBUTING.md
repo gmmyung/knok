@@ -33,7 +33,9 @@ For faster iteration, run focused checks first:
 
 ```sh
 cargo fmt --all -- --check
-cargo test -p knok-core -p knok-compile -p knok-build -p knok-build-macros -p knok-macros
+cargo test -p knok-core -p knok-compile -p knok-build -p knok-build-macros
+cargo build -p knok-compile --features compiler-helper --bin knok-iree-compile-helper
+export KNOK_IREE_COMPILE_HELPER="$PWD/target/debug/knok-iree-compile-helper"
 cargo test -p knok
 cargo test -p knok-build-tracing-runtime
 cargo check -p knok --no-default-features
@@ -57,8 +59,7 @@ Before opening a PR:
 ## Versioning and Branches
 
 All published crates use the same version: `knok-core`, `knok-compile`,
-`knok-build-macros`, `knok-build`, `knok-macros`, and `knok` are released in
-lockstep.
+`knok-build-macros`, `knok-build`, and `knok` are released in lockstep.
 
 Before `1.0.0`, public breaking changes and notable additive features should use
 a minor version bump, such as `0.1.0` to `0.2.0`. Fixes, documentation updates,
@@ -79,7 +80,7 @@ the matching `CHANGELOG.md` section.
 
 `knok` must keep these modes healthy:
 
-- default features: hosted runtime, `mlir_model!`, and `std`
+- default features: hosted runtime and `std`
 - `default-features = false`: `no_std + alloc`
 - `features = ["half"]`: `f16` and `bf16` tensor element support
 - build-time graph tracing through `knok-build` as a build-dependency

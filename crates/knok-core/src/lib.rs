@@ -1,3 +1,9 @@
+//! Core graph IR, tensor type metadata, and type checking for `knok`.
+//!
+//! This crate is primarily consumed by `knok-build` and `knok-compile`. End
+//! users normally interact with the typed tensors in `knok` and the tracing
+//! helpers in `knok-build`.
+
 mod ast;
 mod ops;
 mod type_parse;
