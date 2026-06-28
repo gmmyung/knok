@@ -4,11 +4,6 @@ use alloc::string::String;
 
 use crate::Backend;
 
-/// Raw runtime invocation types.
-///
-/// Generated typed wrappers are preferred for normal use. This module is for
-/// manually invoking a [`crate::GraphArtifact`] with explicit input buffers and
-/// reading output buffers by dtype.
 pub mod raw {
     extern crate alloc;
 
@@ -19,20 +14,13 @@ pub mod raw {
 
     /// Raw input buffer passed to a compiled graph.
     pub enum Input<'a> {
-        /// Boolean input buffer.
         Bool(&'a [usize], &'a [bool]),
-        /// `f32` input buffer.
         F32(&'a [usize], &'a [f32]),
-        /// `f64` input buffer.
         F64(&'a [usize], &'a [f64]),
-        /// `i32` input buffer.
         I32(&'a [usize], &'a [i32]),
-        /// `i64` input buffer.
         I64(&'a [usize], &'a [i64]),
-        /// `f16` input buffer.
         #[cfg(feature = "half")]
         F16(&'a [usize], &'a [crate::half::f16]),
-        /// `bf16` input buffer.
         #[cfg(feature = "half")]
         BF16(&'a [usize], &'a [crate::half::bf16]),
     }
@@ -69,7 +57,6 @@ pub mod raw {
 
     /// Element types supported by the raw hosted single-output convenience path.
     pub trait Output: Copy {
-        /// Reads a raw output collection as this element type.
         #[cfg(feature = "host-runtime")]
         fn read_output(outputs: Outputs) -> crate::Result<alloc::vec::Vec<Self>>;
     }
@@ -166,22 +153,18 @@ pub mod raw {
 
     #[cfg(not(feature = "host-runtime"))]
     impl Outputs {
-        /// Returns zero because hosted execution is disabled.
         pub fn len(&self) -> usize {
             0
         }
 
-        /// Returns true because hosted execution is disabled.
         pub fn is_empty(&self) -> bool {
             true
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn one<T: Element>(self) -> crate::Result<alloc::vec::Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn read<T: Element>(&self, _index: usize) -> crate::Result<alloc::vec::Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
@@ -246,7 +229,6 @@ pub mod raw {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// Configuration used to construct a reusable runtime engine.
 pub struct RuntimeConfig {
     driver: DriverSelection,
 }
@@ -258,23 +240,18 @@ enum DriverSelection {
 }
 
 impl RuntimeConfig {
-    /// Selects the default runtime driver.
-    ///
-    /// The current default is the local-task CPU driver.
     pub fn auto() -> Self {
         Self {
             driver: DriverSelection::Auto,
         }
     }
 
-    /// Selects an explicit runtime driver.
     pub fn driver(driver: crate::Driver) -> Self {
         Self {
             driver: DriverSelection::Explicit(driver.name().into()),
         }
     }
 
-    /// Selects the default driver for a compile-time backend.
     pub fn backend(backend: Backend) -> Self {
         Self {
             driver: DriverSelection::Explicit(backend.default_driver().into()),
@@ -317,11 +294,6 @@ mod hosted {
     use super::{raw, RuntimeConfig};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
-    /// Reusable hosted runtime engine.
-    ///
-    /// An engine owns one IREE runtime and lazily caches loaded VMFB modules.
-    /// Reuse it for repeated inference instead of calling generated one-shot
-    /// wrappers when latency matters.
     pub struct Engine {
         driver_name: String,
         runtime: Runtime,
@@ -329,7 +301,6 @@ mod hosted {
     }
 
     impl Engine {
-        /// Creates a runtime engine from a runtime configuration.
         pub fn new(config: RuntimeConfig) -> crate::Result<Self> {
             let driver_name = config.driver_name().to_string();
             let runtime = Runtime::new(DeviceSpec::custom(driver_name.clone()))?;
@@ -340,17 +311,14 @@ mod hosted {
             })
         }
 
-        /// Creates an engine using the default driver for `backend`.
         pub fn for_backend(backend: crate::Backend) -> crate::Result<Self> {
             Self::new(RuntimeConfig::backend(backend))
         }
 
-        /// Creates an engine compatible with a specific artifact variant.
         pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
             Self::new(RuntimeConfig::driver_name_literal(variant.driver))
         }
 
-        /// Creates an engine for the first variant embedded in `artifact`.
         pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
             let variant =
                 artifact
@@ -361,15 +329,10 @@ mod hosted {
             Self::for_variant(variant)
         }
 
-        /// Returns the IREE runtime driver name used by this engine.
         pub fn driver_name(&self) -> &str {
             &self.driver_name
         }
 
-        /// Invokes an artifact with raw input buffers.
-        ///
-        /// Typed graph wrappers call this internally. Direct callers must pass
-        /// input buffers whose dtype and shape match the artifact metadata.
         pub fn invoke(
             &self,
             artifact: GraphArtifact,
@@ -402,7 +365,6 @@ mod hosted {
             Ok(outputs)
         }
 
-        /// Invokes an artifact and reads its single output as `T`.
         pub fn invoke_one<T: raw::Output>(
             &self,
             artifact: GraphArtifact,
@@ -517,36 +479,29 @@ mod hosted {
     use super::{raw, RuntimeConfig};
     use crate::GraphArtifact;
 
-    /// Placeholder engine used when hosted runtime support is disabled.
     pub struct Engine;
 
     impl Engine {
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn new(_config: RuntimeConfig) -> crate::Result<Self> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn for_backend(_backend: crate::Backend) -> crate::Result<Self> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn for_variant(_variant: crate::GraphArtifactVariant) -> crate::Result<Self> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn for_artifact(_artifact: GraphArtifact) -> crate::Result<Self> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        /// Returns an empty driver name because hosted execution is disabled.
         pub fn driver_name(&self) -> &str {
             ""
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn invoke(
             &self,
             _artifact: GraphArtifact,
@@ -555,7 +510,6 @@ mod hosted {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        /// Always returns [`crate::Error::HostedRuntimeDisabled`].
         pub fn invoke_one<T: raw::Output>(
             &self,
             _artifact: GraphArtifact,
@@ -566,5 +520,4 @@ mod hosted {
     }
 }
 
-/// Reusable runtime engine for generated graph artifacts.
 pub use hosted::Engine;

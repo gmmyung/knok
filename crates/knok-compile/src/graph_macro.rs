@@ -13,11 +13,6 @@ use crate::{
     registry::{register_graph, registered_graphs, registered_signatures},
 };
 
-/// Expands the implementation for one `#[knok::graph]` function.
-///
-/// The returned token stream contains the generated typed wrappers, embedded
-/// graph artifact metadata, and compile-time diagnostics when parsing,
-/// type-checking, lowering, or IREE compilation fails.
 pub fn expand_graph(attr: TokenStream, item: TokenStream) -> TokenStream {
     match expand_graph_result(attr, item) {
         Ok(tokens) => tokens,
