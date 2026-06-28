@@ -645,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "knok"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "eerie",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "knok-compile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -673,7 +673,7 @@ dependencies = [
 
 [[package]]
 name = "knok-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "knok-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "knok-compile",
  "knok-core",

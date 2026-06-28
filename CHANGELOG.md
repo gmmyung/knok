@@ -13,6 +13,24 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Added
 
+- Nothing yet.
+
+### Changed
+
+- Nothing yet.
+
+### Fixed
+
+- Nothing yet.
+
+### Removed
+
+- Nothing yet.
+
+## 0.2.0 - 2026-06-28
+
+### Added
+
 - Added typed backend and driver selection for graph and MLIR model macros.
 - Added `Tensor5` and `Tensor6` containers and rank-6 graph support.
 - Added rank-6 NumPy-style shape, broadcasting, selection, and reduction test
@@ -34,6 +52,7 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   `log1p`, `exp2`, and `expm1`.
 - Added contributor, developer, agent, and changelog documentation.
 - Added tag-triggered release automation with release metadata validation.
+- Added README badges for CI, docs.rs, and crates.io.
 
 ### Changed
 
@@ -43,6 +62,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   `Driver` paths.
 - Changed `transpose` to match NumPy's default rank-N axis reversal instead of
   only accepting rank-2 tensors.
+- Changed `knok::Error` to implement `core::error::Error`, including no-std
+  builds, instead of gating the trait impl on `std`.
 
 ### Fixed
 
