@@ -63,7 +63,5 @@ jobs:
         with:
           cache-targets: false
           save-if: false
-      - run: nix develop --command cargo build -p knok-compile --features compiler-helper --bin knok-iree-compile-helper
-      - run: echo "KNOK_IREE_COMPILE_HELPER=$PWD/target/debug/knok-iree-compile-helper" >> "$GITHUB_ENV"
       - run: nix develop --command cargo test -p knok
       - run: nix develop --command cargo test -p knok-build-tracing-runtime

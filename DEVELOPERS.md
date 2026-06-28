@@ -19,10 +19,9 @@ automation-specific rules.
 included by `build.rs`. The macro records signature/backend metadata and emits
 registration glue; `compile_graphs!` executes the function with traced tensor
 inputs on the build host, typechecks the resulting graph, emits textual MLIR,
-validates it with `melior`, invokes the `knok-iree-compile-helper` process, and
-generates target wrapper modules. The helper is the only process that loads the
-IREE compiler through `eerie`; this keeps IREE's compiler libraries isolated
-from the host process that uses `melior`.
+validates it with `melior`, invokes `iree-compile`, and generates target
+wrapper modules. `KNOK_IREE_COMPILE` can point at a specific compiler binary;
+otherwise `knok-compile` expects `iree-compile` on `PATH`.
 
 Multi-output graph ops such as `split` are represented as tuple projection
 expressions with a per-call `tuple_id`. Lowering caches projections by

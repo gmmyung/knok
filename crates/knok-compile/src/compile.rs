@@ -1,9 +1,8 @@
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -67,20 +66,29 @@ fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyho
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
     let _compiler_lock = lock_compiler_cache(&cache_dir)?;
-    let helper = compiler_helper_command();
+    let compiler = iree_compile_command();
     let flags = backend_flags(backend, extra_flags);
-    let revision = compiler_revision(&helper)?;
-    let key = cache_key(backend, mlir, &helper, &revision, &flags);
+    let version = compiler_version(&compiler)?;
+    let key = cache_key(backend, mlir, &compiler, &version, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     if let Some(vmfb) = read_cached_vmfb(&vmfb_path)? {
         return Ok(vmfb);
     }
 
     let suffix = unique_cache_temp_suffix();
+    let tmp_mlir_path = cache_dir.join(format!("{key}.{suffix}.mlir.tmp"));
     let tmp_vmfb_path = cache_dir.join(format!("{key}.{suffix}.vmfb.tmp"));
-    compile_with_helper(&helper, &flags, mlir, &tmp_vmfb_path)?;
+    fs::write(&tmp_mlir_path, mlir)?;
+    if let Err(error) = compile_with_iree_compile(&compiler, &flags, &tmp_mlir_path, &tmp_vmfb_path)
+    {
+        let _ = fs::remove_file(&tmp_mlir_path);
+        let _ = fs::remove_file(&tmp_vmfb_path);
+        return Err(error);
+    }
+    let _ = fs::remove_file(&tmp_mlir_path);
     let vmfb = fs::read(&tmp_vmfb_path)?;
     if vmfb.len() < 16 {
+        let _ = fs::remove_file(&tmp_mlir_path);
         let _ = fs::remove_file(&tmp_vmfb_path);
         anyhow::bail!(
             "IREE compiler produced an invalid VMFB cache artifact with {} bytes",
@@ -90,6 +98,7 @@ fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyho
     match fs::rename(&tmp_vmfb_path, &vmfb_path) {
         Ok(()) => Ok(vmfb),
         Err(_) => {
+            let _ = fs::remove_file(&tmp_mlir_path);
             let _ = fs::remove_file(&tmp_vmfb_path);
             read_cached_vmfb(&vmfb_path)?
                 .ok_or_else(|| anyhow::anyhow!("failed to publish VMFB cache artifact"))
@@ -108,19 +117,19 @@ fn lock_compiler_cache(cache_dir: &Path) -> anyhow::Result<fs::File> {
     Ok(file)
 }
 
-fn compiler_helper_command() -> String {
-    env::var("KNOK_IREE_COMPILE_HELPER").unwrap_or_else(|_| "knok-iree-compile-helper".to_string())
+fn iree_compile_command() -> String {
+    env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string())
 }
 
-fn compiler_revision(helper: &str) -> anyhow::Result<String> {
-    let output = Command::new(helper).arg("revision").output().map_err(|error| {
+fn compiler_version(compiler: &str) -> anyhow::Result<String> {
+    let output = Command::new(compiler).arg("--version").output().map_err(|error| {
         anyhow::anyhow!(
-            "failed to run IREE compiler helper `{helper}`: {error}; set KNOK_IREE_COMPILE_HELPER or install knok-iree-compile-helper"
+            "failed to run IREE compiler `{compiler}`: {error}; set KNOK_IREE_COMPILE or install iree-compile"
         )
     })?;
     if !output.status.success() {
         anyhow::bail!(
-            "IREE compiler helper `{helper} revision` failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            "IREE compiler `{compiler} --version` failed with status {}\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -129,38 +138,27 @@ fn compiler_revision(helper: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn compile_with_helper(
-    helper: &str,
+fn compile_with_iree_compile(
+    compiler: &str,
     flags: &[String],
-    mlir: &str,
+    input_path: &Path,
     output_path: &Path,
 ) -> anyhow::Result<()> {
-    let mut child = Command::new(helper)
-        .arg("compile")
-        .arg("--output")
-        .arg(output_path)
-        .arg("--")
+    let output = Command::new(compiler)
         .args(flags)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .arg("-o")
+        .arg(output_path)
+        .arg(input_path)
+        .output()
         .map_err(|error| {
             anyhow::anyhow!(
-                "failed to run IREE compiler helper `{helper}`: {error}; set KNOK_IREE_COMPILE_HELPER or install knok-iree-compile-helper"
+                "failed to run IREE compiler `{compiler}`: {error}; set KNOK_IREE_COMPILE or install iree-compile"
             )
         })?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("failed to open IREE compiler helper stdin"))?;
-    stdin.write_all(mlir.as_bytes())?;
-    drop(stdin);
-    let output = child.wait_with_output()?;
     if !output.status.success() {
         let _ = fs::remove_file(output_path);
         anyhow::bail!(
-            "IREE compiler helper `{helper} compile` failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            "IREE compiler `{compiler}` failed with status {}\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -198,16 +196,16 @@ fn cache_dir() -> anyhow::Result<PathBuf> {
 fn cache_key(
     backend: &str,
     mlir: &str,
-    helper: &str,
-    compiler_revision: &str,
+    compiler: &str,
+    compiler_version: &str,
     flags: &[String],
 ) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"knok-cache-v2");
+    hasher.update(b"knok-cache-v3");
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(backend.as_bytes());
-    hasher.update(helper.as_bytes());
-    hasher.update(compiler_revision.as_bytes());
+    hasher.update(compiler.as_bytes());
+    hasher.update(compiler_version.as_bytes());
     for flag in flags {
         hasher.update(flag.as_bytes());
     }

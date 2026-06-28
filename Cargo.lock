@@ -376,14 +376,12 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
- "eerie",
  "fs2",
  "knok-core",
  "melior",
  "proc-macro2",
  "quote",
  "syn",
- "tempfile",
  "thiserror",
 ]
 

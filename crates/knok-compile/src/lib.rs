@@ -2,8 +2,7 @@
 //!
 //! `knok-build` uses this crate from build scripts to turn traced graph IR into
 //! VMFB bytes. MLIR validation happens in-process with `melior`; IREE
-//! compilation is delegated to `knok-iree-compile-helper`, which uses the
-//! `eerie` compiler binding in a separate process.
+//! compilation is delegated to the `iree-compile` command line tool.
 
 mod backend;
 mod common;

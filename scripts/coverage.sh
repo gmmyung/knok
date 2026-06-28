@@ -6,9 +6,6 @@ mkdir -p "$output_dir"
 
 cargo llvm-cov clean --workspace
 
-cargo build -p knok-compile --features compiler-helper --bin knok-iree-compile-helper
-export KNOK_IREE_COMPILE_HELPER="$PWD/target/debug/knok-iree-compile-helper"
-
 cargo llvm-cov \
   -p knok-core \
   -p knok-compile \

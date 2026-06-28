@@ -98,20 +98,19 @@ fn main() {
 
 Stub artifacts compile generated wrappers but are not executable.
 
-## IREE Compiler Helper
+## IREE Compiler
 
-Build-time graph compilation uses `melior` in the build script process and runs
-IREE compilation in a separate helper process that uses the `eerie` compiler
-binding. Put `knok-iree-compile-helper` on `PATH`, or point
-`KNOK_IREE_COMPILE_HELPER` at it:
+Build-time graph compilation uses `melior` in the build script process to build
+and validate MLIR, then invokes the `iree-compile` command line tool to produce
+VMFB artifacts. Put `iree-compile` on `PATH`, or point `KNOK_IREE_COMPILE` at
+the compiler binary:
 
 ```sh
-cargo build -p knok-compile --features compiler-helper --bin knok-iree-compile-helper
-export KNOK_IREE_COMPILE_HELPER="$PWD/target/debug/knok-iree-compile-helper"
+export KNOK_IREE_COMPILE=/path/to/iree-compile
 ```
 
-`scripts/release-check.sh` and `scripts/coverage.sh` build and export the
-helper automatically.
+The Nix development shell installs the pinned IREE compiler wheel and adds
+`iree-compile` to `PATH` automatically.
 
 ## Feature Modes
 
