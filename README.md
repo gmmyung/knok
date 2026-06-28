@@ -1,7 +1,7 @@
 # knok
 
 [![CI](https://github.com/gmmyung/knok/actions/workflows/rust.yml/badge.svg)](https://github.com/gmmyung/knok/actions/workflows/rust.yml)
-[![Coverage](https://github.com/gmmyung/knok/actions/workflows/coverage.yml/badge.svg)](https://github.com/gmmyung/knok/actions/workflows/coverage.yml)
+[![Coverage](https://raw.githubusercontent.com/gmmyung/knok/badges/coverage.svg)](https://github.com/gmmyung/knok/actions/workflows/coverage.yml)
 [![docs.rs](https://docs.rs/knok/badge.svg)](https://docs.rs/knok)
 [![crates.io](https://img.shields.io/crates/v/knok.svg)](https://crates.io/crates/knok)
 
@@ -139,7 +139,11 @@ Coverage reports are available through the Nix shell:
 scripts/coverage.sh
 ```
 
-The script writes `target/coverage/lcov.info` and prints a summary.
+The script writes `target/coverage/lcov.info`, prints a summary, writes an HTML
+report to `target/coverage/html/index.html`, and writes a percentage badge to
+`target/coverage/badge/coverage.svg`. Set `KNOK_COVERAGE_MIN_LINES` to change
+the line coverage threshold, or set it to an empty string to disable the
+threshold locally.
 
 ## Documentation Map
 

@@ -14,7 +14,7 @@ pub struct GraphArtifact {
 }
 
 impl GraphArtifact {
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     pub(crate) fn has_typed_signature(&self) -> bool {
         !self.input_descs.is_empty() || !self.output_descs.is_empty()
     }

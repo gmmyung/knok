@@ -7,17 +7,13 @@ repository.workspace = true
 authors.workspace = true
 description = "Compile-time linalg graphs for Rust"
 
-[package.metadata.docs.rs]
-no-default-features = true
-features = ["std"]
-
 [dependencies]
 eerie = { workspace = true, optional = true }
 half = { workspace = true, optional = true }
 
 [features]
-default = ["std", "host-runtime"]
+default = ["std", "runtime"]
 std = ["eerie?/std", "half?/std"]
 half = ["dep:half", "eerie?/half"]
-host-runtime = ["std", "dep:eerie", "eerie/runtime", "eerie/std"]
+runtime = ["std", "dep:eerie", "eerie/runtime", "eerie/std"]
 embedded-runtime = ["dep:eerie", "eerie/runtime"]

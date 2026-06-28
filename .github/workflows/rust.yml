@@ -50,9 +50,9 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
-      - run: nix develop --command cargo doc -p knok --no-default-features --features std --no-deps
+      - run: nix develop --command cargo doc -p knok --no-deps
 
-  host-runtime:
+  runtime:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.3

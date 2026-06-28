@@ -27,8 +27,10 @@ Coverage reports use the same Nix-provisioned toolchain:
 scripts/coverage.sh
 ```
 
-The script writes an LCOV report to `target/coverage/lcov.info` and prints a
-line coverage summary.
+The script writes an LCOV report to `target/coverage/lcov.info`, an HTML report
+to `target/coverage/html/index.html`, a badge SVG to
+`target/coverage/badge/coverage.svg`, prints a line coverage summary, and
+enforces `KNOK_COVERAGE_MIN_LINES` when that environment variable is non-empty.
 
 For faster iteration, run focused checks first:
 
@@ -67,7 +69,7 @@ After `1.0.0`, use standard semantic versioning.
 
 `main` should stay releasable and is protected on GitHub. Use short topic
 branches such as `codex/add-op` or `name/add-op` for PRs. Required checks are
-`fmt`, `core`, `no-std`, `docs`, `host-runtime`, and the `Coverage` workflow.
+`fmt`, `core`, `no-std`, `docs`, `runtime`, and the `Coverage` workflow.
 Release branches are not needed unless an already-published line needs an urgent
 patch.
 
