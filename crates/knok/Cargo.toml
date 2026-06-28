@@ -16,16 +16,6 @@ eerie = { workspace = true, optional = true }
 half = { workspace = true, optional = true }
 knok-macros = { workspace = true, optional = true }
 
-[dev-dependencies]
-criterion.workspace = true
-nalgebra.workspace = true
-ndarray.workspace = true
-trybuild.workspace = true
-
-[[bench]]
-name = "runtime"
-harness = false
-
 [features]
 default = ["std", "host-runtime", "macros"]
 std = ["eerie?/std", "half?/std"]

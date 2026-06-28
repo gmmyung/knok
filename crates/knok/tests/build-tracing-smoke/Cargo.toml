@@ -1,5 +1,5 @@
 [package]
-name = "knok-no-std-smoke"
+name = "knok-build-tracing-smoke"
 version = "0.0.0"
 edition = "2021"
 publish = false

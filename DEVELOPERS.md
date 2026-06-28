@@ -6,29 +6,44 @@ automation-specific rules.
 
 ## Workspace Layout
 
-- `knok-core`: graph AST, parser, op definitions, and type checking.
-- `knok-compile`: MLIR lowering, IREE compilation, artifact generation, and
-  proc-macro codegen helpers.
-- `knok-macros`: procedural macro entrypoints.
+- `knok-core`: graph IR, op definitions, and type checking.
+- `knok-compile`: MLIR lowering, IREE compilation, and MLIR import codegen.
+- `knok-build`: build-script tracing frontend and generated wrapper codegen.
+- `knok-build-macros`: build-time graph registration macros.
+- `knok-macros`: local MLIR import procedural macro entrypoint.
 - `knok`: public tensors, runtime engine API, feature gates, examples, tests,
-  and benchmarks.
+  and generated graph imports.
 
 ## Compile-Time Flow
 
-`#[knok::graph]` parses a restricted Rust function body into the core graph IR.
-The compiler typechecks the graph, emits MLIR with `melior`, invokes the IREE
-compiler, embeds the resulting VMFB artifact, and generates typed wrapper
-functions.
+`#[knok_build::graph]` marks graph functions that live in `build.rs` or modules
+included by `build.rs`. The macro records signature/backend metadata and emits
+registration glue; `compile_graphs!` executes the function with traced tensor
+inputs on the build host, typechecks the resulting graph, emits MLIR with
+`melior`, invokes the IREE compiler, writes VMFB bytes to `OUT_DIR`, and
+generates target wrapper modules.
+
+Multi-output graph ops such as `split` are represented as tuple projection
+expressions with a per-call `tuple_id`. Lowering caches projections by
+`(inline scope, tuple_id)`: projections from the same source op share one
+lowered operation, while two separate source calls remain separate even if their
+expression trees are structurally identical.
+
+Single-output traced ops use the same identity rule with per-call `node_id`s.
+Cloning a traced tensor handle preserves the `node_id` and reuses the lowered
+SSA value; calling the same Rust op expression a second time creates a new
+`node_id` and remains a separate graph operation.
 
 `knok::mlir_model!` follows the same artifact path but starts from a local MLIR
 file and an optional typed signature.
 
 ## Runtime Flow
 
-The hosted path uses `Engine` for repeated inference. Generated `*_run` and
-`invoke_run` wrappers reuse the engine's IREE instance, driver, device, loaded
-module, and compiled artifact. Convenience wrappers are useful for examples and
-small one-off calls but include runtime setup cost.
+The hosted path uses `Engine` for repeated inference. Generated
+`graphs::<name>::run` and MLIR `invoke_run` wrappers reuse the engine's IREE
+instance, driver, device, loaded module, and compiled artifact. Convenience
+wrappers are useful for examples and small one-off calls but include runtime
+setup cost.
 
 No-default-features builds expose compile-time artifacts but do not provide the
 hosted runtime convenience path.
@@ -51,8 +66,10 @@ Publishing order is scripted as:
 
 1. `knok-core`
 2. `knok-compile`
-3. `knok-macros`
-4. `knok`
+3. `knok-build-macros`
+4. `knok-build`
+5. `knok-macros`
+6. `knok`
 
 Push a `vMAJOR.MINOR.PATCH` tag on the release commit to publish from GitHub
 Actions:
@@ -68,7 +85,7 @@ Manual workflow dispatch remains available for dry-runs and controlled retries.
 
 For crates.io authentication, create an API token on crates.io and store it as
 the GitHub Actions secret `CARGO_REGISTRY_TOKEN`. The token needs publish access
-for all four crates.
+for all published crates.
 
 ## Platform Notes
 

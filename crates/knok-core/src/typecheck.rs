@@ -69,7 +69,20 @@ fn type_let_value(
     graph_signatures: &[(String, GraphSignature)],
     current_graph: &str,
 ) -> syn::Result<TypedValue> {
-    let tys = match expr {
+    let tys = expr_output_types(expr, env, graph_signatures, current_graph)?;
+    Ok(TypedValue {
+        kind: expr.clone(),
+        tys,
+    })
+}
+
+fn expr_output_types(
+    expr: &Expr,
+    env: &[(String, TensorType)],
+    graph_signatures: &[(String, GraphSignature)],
+    current_graph: &str,
+) -> syn::Result<Vec<TensorType>> {
+    Ok(match expr {
         Expr::Call {
             op: CallOp::Graph(name),
             args,
@@ -77,11 +90,8 @@ fn type_let_value(
         Expr::Call { op, args } => {
             call_output_types(op, args, env, graph_signatures, current_graph)?
         }
+        Expr::Node { value, .. } => expr_output_types(value, env, graph_signatures, current_graph)?,
         _ => vec![type_expr(expr, env, graph_signatures, current_graph)?.ty],
-    };
-    Ok(TypedValue {
-        kind: expr.clone(),
-        tys,
     })
 }
 
@@ -124,6 +134,19 @@ fn type_expr(
             let lhs = type_expr(lhs, env, graph_signatures, current_graph)?.ty;
             let rhs = type_expr(rhs, env, graph_signatures, current_graph)?.ty;
             binary_result_type(&lhs, &rhs)?
+        }
+        Expr::Node { value, .. } => type_expr(value, env, graph_signatures, current_graph)?.ty,
+        Expr::TupleGet { value, index, .. } => {
+            let outputs = expr_output_types(value, env, graph_signatures, current_graph)?;
+            outputs.get(*index).cloned().ok_or_else(|| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "tuple projection index {index} out of bounds for {} values",
+                        outputs.len()
+                    ),
+                )
+            })?
         }
         Expr::Call { op, args } => {
             call_result_type(op, args, env, graph_signatures, current_graph)?
@@ -233,7 +256,7 @@ fn graph_call_output_types(
             syn::Error::new(
                 Span::call_site(),
                 format!(
-                    "unknown graph call `{name}`; graph calls must refer to earlier #[knok::graph] functions"
+                    "unknown graph call `{name}`; graph calls must refer to registered graph signatures"
                 ),
             )
         })?;

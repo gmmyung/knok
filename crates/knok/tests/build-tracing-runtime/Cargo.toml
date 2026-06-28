@@ -1,11 +1,11 @@
 [package]
-name = "knok-no-std-smoke"
+name = "knok-build-tracing-runtime"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-knok = { path = "../..", default-features = false }
+knok = { path = "../.." }
 
 [build-dependencies]
 knok-build = { path = "../../../knok-build" }

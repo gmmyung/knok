@@ -42,28 +42,6 @@ pub fn compile_graph_with_registry(
     Ok(CompiledGraph { mlir, vmfb })
 }
 
-pub(crate) fn compile_graph_variants_with_registry(
-    graph: &TypedGraph,
-    graphs: &BTreeMap<String, TypedGraph>,
-    specs: &[BackendSpec],
-) -> anyhow::Result<Vec<CompiledVariant>> {
-    let mlir = lower_to_mlir_with_registry(graph, graphs)?;
-    verify_with_melior(&mlir)?;
-    specs
-        .iter()
-        .map(|spec| {
-            let compile_flags = backend_flags(&spec.backend, &spec.extra_flags);
-            let vmfb = compile_with_iree(&spec.backend, &spec.extra_flags, &mlir)?;
-            Ok(CompiledVariant {
-                backend: spec.backend.clone(),
-                driver: spec.driver.clone(),
-                compile_flags,
-                vmfb,
-            })
-        })
-        .collect()
-}
-
 pub(crate) fn compile_mlir_variants(
     specs: &[BackendSpec],
     mlir: &str,
@@ -225,9 +203,7 @@ fn iree_compile_version(iree_compile: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use knok_core::parse_graph;
-    use quote::quote;
-    use syn::parse_quote;
+    use knok_core::{type_check, CallOp, ElementType, Expr, Graph, Input, TensorType};
 
     use crate::lowering::lower_to_mlir;
 
@@ -235,13 +211,26 @@ mod tests {
 
     #[test]
     fn expm1_lowering_uses_direct_math_op() {
-        let graph = parse_graph(
-            quote!(backend = Backend::LlvmCpu),
-            parse_quote! {
-                fn expm1_graph(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
-                    expm1(x)
-                }
+        let ty = TensorType {
+            elem: ElementType::F32,
+            shape: vec![4],
+        };
+        let graph = type_check(
+            Graph {
+                name: "expm1_graph".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![Input {
+                    name: "x".into(),
+                    ty: ty.clone(),
+                }],
+                outputs: vec![ty],
+                lets: Vec::new(),
+                body: vec![Expr::Call {
+                    op: CallOp::ExpM1,
+                    args: vec![Expr::Var("x".into())],
+                }],
             },
+            &[],
         )
         .unwrap();
 
@@ -249,6 +238,218 @@ mod tests {
         assert!(mlir.contains("math.expm1"), "{mlir}");
         assert!(!mlir.contains(" = math.exp "), "{mlir}");
         assert!(!mlir.contains("arith.subf"), "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn tuple_projections_share_one_split_lowering() {
+        let input = TensorType {
+            elem: ElementType::F32,
+            shape: vec![4],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2],
+        };
+        let split = Expr::Call {
+            op: CallOp::Split {
+                axis: 0,
+                sections: vec![2, 2],
+            },
+            args: vec![Expr::Var("x".into())],
+        };
+        let graph = type_check(
+            Graph {
+                name: "split_once".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![Input {
+                    name: "x".into(),
+                    ty: input,
+                }],
+                outputs: vec![output.clone(), output],
+                lets: Vec::new(),
+                body: vec![
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split.clone()),
+                        index: 0,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split),
+                        index: 1,
+                    },
+                ],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("tensor.extract_slice").count(), 2, "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn cloned_single_output_node_lowers_once() {
+        let lhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 3],
+        };
+        let rhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![3, 2],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 2],
+        };
+        let matmul = Expr::Node {
+            node_id: 1,
+            value: Box::new(Expr::Call {
+                op: CallOp::Matmul,
+                args: vec![Expr::Var("x".into()), Expr::Var("w".into())],
+            }),
+        };
+        let graph = type_check(
+            Graph {
+                name: "reuse_matmul".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![
+                    Input {
+                        name: "x".into(),
+                        ty: lhs,
+                    },
+                    Input {
+                        name: "w".into(),
+                        ty: rhs,
+                    },
+                ],
+                outputs: vec![output],
+                lets: Vec::new(),
+                body: vec![Expr::Binary {
+                    op: knok_core::BinaryOp::Add,
+                    lhs: Box::new(matmul.clone()),
+                    rhs: Box::new(matmul),
+                }],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("linalg.matmul").count(), 1, "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn distinct_single_output_nodes_lower_separately() {
+        let lhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 3],
+        };
+        let rhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![3, 2],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 2],
+        };
+        let matmul = |node_id| Expr::Node {
+            node_id,
+            value: Box::new(Expr::Call {
+                op: CallOp::Matmul,
+                args: vec![Expr::Var("x".into()), Expr::Var("w".into())],
+            }),
+        };
+        let graph = type_check(
+            Graph {
+                name: "repeat_matmul".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![
+                    Input {
+                        name: "x".into(),
+                        ty: lhs,
+                    },
+                    Input {
+                        name: "w".into(),
+                        ty: rhs,
+                    },
+                ],
+                outputs: vec![output],
+                lets: Vec::new(),
+                body: vec![Expr::Binary {
+                    op: knok_core::BinaryOp::Add,
+                    lhs: Box::new(matmul(1)),
+                    rhs: Box::new(matmul(2)),
+                }],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("linalg.matmul").count(), 2, "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn distinct_tuple_ids_do_not_share_split_lowering() {
+        let input = TensorType {
+            elem: ElementType::F32,
+            shape: vec![4],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2],
+        };
+        let split = Expr::Call {
+            op: CallOp::Split {
+                axis: 0,
+                sections: vec![2, 2],
+            },
+            args: vec![Expr::Var("x".into())],
+        };
+        let graph = type_check(
+            Graph {
+                name: "split_twice".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![Input {
+                    name: "x".into(),
+                    ty: input,
+                }],
+                outputs: vec![output.clone(), output.clone(), output.clone(), output],
+                lets: Vec::new(),
+                body: vec![
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split.clone()),
+                        index: 0,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split.clone()),
+                        index: 1,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 2,
+                        value: Box::new(split.clone()),
+                        index: 0,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 2,
+                        value: Box::new(split),
+                        index: 1,
+                    },
+                ],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("tensor.extract_slice").count(), 4, "{mlir}");
         verify_with_melior(&mlir).unwrap();
     }
 }

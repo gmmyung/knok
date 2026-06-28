@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use proc_macro2::TokenStream;
-use syn::{parse::Parser, punctuated::Punctuated, spanned::Spanned, Lit, MetaNameValue, Token};
+use syn::{spanned::Spanned, Lit};
 
 pub(crate) struct BackendSpec {
     pub(crate) backend: String,
@@ -156,44 +155,6 @@ fn parse_driver_path(value: &syn::Expr) -> syn::Result<(IreeDriver, proc_macro2:
 pub(crate) fn parse_backend_expr(value: &syn::Expr) -> syn::Result<BackendSpec> {
     let (backend, span) = parse_backend_path(value)?;
     BackendSpec::new(backend, None, Vec::new(), span)
-}
-
-pub(crate) fn parse_backend_specs(attr: TokenStream) -> syn::Result<Vec<BackendSpec>> {
-    let args = Punctuated::<MetaNameValue, Token![,]>::parse_terminated.parse2(attr)?;
-    let mut backend = None;
-    let mut backends = None;
-    for arg in args {
-        if arg.path.is_ident("backend") {
-            if backend.is_some() || backends.is_some() {
-                return Err(syn::Error::new(
-                    arg.span(),
-                    "backend and backends are mutually exclusive",
-                ));
-            }
-            backend = Some(vec![parse_backend_expr(&arg.value)?]);
-        } else if arg.path.is_ident("backends") {
-            if backend.is_some() || backends.is_some() {
-                return Err(syn::Error::new(
-                    arg.span(),
-                    "backend and backends are mutually exclusive",
-                ));
-            }
-            backends = Some(parse_backend_array(&arg.value)?);
-        } else {
-            return Err(syn::Error::new(
-                arg.path.span(),
-                "unknown graph attribute argument",
-            ));
-        }
-    }
-    let specs = backend.or(backends).ok_or_else(|| {
-        syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "missing required backend = Backend::... argument",
-        )
-    })?;
-    reject_duplicate_drivers(&specs)?;
-    Ok(specs)
 }
 
 pub(crate) fn parse_backend_array(value: &syn::Expr) -> syn::Result<Vec<BackendSpec>> {

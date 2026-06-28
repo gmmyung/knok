@@ -1,31 +1,29 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-//! Static-shape tensor graph frontend for compiling restricted Rust function
-//! bodies to IREE VM bytecode at compile time.
+//! Static-shape tensor containers and runtime wrappers for build-time traced
+//! IREE VM bytecode artifacts.
 //!
-//! The primary entry point is `#[knok::graph]`, which turns a Rust function body into a
-//! compiled graph artifact and generated typed wrappers:
+//! Graphs are authored from `build.rs` with `knok-build`, which executes traced
+//! Rust functions on the compile host and writes generated artifact wrappers to
+//! `OUT_DIR`. Target crates import those wrappers with `generated_graphs!`:
 //!
 //! ```ignore
 //! use knok::prelude::*;
 //!
-//! #[knok::graph(backend = Backend::LlvmCpu)]
-//! fn forward(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
-//!     relu(x + y)
-//! }
+//! knok::generated_graphs!(pub mod graphs);
 //! ```
 //!
-//! For repeated hosted inference, construct one [`Engine`] and call the
-//! generated `forward_run(&engine, ...)` wrapper. Local MLIR files can be
-//! embedded with `knok::mlir_model!`.
+//! For repeated hosted inference, construct one [`Engine`] and call generated
+//! `graphs::<name>::run(&engine, ...)` wrappers. Local MLIR files can be embedded
+//! with `knok::mlir_model!`.
 //!
-//! With default features disabled, `knok` is `no_std + alloc`; proc macros still
-//! run on the compile host, while hosted runtime execution is unavailable on the
-//! target unless the runtime feature set is enabled.
+//! With default features disabled, `knok` is `no_std + alloc`; hosted runtime
+//! execution is unavailable on the target unless the runtime feature set is
+//! enabled.
 
 extern crate alloc;
 
 #[cfg(feature = "macros")]
-pub use knok_macros::{graph, mlir_model};
+pub use knok_macros::mlir_model;
 
 #[cfg(feature = "half")]
 pub use half;
@@ -36,7 +34,6 @@ pub mod backend;
 pub mod __private {
     pub use crate::private::*;
 }
-pub mod ops;
 mod private;
 pub mod runtime;
 pub mod tensor;
@@ -44,12 +41,42 @@ pub mod tensor;
 pub mod prelude {
     #[cfg(feature = "half")]
     pub use crate::half::{bf16, f16};
+    #[cfg(feature = "macros")]
+    pub use crate::mlir_model;
     pub use crate::tensor::{
         Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6, TensorElement,
     };
-    #[cfg(feature = "macros")]
-    pub use crate::{graph, mlir_model};
     pub use crate::{Backend, Driver};
+}
+
+#[macro_export]
+macro_rules! generated_graphs {
+    () => {
+        include!(concat!(env!("OUT_DIR"), "/knok_graphs.rs"));
+    };
+    ($file:literal) => {
+        include!(concat!(env!("OUT_DIR"), "/", $file));
+    };
+    (mod $name:ident) => {
+        mod $name {
+            include!(concat!(env!("OUT_DIR"), "/knok_graphs.rs"));
+        }
+    };
+    (mod $name:ident, $file:literal) => {
+        mod $name {
+            include!(concat!(env!("OUT_DIR"), "/", $file));
+        }
+    };
+    (pub mod $name:ident) => {
+        pub mod $name {
+            include!(concat!(env!("OUT_DIR"), "/knok_graphs.rs"));
+        }
+    };
+    (pub mod $name:ident, $file:literal) => {
+        pub mod $name {
+            include!(concat!(env!("OUT_DIR"), "/", $file));
+        }
+    };
 }
 
 pub use artifact::{DType, GraphArtifact, GraphArtifactVariant, TensorDesc};

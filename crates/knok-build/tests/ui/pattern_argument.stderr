@@ -1,0 +1,5 @@
+error: graph argument patterns must be simple identifiers
+ --> tests/ui/pattern_argument.rs:6:12
+  |
+6 | fn forward((x,): (T1<f32, 4>,)) -> T1<f32, 4> {
+  |            ^^^^

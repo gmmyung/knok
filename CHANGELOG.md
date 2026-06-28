@@ -13,19 +13,30 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Added
 
-- Nothing yet.
+- Added an experimental `knok-build` build-time tracing frontend that records
+  host-executed graph functions from `build.rs`, emits generated target wrappers
+  into `OUT_DIR`, and imports them with `knok::generated_graphs!`.
+- Added Rust-native build-time tracing wrappers for static shape/indexing ops,
+  creation ops, reductions, linalg, conv2d options, predicates, and
+  floating-point math.
+- Added build-time tracing compile-fail coverage for graph macro diagnostics
+  and build script type-checking failures.
 
 ### Changed
 
-- Nothing yet.
+- Replaced the parser-first graph authoring surface with build-time host
+  tracing through `knok-build`.
+- Changed traced op reuse to use explicit node and tuple projection identities
+  instead of thread-local tracing state.
 
 ### Fixed
 
-- Nothing yet.
+- Exported `squeeze` from `knok_build::prelude`.
 
 ### Removed
 
-- Nothing yet.
+- Removed the old `#[knok::graph]` parser macro, parser-specific tests, UI
+  snapshots, graph examples, and benchmark entrypoint.
 
 ## 0.2.0 - 2026-06-28
 

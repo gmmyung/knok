@@ -23,9 +23,13 @@ pub(super) struct Lowerer<'a> {
     pub(super) graph: &'a TypedGraph,
     pub(super) graphs: &'a BTreeMap<String, TypedGraph>,
     pub(super) call_stack: Vec<String>,
+    pub(super) tuple_scope_stack: Vec<u64>,
+    pub(super) next_tuple_scope: u64,
     pub(super) next_value: usize,
     pub(super) lines: Vec<String>,
     pub(super) values: BTreeMap<String, Value>,
+    pub(super) node_values: BTreeMap<(u64, u64), Value>,
+    pub(super) tuple_values: BTreeMap<(u64, u64), Vec<Value>>,
 }
 
 #[derive(Clone)]
@@ -75,9 +79,13 @@ impl<'a> Lowerer<'a> {
             graph,
             graphs,
             call_stack: vec![graph.name.clone()],
+            tuple_scope_stack: vec![0],
+            next_tuple_scope: 1,
             next_value: 0,
             lines: Vec::new(),
             values: BTreeMap::new(),
+            node_values: BTreeMap::new(),
+            tuple_values: BTreeMap::new(),
         }
     }
 
@@ -151,6 +159,12 @@ impl<'a> Lowerer<'a> {
                 let rhs = self.lower_expr(rhs)?;
                 self.binary_value(*op, lhs, rhs)
             }
+            Expr::Node { node_id, value } => self.lower_node(*node_id, value),
+            Expr::TupleGet {
+                tuple_id,
+                value,
+                index,
+            } => self.lower_tuple_get(*tuple_id, value, *index),
             Expr::Call { op, args } => {
                 let values = self.lower_call_values(op, args)?;
                 if values.len() != 1 {
@@ -510,7 +524,9 @@ impl<'a> Lowerer<'a> {
                 self.sum(input, *axis)
             }
             CallOp::Split { .. } => {
-                anyhow::bail!("split produces multiple values and must be lowered as a let binding")
+                anyhow::bail!(
+                    "split produces multiple values and must be lowered through tuple projections"
+                )
             }
             CallOp::Take { axis, index } => {
                 let input = self.lower_expr(&args[0])?;
@@ -595,9 +611,52 @@ impl<'a> Lowerer<'a> {
 
     fn lower_let_values(&mut self, expr: &Expr) -> anyhow::Result<Vec<Value>> {
         match expr {
+            Expr::Node { value, .. } => self.lower_let_values(value),
             Expr::Call { op, args } => self.lower_call_values(op, args),
             _ => Ok(vec![self.lower_expr(expr)?]),
         }
+    }
+
+    fn current_tuple_scope(&self) -> u64 {
+        *self
+            .tuple_scope_stack
+            .last()
+            .expect("lowerer always has an active tuple scope")
+    }
+
+    fn lower_node(&mut self, node_id: u64, value: &Expr) -> anyhow::Result<Value> {
+        let key = (self.current_tuple_scope(), node_id);
+        if !self.node_values.contains_key(&key) {
+            let value = self.lower_expr(value)?;
+            self.node_values.insert(key, value);
+        }
+        self.node_values
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("node value was not cached"))
+    }
+
+    fn lower_tuple_get(
+        &mut self,
+        tuple_id: u64,
+        value: &Expr,
+        index: usize,
+    ) -> anyhow::Result<Value> {
+        let key = (self.current_tuple_scope(), tuple_id);
+        if !self.tuple_values.contains_key(&key) {
+            let values = self.lower_let_values(value)?;
+            self.tuple_values.insert(key, values);
+        }
+        let values = self
+            .tuple_values
+            .get(&key)
+            .expect("tuple values were inserted above");
+        values.get(index).cloned().ok_or_else(|| {
+            anyhow::anyhow!(
+                "tuple projection index {index} out of bounds for {} values",
+                values.len()
+            )
+        })
     }
 
     fn bind_values(
@@ -640,6 +699,9 @@ impl<'a> Lowerer<'a> {
         }
 
         self.call_stack.push(name.to_string());
+        let tuple_scope = self.next_tuple_scope;
+        self.next_tuple_scope += 1;
+        self.tuple_scope_stack.push(tuple_scope);
         let mut overwritten = Vec::new();
         for (input, value) in graph.inputs.iter().zip(args) {
             overwritten.push((
@@ -663,6 +725,11 @@ impl<'a> Lowerer<'a> {
                 self.values.remove(&name);
             }
         }
+        self.node_values
+            .retain(|(scope, _), _| *scope != tuple_scope);
+        self.tuple_values
+            .retain(|(scope, _), _| *scope != tuple_scope);
+        self.tuple_scope_stack.pop();
         self.call_stack.pop();
         result
     }

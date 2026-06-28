@@ -1,0 +1,5 @@
+error: graph functions must return a traced tensor type or tuple of traced tensor types
+ --> tests/ui/missing_return_type.rs:6:4
+  |
+6 | fn forward(x: T1<f32, 4>) {
+  |    ^^^^^^^

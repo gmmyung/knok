@@ -1,0 +1,7 @@
+error: missing required backend = Backend::... argument
+ --> tests/ui/missing_backend.rs:5:1
+  |
+5 | #[knok_build::graph]
+  | ^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `knok_build::graph` (in Nightly builds, run with -Z macro-backtrace for more info)

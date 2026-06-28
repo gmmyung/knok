@@ -1,15 +1,15 @@
 # Benchmarks
 
-These are quick Criterion runs for tracking broad performance shape. They use a
-short sample window, so treat them as a local snapshot instead of publish-grade
-numbers.
+These are archived quick Criterion runs from the previous parser-based graph
+frontend. The benchmark entrypoint was removed while the build-time tracing
+frontend is being rebuilt, so treat these numbers only as historical context.
 
 Environment:
 
 - Date: 2026-06-21
 - Machine: Apple M5 Pro, 15 CPU cores
 - OS: macOS Darwin 25.5.0 arm64
-- Command:
+- Command used at the time:
   `cargo bench -p knok --bench runtime -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2`
 - Cargo profile: `bench` / optimized release build
 

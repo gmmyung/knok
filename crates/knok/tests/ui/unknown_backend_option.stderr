@@ -1,5 +1,0 @@
-error: unknown backend option `device`
- --> tests/ui/unknown_backend_option.rs:2:31
-  |
-2 |     backend(Backend::LlvmCpu, device = "default"),
-  |                               ^^^^^^
