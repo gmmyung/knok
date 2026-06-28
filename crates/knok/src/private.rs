@@ -1,6 +1,5 @@
 extern crate alloc;
 
-#[doc(hidden)]
 pub fn invoke_one_with_engine<T: crate::runtime::raw::Output>(
     engine: &crate::Engine,
     artifact: crate::GraphArtifact,

@@ -8,11 +8,6 @@ use crate::{
     GraphSignature, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue,
 };
 
-/// Type-checks a parsed graph and annotates every expression with tensor types.
-///
-/// The checker validates static shapes, element types, operation arity, nested
-/// graph calls, and declared return types. It returns a [`TypedGraph`] ready for
-/// MLIR lowering.
 pub fn type_check(
     graph: Graph,
     graph_signatures: &[(String, GraphSignature)],

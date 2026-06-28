@@ -18,11 +18,6 @@ use crate::{
     mlir_signature::validate_mlir_model_signature,
 };
 
-/// Expands a `knok::mlir_model!` declaration.
-///
-/// The generated module embeds one or more compiled VMFB variants and exposes
-/// typed invocation helpers when the macro input declares input and output
-/// tensor types.
 pub fn expand_mlir_model(input: TokenStream) -> TokenStream {
     match expand_mlir_model_result(input) {
         Ok(tokens) => tokens,
