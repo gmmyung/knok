@@ -21,6 +21,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   floating-point math.
 - Added build-time tracing compile-fail coverage for graph macro diagnostics
   and build script type-checking failures.
+- Added Nix-provisioned `cargo-llvm-cov` coverage tooling and a GitHub Actions
+  coverage job.
 
 ### Changed
 

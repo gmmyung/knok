@@ -135,6 +135,14 @@ The check covers formatting, core/lowering/build tracing tests, no-std wrapper
 checks, docs, imported MLIR tests, and an end-to-end build.rs traced runtime
 fixture.
 
+Coverage reports are available through the Nix shell:
+
+```sh
+scripts/coverage.sh
+```
+
+The script writes `target/coverage/lcov.info` and prints a summary.
+
 ## Documentation Map
 
 | File | Purpose |

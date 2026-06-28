@@ -20,6 +20,15 @@ The main validation command is:
 scripts/release-check.sh
 ```
 
+Coverage reports use the same Nix-provisioned toolchain:
+
+```sh
+scripts/coverage.sh
+```
+
+The script writes an LCOV report to `target/coverage/lcov.info` and prints a
+line coverage summary.
+
 For faster iteration, run focused checks first:
 
 ```sh
@@ -29,6 +38,7 @@ cargo test -p knok
 cargo test -p knok-build-tracing-runtime
 cargo check -p knok --no-default-features
 cargo check -p knok-no-std-smoke
+scripts/coverage.sh
 ```
 
 ## Pull Requests
@@ -57,8 +67,8 @@ After `1.0.0`, use standard semantic versioning.
 
 `main` should stay releasable and is protected on GitHub. Use short topic
 branches such as `codex/add-op` or `name/add-op` for PRs. Required checks are
-`fmt`, `core`, `no-std`, `docs`, and `host-runtime`. Release branches are not
-needed unless an already-published line needs an urgent patch.
+`fmt`, `core`, `no-std`, `docs`, `host-runtime`, and `coverage`. Release
+branches are not needed unless an already-published line needs an urgent patch.
 
 Release tags use `vMAJOR.MINOR.PATCH`. Pushing a valid tag publishes to
 crates.io after CI verifies crate versions, workspace dependency versions, and

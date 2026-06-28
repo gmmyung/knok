@@ -60,6 +60,7 @@
             packages =
               [
                 pkgs.cargo
+                pkgs.cargo-llvm-cov
                 pkgs.rustc
                 pkgs.rustfmt
                 pkgs.clippy
@@ -82,6 +83,8 @@
 
             LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
             MLIR_SYS_220_PREFIX = "${mlirSysLlvmConfig}";
+            LLVM_COV = "${llvm.llvm}/bin/llvm-cov";
+            LLVM_PROFDATA = "${llvm.llvm}/bin/llvm-profdata";
             CC = "${llvm.clang}/bin/clang";
             CXX = "${llvm.clang}/bin/clang++";
             CMAKE_GENERATOR = "Ninja";
