@@ -13,7 +13,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Added
 
-- Nothing yet.
+- Added rustdoc coverage for public APIs across all published crates and made
+  CI/release checks fail on missing public item documentation.
 
 ### Changed
 

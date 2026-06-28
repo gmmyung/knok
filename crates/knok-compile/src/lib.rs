@@ -1,3 +1,10 @@
+#![warn(missing_docs)]
+//! Macro expansion, MLIR lowering, and IREE compilation support for `knok`.
+//!
+//! This crate backs `knok-macros`. It is public so tooling can reuse the same
+//! parser/lowerer/compiler path, but most application code should use
+//! `#[knok::graph]` and `knok::mlir_model!` from the top-level `knok` crate.
+
 mod backend;
 mod common;
 mod compile;

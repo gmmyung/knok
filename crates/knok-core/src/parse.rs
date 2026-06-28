@@ -9,10 +9,20 @@ use crate::{
     GraphSignature, Input, Let, Padding2d, TensorType, TypedGraph, UnaryOp,
 };
 
+/// Parses and type-checks one `#[knok::graph]` function.
+///
+/// `attr` is the attribute token stream after `#[knok::graph(...)]`, and
+/// `item` is the decorated Rust function. This helper does not know about
+/// previously declared graph functions; use [`parse_graph_with_signatures`]
+/// when nested graph calls should be accepted.
 pub fn parse_graph(attr: proc_macro2::TokenStream, item: ItemFn) -> syn::Result<TypedGraph> {
     parse_graph_with_signatures(attr, item, &[])
 }
 
+/// Parses and type-checks one graph function with known callable graph signatures.
+///
+/// `graph_signatures` is used to resolve calls to earlier `#[knok::graph]`
+/// functions during macro expansion.
 pub fn parse_graph_with_signatures(
     attr: proc_macro2::TokenStream,
     item: ItemFn,
@@ -152,6 +162,10 @@ fn parse_input(input: &FnArg) -> syn::Result<Input> {
     })
 }
 
+/// Parses a Rust `Tensor0` through `Tensor6` type into a static tensor type.
+///
+/// This accepts only the tensor containers exported by `knok`, with a concrete
+/// element type and const dimensions.
 pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(

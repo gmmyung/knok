@@ -16,8 +16,11 @@ use crate::{
 
 static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// MLIR and VM bytecode produced from one graph.
 pub struct CompiledGraph {
+    /// Verified MLIR module text generated from the graph.
     pub mlir: String,
+    /// IREE VM flatbuffer bytecode compiled from `mlir`.
     pub vmfb: Vec<u8>,
 }
 
@@ -28,10 +31,18 @@ pub(crate) struct CompiledVariant {
     pub(crate) vmfb: Vec<u8>,
 }
 
+/// Lowers a typed graph to MLIR and compiles it to an IREE VMFB.
+///
+/// This convenience path does not resolve nested graph calls. Use
+/// [`compile_graph_with_registry`] when the graph body can call other graphs.
 pub fn compile_graph(graph: &TypedGraph) -> anyhow::Result<CompiledGraph> {
     compile_graph_with_registry(graph, &BTreeMap::new())
 }
 
+/// Lowers and compiles a typed graph with a registry of callable graph bodies.
+///
+/// `graphs` is keyed by graph function name and is used to inline nested graph
+/// calls before MLIR verification and IREE compilation.
 pub fn compile_graph_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
@@ -84,6 +95,10 @@ pub(crate) fn compile_mlir_variants(
         .collect()
 }
 
+/// Compiles an MLIR module string to IREE VM bytecode for one backend.
+///
+/// `backend` must be an IREE target backend supported by `knok`, currently
+/// `llvm-cpu` or `metal-spirv`.
 pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
     compile_with_iree(backend, &[], mlir)
 }
