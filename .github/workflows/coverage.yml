@@ -8,6 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  KNOK_COVERAGE_MIN_LINES: "20"
+
+permissions:
+  contents: write
 
 jobs:
   coverage:
@@ -29,10 +33,43 @@ jobs:
           path: target/coverage/lcov.info
           if-no-files-found: error
       - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: target/coverage/html
+          if-no-files-found: error
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-badge
+          path: target/coverage/badge/coverage.svg
+          if-no-files-found: error
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          publish_dir="$(mktemp -d)"
+          cp target/coverage/badge/coverage.svg "$publish_dir/coverage.svg"
+          cd "$publish_dir"
+          git init
+          git checkout -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.svg
+          git commit -m "Update coverage badge"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+      - if: always()
         run: |
           if [[ -f target/coverage/summary.txt ]]; then
             {
               echo "### Coverage"
+              echo
+              echo "Minimum line coverage: ${KNOK_COVERAGE_MIN_LINES}%"
+              if [[ -f target/coverage/badge/coverage.svg ]]; then
+                echo
+                echo "Coverage badge artifact: \`coverage-badge\`"
+              fi
+              echo
               echo '```'
               cat target/coverage/summary.txt
               echo '```'

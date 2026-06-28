@@ -7,7 +7,7 @@ use crate::Backend;
 pub mod raw {
     extern crate alloc;
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     use alloc::vec::Vec;
 
     use crate::DType;
@@ -57,11 +57,11 @@ pub mod raw {
 
     /// Element types supported by the raw hosted single-output convenience path.
     pub trait Output: Copy {
-        #[cfg(feature = "host-runtime")]
+        #[cfg(feature = "runtime")]
         fn read_output(outputs: Outputs) -> crate::Result<alloc::vec::Vec<Self>>;
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     macro_rules! impl_output {
         ($ty:ty) => {
             impl Output for $ty {
@@ -72,32 +72,32 @@ pub mod raw {
         };
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_output!(f32);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_output!(f64);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_output!(bool);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_output!(i32);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_output!(i64);
 
-    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    #[cfg(all(feature = "runtime", feature = "half"))]
     impl_output!(crate::half::f16);
-    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    #[cfg(all(feature = "runtime", feature = "half"))]
     impl_output!(crate::half::bf16);
 
-    #[cfg(not(feature = "host-runtime"))]
+    #[cfg(not(feature = "runtime"))]
     impl<T: Copy> Output for T {}
 
     /// Outputs returned by a raw hosted graph invocation.
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     pub struct Outputs {
         pub(super) values: Vec<eerie::runtime::Value>,
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl core::fmt::Debug for Outputs {
         fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             formatter
@@ -107,7 +107,7 @@ pub mod raw {
         }
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl Outputs {
         /// Returns the number of values produced by the invoked function.
         pub fn len(&self) -> usize {
@@ -147,11 +147,11 @@ pub mod raw {
         }
     }
 
-    #[cfg(not(feature = "host-runtime"))]
+    #[cfg(not(feature = "runtime"))]
     #[doc(hidden)]
     pub struct Outputs;
 
-    #[cfg(not(feature = "host-runtime"))]
+    #[cfg(not(feature = "runtime"))]
     impl Outputs {
         pub fn len(&self) -> usize {
             0
@@ -171,7 +171,7 @@ pub mod raw {
     }
 
     /// Element types that can be passed through raw runtime buffer views.
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     #[doc(hidden)]
     pub trait Element: eerie::runtime::BufferElement {
         fn buffer_from_value(
@@ -179,7 +179,7 @@ pub mod raw {
         ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError>;
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     macro_rules! impl_element {
         ($type:ty) => {
             impl Element for $type {
@@ -192,39 +192,39 @@ pub mod raw {
         };
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(bool);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(u8);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(u16);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(u32);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(u64);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(i8);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(i16);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(i32);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(i64);
-    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    #[cfg(all(feature = "runtime", feature = "half"))]
     impl_element!(half::f16);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(f32);
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     impl_element!(f64);
-    #[cfg(all(feature = "host-runtime", feature = "half"))]
+    #[cfg(all(feature = "runtime", feature = "half"))]
     impl_element!(half::bf16);
 
     /// Element types that can be named by generated runtime wrappers in no-std builds.
-    #[cfg(not(feature = "host-runtime"))]
+    #[cfg(not(feature = "runtime"))]
     #[doc(hidden)]
     pub trait Element: Copy {}
 
-    #[cfg(not(feature = "host-runtime"))]
+    #[cfg(not(feature = "runtime"))]
     impl<T: Copy> Element for T {}
 }
 
@@ -258,14 +258,14 @@ impl RuntimeConfig {
         }
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     fn driver_name_literal(name: &'static str) -> Self {
         Self {
             driver: DriverSelection::Explicit(name.into()),
         }
     }
 
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     fn driver_name(&self) -> &str {
         match &self.driver {
             DriverSelection::Auto => "local-task",
@@ -280,7 +280,7 @@ impl Default for RuntimeConfig {
     }
 }
 
-#[cfg(feature = "host-runtime")]
+#[cfg(feature = "runtime")]
 mod hosted {
     use alloc::{
         collections::BTreeMap,
@@ -472,7 +472,7 @@ mod hosted {
     }
 }
 
-#[cfg(not(feature = "host-runtime"))]
+#[cfg(not(feature = "runtime"))]
 mod hosted {
     use alloc::vec::Vec;
 

@@ -85,6 +85,6 @@ for all published crates.
 ## Platform Notes
 
 The Nix shell pins LLVM/MLIR and provisions the IREE compiler from the Python
-wheel when `LIB_IREE_COMPILER` is not already set. docs.rs is configured to
-build `knok` with `no-default-features` and `features = ["std"]`, so public docs
-must not require the hosted runtime feature.
+wheel when `LIB_IREE_COMPILER` is not already set. docs.rs builds the default
+`knok` feature set, including the hosted runtime API, so public docs should
+describe the normal inference path first.

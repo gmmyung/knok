@@ -23,6 +23,9 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   and build script type-checking failures.
 - Added Nix-provisioned `cargo-llvm-cov` coverage tooling and a GitHub Actions
   coverage workflow with a README badge.
+- Added coverage HTML and badge artifacts, a configurable line coverage gate,
+  and additional public API coverage for artifact metadata and runtime errors.
+- Added more rustdoc for the `knok-build` build-script API.
 
 ### Changed
 
@@ -30,6 +33,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   tracing through `knok-build`.
 - Changed traced op reuse to use explicit node and tuple projection identities
   instead of thread-local tracing state.
+- Renamed the default hosted execution feature from `host-runtime` to `runtime`
+  and let docs.rs build the default runtime-enabled API surface.
 
 ### Fixed
 

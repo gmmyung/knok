@@ -1,3 +1,26 @@
+//! Build-script frontend for `knok` static graph tracing.
+//!
+//! This crate is used from `build.rs`, not from the final target crate. A build
+//! script defines graph functions with [`graph`], executes them with traced
+//! tensor values through [`compile_graphs`], and writes generated wrappers plus
+//! VMFB artifacts into `OUT_DIR`.
+//!
+//! ```ignore
+//! use knok_build::prelude::*;
+//!
+//! #[knok_build::graph(backend = Backend::LlvmCpu)]
+//! fn forward(x: T2<f32, 2, 2>) -> T2<f32, 2, 2> {
+//!     relu(matmul(x.clone(), x) + 1.0)
+//! }
+//!
+//! fn main() {
+//!     knok_build::compile_graphs!(forward);
+//! }
+//! ```
+//!
+//! Target crates import the generated wrappers with
+//! `knok::generated_graphs!(pub mod graphs);`.
+
 mod codegen;
 mod trace;
 
@@ -9,15 +32,20 @@ use knok_core::TypedGraph;
 pub use knok_build_macros::{compile_graphs, compile_graphs_with_options, graph};
 pub use trace::*;
 
+/// Result type used by build-script tracing and code generation.
 pub type Result<T> = anyhow::Result<T>;
 
+/// IREE target backend selected by a traced graph.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
+    /// CPU backend compiled through IREE's LLVM CPU target.
     LlvmCpu,
+    /// Apple Metal backend compiled through IREE's Metal/SPIR-V path.
     MetalSpirv,
 }
 
 impl Backend {
+    /// Returns the IREE target backend flag value.
     pub const fn name(self) -> &'static str {
         match self {
             Self::LlvmCpu => "llvm-cpu",
@@ -25,6 +53,7 @@ impl Backend {
         }
     }
 
+    /// Returns the default IREE runtime driver used by generated wrappers.
     pub const fn default_driver(self) -> &'static str {
         match self {
             Self::LlvmCpu => "local-task",
@@ -33,6 +62,7 @@ impl Backend {
     }
 }
 
+/// Options controlling generated wrapper output from `compile_graphs!`.
 #[derive(Clone, Debug)]
 pub struct BuildOptions {
     output_file: String,
@@ -40,6 +70,11 @@ pub struct BuildOptions {
 }
 
 impl BuildOptions {
+    /// Creates placeholder VMFB files for check-only builds.
+    ///
+    /// Stub artifacts let no-std or cross-target fixture crates typecheck
+    /// generated wrappers without requiring a runnable IREE compiler artifact.
+    /// The generated artifacts are intentionally not executable.
     pub fn stub_artifacts_for_check() -> Self {
         Self {
             stub_artifacts: true,
@@ -47,6 +82,10 @@ impl BuildOptions {
         }
     }
 
+    /// Writes generated Rust wrappers to `name` inside `OUT_DIR`.
+    ///
+    /// Target crates must pass the same filename to
+    /// `knok::generated_graphs!(pub mod graphs, "...")`.
     pub fn output_file(mut self, name: impl Into<String>) -> Self {
         self.output_file = name.into();
         self
@@ -62,21 +101,28 @@ impl Default for BuildOptions {
     }
 }
 
+/// Registry populated by generated `#[graph]` registration glue.
 #[derive(Default)]
 pub struct GraphRegistry {
     graphs: Vec<RegisteredGraph>,
 }
 
+/// One traced graph registered for build-time compilation.
 pub struct RegisteredGraph {
     graph: TypedGraph,
     backend: Backend,
 }
 
 impl GraphRegistry {
+    /// Creates an empty graph registry.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Traces one graph body and stores the resulting typed graph.
+    ///
+    /// Most users call this indirectly through [`compile_graphs`] or
+    /// [`compile_graphs_with_options`].
     pub fn trace<F, O>(&mut self, name: &str, backend: Backend, build: F) -> Result<()>
     where
         F: FnOnce(&mut TraceContext) -> O,
@@ -90,10 +136,12 @@ impl GraphRegistry {
     }
 }
 
+/// Emits wrappers and VMFB artifacts for all graphs in `registry`.
 pub fn emit_registered_graphs(registry: GraphRegistry) -> Result<()> {
     emit_registered_graphs_with_options(registry, BuildOptions::default())
 }
 
+/// Emits wrappers and VMFB artifacts with explicit build options.
 pub fn emit_registered_graphs_with_options(
     registry: GraphRegistry,
     options: BuildOptions,
@@ -144,6 +192,7 @@ fn compile_registered_graph(
     compile_graph_with_registry(graph, graphs).map_err(Into::into)
 }
 
+/// Common build-script imports for graph definitions.
 pub mod prelude {
     pub use crate::{
         abs, all, all_axis, amax, amax_axis, amin, amin_axis, any, any_axis, arange, arange_step,

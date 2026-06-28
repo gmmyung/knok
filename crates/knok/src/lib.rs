@@ -88,7 +88,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     /// IREE runtime returned an error.
-    #[cfg(feature = "host-runtime")]
+    #[cfg(feature = "runtime")]
     Runtime(eerie::runtime::RuntimeError),
     /// Tensor data length does not match the statically declared shape.
     Shape {
@@ -152,11 +152,11 @@ pub enum Error {
         /// Number of available outputs.
         len: usize,
     },
-    /// Hosted runtime APIs were called without the hosted runtime feature.
+    /// Hosted runtime APIs were called without the runtime feature.
     HostedRuntimeDisabled,
 }
 
-#[cfg(feature = "host-runtime")]
+#[cfg(feature = "runtime")]
 impl From<eerie::runtime::RuntimeError> for Error {
     fn from(error: eerie::runtime::RuntimeError) -> Self {
         Self::Runtime(error)
@@ -166,7 +166,7 @@ impl From<eerie::runtime::RuntimeError> for Error {
 impl core::fmt::Display for Error {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            #[cfg(feature = "host-runtime")]
+            #[cfg(feature = "runtime")]
             Self::Runtime(error) => write!(formatter, "runtime error: {error}"),
             Self::Shape { expected, actual } => {
                 write!(
@@ -231,7 +231,7 @@ impl core::fmt::Display for Error {
                     "runtime output index out of bounds: index {index}, len {len}"
                 )
             }
-            Self::HostedRuntimeDisabled => formatter.write_str("host runtime feature is disabled"),
+            Self::HostedRuntimeDisabled => formatter.write_str("runtime feature is disabled"),
         }
     }
 }
