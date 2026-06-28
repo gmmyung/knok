@@ -1,3 +1,11 @@
+#![warn(missing_docs)]
+//! Core parser, graph IR, and type checker for `knok`.
+//!
+//! This crate is used by `knok-compile` and the procedural macros. Most users
+//! should depend on the top-level `knok` crate instead. The public API here is
+//! useful for tests, tooling, and alternate macro frontends that want to parse
+//! restricted Rust graph functions into the typed `knok` IR.
+
 mod ast;
 mod ops;
 mod parse;

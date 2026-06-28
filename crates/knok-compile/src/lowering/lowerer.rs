@@ -7,10 +7,18 @@ use knok_core::{
 
 use crate::common::mlir_result_types;
 
+/// Lowers a typed graph to an MLIR module string.
+///
+/// This convenience path does not resolve nested graph calls. Use
+/// [`lower_to_mlir_with_registry`] when the graph can call other graphs.
 pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
     lower_to_mlir_with_registry(graph, &BTreeMap::new())
 }
 
+/// Lowers a typed graph to MLIR with a registry of callable graph bodies.
+///
+/// Graph calls are inlined into the caller during lowering, so the resulting
+/// MLIR module contains a single exported function.
 pub fn lower_to_mlir_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
