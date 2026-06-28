@@ -28,7 +28,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
-      - run: nix develop --command cargo test -p knok-core -p knok-compile -p knok-macros
+      - run: nix develop --command cargo test -p knok-core -p knok-compile -p knok-build -p knok-build-macros
 
   no-std:
     runs-on: ubuntu-latest
@@ -39,6 +39,7 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
       - run: nix develop --command cargo check -p knok --no-default-features
+      - run: nix develop --command cargo check -p knok-build-tracing-smoke
       - run: nix develop --command cargo check -p knok-no-std-smoke
 
   docs:
@@ -63,3 +64,4 @@ jobs:
           cache-targets: false
           save-if: false
       - run: nix develop --command cargo test -p knok
+      - run: nix develop --command cargo test -p knok-build-tracing-runtime

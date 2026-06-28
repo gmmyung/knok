@@ -1,0 +1,5 @@
+error[E0747]: constant provided when a type was expected
+ --> tests/ui/old_axis_syntax.rs:7:11
+  |
+7 |     sum::<1>(x)
+  |           ^

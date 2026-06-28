@@ -1,6 +1,12 @@
+//! Core graph IR, tensor type metadata, and type checking for `knok`.
+//!
+//! This crate is primarily consumed by `knok-build` and `knok-compile`. End
+//! users normally interact with the typed tensors in `knok` and the tracing
+//! helpers in `knok-build`.
+
 mod ast;
 mod ops;
-mod parse;
+mod type_parse;
 mod typecheck;
 
 #[cfg(test)]
@@ -11,5 +17,5 @@ pub use ast::{
     CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input, Let, Padding2d,
     StaticScalar, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue, UnaryOp,
 };
-pub use parse::{parse_graph, parse_graph_with_signatures, parse_tensor_type};
+pub use type_parse::parse_tensor_type;
 pub use typecheck::type_check;

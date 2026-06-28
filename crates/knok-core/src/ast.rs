@@ -36,6 +36,15 @@ pub enum Expr {
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
+    Node {
+        node_id: u64,
+        value: Box<Expr>,
+    },
+    TupleGet {
+        tuple_id: u64,
+        value: Box<Expr>,
+        index: usize,
+    },
     Call {
         op: CallOp,
         args: Vec<Expr>,

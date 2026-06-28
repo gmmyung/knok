@@ -1,9 +1,12 @@
 [workspace]
 members = [
     "crates/knok",
+    "crates/knok-build",
+    "crates/knok-build-macros",
     "crates/knok-core",
     "crates/knok-compile",
-    "crates/knok-macros",
+    "crates/knok/tests/build-tracing-smoke",
+    "crates/knok/tests/build-tracing-runtime",
     "crates/knok/tests/no-std-smoke",
 ]
 resolver = "2"
@@ -17,15 +20,14 @@ authors = ["Gyungmin Myung"]
 [workspace.dependencies]
 anyhow = "1.0"
 blake3 = "1.8"
-criterion = "0.7"
 eerie = { version = "0.5.0", default-features = false }
+fs2 = "0.4"
 half = { version = "2.7", default-features = false }
 knok-core = { path = "crates/knok-core", version = "0.2.0" }
+knok-build = { path = "crates/knok-build", version = "0.2.0" }
+knok-build-macros = { path = "crates/knok-build-macros", version = "0.2.0" }
 knok-compile = { path = "crates/knok-compile", version = "0.2.0" }
-knok-macros = { path = "crates/knok-macros", version = "0.2.0" }
 melior = "0.27"
-nalgebra = { version = "0.34", default-features = false, features = ["std"] }
-ndarray = "0.17"
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }

@@ -13,7 +13,8 @@ esac
 crates=(
   knok-core
   knok-compile
-  knok-macros
+  knok-build-macros
+  knok-build
   knok
 )
 
@@ -29,7 +30,8 @@ root = pathlib.Path.cwd()
 paths = {
     "knok-core": root / "crates/knok-core/Cargo.toml",
     "knok-compile": root / "crates/knok-compile/Cargo.toml",
-    "knok-macros": root / "crates/knok-macros/Cargo.toml",
+    "knok-build-macros": root / "crates/knok-build-macros/Cargo.toml",
+    "knok-build": root / "crates/knok-build/Cargo.toml",
     "knok": root / "crates/knok/Cargo.toml",
 }
 print(tomllib.loads(paths[crate].read_text())["package"]["version"])

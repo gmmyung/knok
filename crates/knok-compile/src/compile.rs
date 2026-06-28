@@ -6,32 +6,30 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use fs2::FileExt;
 use knok_core::TypedGraph;
 use melior::{dialect::DialectRegistry, ir::operation::OperationLike, ir::Module, Context};
 
 use crate::{
-    backend::{backend_flags, BackendSpec, IreeBackend},
+    backend::{backend_flags, IreeBackend},
     lowering::lower_to_mlir_with_registry,
 };
 
 static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct CompiledGraph {
+    /// MLIR emitted from the typed graph before IREE compilation.
     pub mlir: String,
+    /// IREE VM bytecode module bytes produced from the MLIR.
     pub vmfb: Vec<u8>,
 }
 
-pub(crate) struct CompiledVariant {
-    pub(crate) backend: String,
-    pub(crate) driver: String,
-    pub(crate) compile_flags: Vec<String>,
-    pub(crate) vmfb: Vec<u8>,
-}
-
+/// Lowers and compiles a typed graph without a graph-call registry.
 pub fn compile_graph(graph: &TypedGraph) -> anyhow::Result<CompiledGraph> {
     compile_graph_with_registry(graph, &BTreeMap::new())
 }
 
+/// Lowers and compiles a typed graph with additional callable graph definitions.
 pub fn compile_graph_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
@@ -42,48 +40,7 @@ pub fn compile_graph_with_registry(
     Ok(CompiledGraph { mlir, vmfb })
 }
 
-pub(crate) fn compile_graph_variants_with_registry(
-    graph: &TypedGraph,
-    graphs: &BTreeMap<String, TypedGraph>,
-    specs: &[BackendSpec],
-) -> anyhow::Result<Vec<CompiledVariant>> {
-    let mlir = lower_to_mlir_with_registry(graph, graphs)?;
-    verify_with_melior(&mlir)?;
-    specs
-        .iter()
-        .map(|spec| {
-            let compile_flags = backend_flags(&spec.backend, &spec.extra_flags);
-            let vmfb = compile_with_iree(&spec.backend, &spec.extra_flags, &mlir)?;
-            Ok(CompiledVariant {
-                backend: spec.backend.clone(),
-                driver: spec.driver.clone(),
-                compile_flags,
-                vmfb,
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn compile_mlir_variants(
-    specs: &[BackendSpec],
-    mlir: &str,
-) -> anyhow::Result<Vec<CompiledVariant>> {
-    verify_with_melior(mlir)?;
-    specs
-        .iter()
-        .map(|spec| {
-            let compile_flags = backend_flags(&spec.backend, &spec.extra_flags);
-            let vmfb = compile_with_iree(&spec.backend, &spec.extra_flags, mlir)?;
-            Ok(CompiledVariant {
-                backend: spec.backend.clone(),
-                driver: spec.driver.clone(),
-                compile_flags,
-                vmfb,
-            })
-        })
-        .collect()
-}
-
+/// Compiles an MLIR module string to IREE VM bytecode for the given backend.
 pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
     compile_with_iree(backend, &[], mlir)
 }
@@ -108,51 +65,106 @@ fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyho
     }
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
-    let iree_compile = iree_compile_command();
+    let _compiler_lock = lock_compiler_cache(&cache_dir)?;
+    let compiler = iree_compile_command();
     let flags = backend_flags(backend, extra_flags);
-    let key = cache_key(backend, mlir, &iree_compile, &flags);
+    let version = compiler_version(&compiler)?;
+    let key = cache_key(backend, mlir, &compiler, &version, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     if let Some(vmfb) = read_cached_vmfb(&vmfb_path)? {
         return Ok(vmfb);
     }
 
     let suffix = unique_cache_temp_suffix();
-    let mlir_path = cache_dir.join(format!("{key}.{suffix}.mlir"));
+    let tmp_mlir_path = cache_dir.join(format!("{key}.{suffix}.mlir.tmp"));
     let tmp_vmfb_path = cache_dir.join(format!("{key}.{suffix}.vmfb.tmp"));
-    fs::write(&mlir_path, mlir)?;
-    let mut command = Command::new(&iree_compile);
-    command
-        .arg(&mlir_path)
-        .args(&flags)
-        .arg("-o")
-        .arg(&tmp_vmfb_path);
-    let output = command.output()?;
-    let _ = fs::remove_file(&mlir_path);
-    if !output.status.success() {
+    fs::write(&tmp_mlir_path, mlir)?;
+    if let Err(error) = compile_with_iree_compile(&compiler, &flags, &tmp_mlir_path, &tmp_vmfb_path)
+    {
+        let _ = fs::remove_file(&tmp_mlir_path);
         let _ = fs::remove_file(&tmp_vmfb_path);
-        anyhow::bail!(
-            "iree-compile failed with status {}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        return Err(error);
     }
+    let _ = fs::remove_file(&tmp_mlir_path);
     let vmfb = fs::read(&tmp_vmfb_path)?;
     if vmfb.len() < 16 {
+        let _ = fs::remove_file(&tmp_mlir_path);
         let _ = fs::remove_file(&tmp_vmfb_path);
         anyhow::bail!(
-            "iree-compile produced an invalid VMFB cache artifact with {} bytes",
+            "IREE compiler produced an invalid VMFB cache artifact with {} bytes",
             vmfb.len()
         );
     }
     match fs::rename(&tmp_vmfb_path, &vmfb_path) {
         Ok(()) => Ok(vmfb),
         Err(_) => {
+            let _ = fs::remove_file(&tmp_mlir_path);
             let _ = fs::remove_file(&tmp_vmfb_path);
             read_cached_vmfb(&vmfb_path)?
                 .ok_or_else(|| anyhow::anyhow!("failed to publish VMFB cache artifact"))
         }
     }
+}
+
+fn lock_compiler_cache(cache_dir: &Path) -> anyhow::Result<fs::File> {
+    let lock_path = cache_dir.join("iree-compiler.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    file.lock_exclusive()?;
+    Ok(file)
+}
+
+fn iree_compile_command() -> String {
+    env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string())
+}
+
+fn compiler_version(compiler: &str) -> anyhow::Result<String> {
+    let output = Command::new(compiler).arg("--version").output().map_err(|error| {
+        anyhow::anyhow!(
+            "failed to run IREE compiler `{compiler}`: {error}; set KNOK_IREE_COMPILE or install iree-compile"
+        )
+    })?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "IREE compiler `{compiler} --version` failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn compile_with_iree_compile(
+    compiler: &str,
+    flags: &[String],
+    input_path: &Path,
+    output_path: &Path,
+) -> anyhow::Result<()> {
+    let output = Command::new(compiler)
+        .args(flags)
+        .arg("-o")
+        .arg(output_path)
+        .arg(input_path)
+        .output()
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to run IREE compiler `{compiler}`: {error}; set KNOK_IREE_COMPILE or install iree-compile"
+            )
+        })?;
+    if !output.status.success() {
+        let _ = fs::remove_file(output_path);
+        anyhow::bail!(
+            "IREE compiler `{compiler}` failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
 fn read_cached_vmfb(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
@@ -173,10 +185,6 @@ fn unique_cache_temp_suffix() -> String {
     format!("{process_id}-{counter}")
 }
 
-fn iree_compile_command() -> String {
-    env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string())
-}
-
 fn cache_dir() -> anyhow::Result<PathBuf> {
     if let Ok(path) = env::var("KNOK_CACHE_DIR") {
         return Ok(PathBuf::from(path));
@@ -185,13 +193,19 @@ fn cache_dir() -> anyhow::Result<PathBuf> {
     Ok(Path::new(&manifest_dir).join("target/knok-cache"))
 }
 
-fn cache_key(backend: &str, mlir: &str, iree_compile: &str, flags: &[String]) -> String {
+fn cache_key(
+    backend: &str,
+    mlir: &str,
+    compiler: &str,
+    compiler_version: &str,
+    flags: &[String],
+) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"knok-cache-v2");
+    hasher.update(b"knok-cache-v3");
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(backend.as_bytes());
-    hasher.update(iree_compile.as_bytes());
-    hasher.update(iree_compile_version(iree_compile).as_bytes());
+    hasher.update(compiler.as_bytes());
+    hasher.update(compiler_version.as_bytes());
     for flag in flags {
         hasher.update(flag.as_bytes());
     }
@@ -210,24 +224,9 @@ fn cache_key(backend: &str, mlir: &str, iree_compile: &str, flags: &[String]) ->
     hasher.finalize().to_hex().to_string()
 }
 
-fn iree_compile_version(iree_compile: &str) -> String {
-    match Command::new(iree_compile).arg("--version").output() {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout).into(),
-        Ok(output) => format!(
-            "unavailable:{}:{}:{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ),
-        Err(error) => format!("unavailable:{error}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use knok_core::parse_graph;
-    use quote::quote;
-    use syn::parse_quote;
+    use knok_core::{type_check, CallOp, ElementType, Expr, Graph, Input, TensorType};
 
     use crate::lowering::lower_to_mlir;
 
@@ -235,13 +234,26 @@ mod tests {
 
     #[test]
     fn expm1_lowering_uses_direct_math_op() {
-        let graph = parse_graph(
-            quote!(backend = Backend::LlvmCpu),
-            parse_quote! {
-                fn expm1_graph(x: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
-                    expm1(x)
-                }
+        let ty = TensorType {
+            elem: ElementType::F32,
+            shape: vec![4],
+        };
+        let graph = type_check(
+            Graph {
+                name: "expm1_graph".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![Input {
+                    name: "x".into(),
+                    ty: ty.clone(),
+                }],
+                outputs: vec![ty],
+                lets: Vec::new(),
+                body: vec![Expr::Call {
+                    op: CallOp::ExpM1,
+                    args: vec![Expr::Var("x".into())],
+                }],
             },
+            &[],
         )
         .unwrap();
 
@@ -249,6 +261,218 @@ mod tests {
         assert!(mlir.contains("math.expm1"), "{mlir}");
         assert!(!mlir.contains(" = math.exp "), "{mlir}");
         assert!(!mlir.contains("arith.subf"), "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn tuple_projections_share_one_split_lowering() {
+        let input = TensorType {
+            elem: ElementType::F32,
+            shape: vec![4],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2],
+        };
+        let split = Expr::Call {
+            op: CallOp::Split {
+                axis: 0,
+                sections: vec![2, 2],
+            },
+            args: vec![Expr::Var("x".into())],
+        };
+        let graph = type_check(
+            Graph {
+                name: "split_once".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![Input {
+                    name: "x".into(),
+                    ty: input,
+                }],
+                outputs: vec![output.clone(), output],
+                lets: Vec::new(),
+                body: vec![
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split.clone()),
+                        index: 0,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split),
+                        index: 1,
+                    },
+                ],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("tensor.extract_slice").count(), 2, "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn cloned_single_output_node_lowers_once() {
+        let lhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 3],
+        };
+        let rhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![3, 2],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 2],
+        };
+        let matmul = Expr::Node {
+            node_id: 1,
+            value: Box::new(Expr::Call {
+                op: CallOp::Matmul,
+                args: vec![Expr::Var("x".into()), Expr::Var("w".into())],
+            }),
+        };
+        let graph = type_check(
+            Graph {
+                name: "reuse_matmul".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![
+                    Input {
+                        name: "x".into(),
+                        ty: lhs,
+                    },
+                    Input {
+                        name: "w".into(),
+                        ty: rhs,
+                    },
+                ],
+                outputs: vec![output],
+                lets: Vec::new(),
+                body: vec![Expr::Binary {
+                    op: knok_core::BinaryOp::Add,
+                    lhs: Box::new(matmul.clone()),
+                    rhs: Box::new(matmul),
+                }],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("linalg.matmul").count(), 1, "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn distinct_single_output_nodes_lower_separately() {
+        let lhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 3],
+        };
+        let rhs = TensorType {
+            elem: ElementType::F32,
+            shape: vec![3, 2],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2, 2],
+        };
+        let matmul = |node_id| Expr::Node {
+            node_id,
+            value: Box::new(Expr::Call {
+                op: CallOp::Matmul,
+                args: vec![Expr::Var("x".into()), Expr::Var("w".into())],
+            }),
+        };
+        let graph = type_check(
+            Graph {
+                name: "repeat_matmul".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![
+                    Input {
+                        name: "x".into(),
+                        ty: lhs,
+                    },
+                    Input {
+                        name: "w".into(),
+                        ty: rhs,
+                    },
+                ],
+                outputs: vec![output],
+                lets: Vec::new(),
+                body: vec![Expr::Binary {
+                    op: knok_core::BinaryOp::Add,
+                    lhs: Box::new(matmul(1)),
+                    rhs: Box::new(matmul(2)),
+                }],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("linalg.matmul").count(), 2, "{mlir}");
+        verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn distinct_tuple_ids_do_not_share_split_lowering() {
+        let input = TensorType {
+            elem: ElementType::F32,
+            shape: vec![4],
+        };
+        let output = TensorType {
+            elem: ElementType::F32,
+            shape: vec![2],
+        };
+        let split = Expr::Call {
+            op: CallOp::Split {
+                axis: 0,
+                sections: vec![2, 2],
+            },
+            args: vec![Expr::Var("x".into())],
+        };
+        let graph = type_check(
+            Graph {
+                name: "split_twice".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![Input {
+                    name: "x".into(),
+                    ty: input,
+                }],
+                outputs: vec![output.clone(), output.clone(), output.clone(), output],
+                lets: Vec::new(),
+                body: vec![
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split.clone()),
+                        index: 0,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 1,
+                        value: Box::new(split.clone()),
+                        index: 1,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 2,
+                        value: Box::new(split.clone()),
+                        index: 0,
+                    },
+                    Expr::TupleGet {
+                        tuple_id: 2,
+                        value: Box::new(split),
+                        index: 1,
+                    },
+                ],
+            },
+            &[],
+        )
+        .unwrap();
+
+        let mlir = lower_to_mlir(&graph).unwrap();
+        assert_eq!(mlir.matches("tensor.extract_slice").count(), 4, "{mlir}");
         verify_with_melior(&mlir).unwrap();
     }
 }

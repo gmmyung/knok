@@ -1,31 +1,19 @@
 #![no_std]
 
-extern crate alloc;
-
-use knok::prelude::*;
-
-#[knok::graph(backend = Backend::LlvmCpu)]
-pub fn add4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> Tensor1<f32, 4> {
-    x + y
-}
-
-#[knok::graph(backend = Backend::LlvmCpu)]
-pub fn add_sub4(x: Tensor1<f32, 4>, y: Tensor1<f32, 4>) -> (Tensor1<f32, 4>, Tensor1<f32, 4>) {
-    (x + y, x - y)
-}
+knok::generated_graphs!(pub mod graphs, "knok_no_std_graphs.rs");
 
 pub fn artifact() -> knok::GraphArtifact {
-    add4_artifact()
+    graphs::add4::artifact()
 }
 
 pub fn multi_output_artifact() -> knok::GraphArtifact {
-    add_sub4_artifact()
+    graphs::add_sub4::artifact()
 }
 
-pub fn artifact_variant_count() -> usize {
+pub fn variant_count() -> usize {
     artifact().variants.len()
 }
 
-pub fn first_variant_driver() -> Option<&'static str> {
-    artifact().first_variant().map(|variant| variant.driver)
+pub fn multi_output_count() -> usize {
+    multi_output_artifact().output_descs.len()
 }

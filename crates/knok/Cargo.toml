@@ -14,22 +14,10 @@ features = ["std"]
 [dependencies]
 eerie = { workspace = true, optional = true }
 half = { workspace = true, optional = true }
-knok-macros = { workspace = true, optional = true }
-
-[dev-dependencies]
-criterion.workspace = true
-nalgebra.workspace = true
-ndarray.workspace = true
-trybuild.workspace = true
-
-[[bench]]
-name = "runtime"
-harness = false
 
 [features]
-default = ["std", "host-runtime", "macros"]
+default = ["std", "host-runtime"]
 std = ["eerie?/std", "half?/std"]
-macros = ["dep:knok-macros"]
-half = ["dep:half", "knok-macros?/half", "eerie?/half"]
+half = ["dep:half", "eerie?/half"]
 host-runtime = ["std", "dep:eerie", "eerie/runtime", "eerie/std"]
 embedded-runtime = ["dep:eerie", "eerie/runtime"]

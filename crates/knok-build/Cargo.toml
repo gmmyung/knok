@@ -1,0 +1,18 @@
+[package]
+name = "knok-build"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+half.workspace = true
+knok-build-macros.workspace = true
+knok-compile.workspace = true
+knok-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+trybuild.workspace = true

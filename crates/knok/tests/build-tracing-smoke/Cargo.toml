@@ -1,0 +1,11 @@
+[package]
+name = "knok-build-tracing-smoke"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+knok = { path = "../..", default-features = false }
+
+[build-dependencies]
+knok-build = { path = "../../../knok-build" }
