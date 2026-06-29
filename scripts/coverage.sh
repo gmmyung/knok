@@ -20,6 +20,7 @@ cargo llvm-cov \
   -p knok \
   -p knok-build-tracing-smoke \
   -p knok-build-tracing-runtime \
+  -p knok-runtime-e2e \
   --ignore-filename-regex '(/tests/|/target/)' \
   --lcov \
   --output-path "$output_dir/lcov.info"

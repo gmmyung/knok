@@ -1,6 +1,11 @@
 //! Static metadata for generated graph artifacts.
 
 /// Embedded graph artifact metadata and VMFB variants.
+///
+/// Generated graph modules expose an `artifact()` function returning this
+/// value. Runtime wrappers use it to validate typed inputs, select a backend
+/// variant for an [`Engine`](crate::Engine), and resolve the compiled function
+/// inside the embedded VMFB module.
 #[derive(Clone, Copy, Debug)]
 pub struct GraphArtifact {
     /// Function name inside the IREE VM module.
@@ -19,7 +24,7 @@ impl GraphArtifact {
         !self.input_descs.is_empty() || !self.output_descs.is_empty()
     }
 
-    /// Returns the artifact variant for a runtime driver name.
+    /// Returns the artifact variant matching a runtime driver name.
     pub fn variant_for_driver(&self, driver: &str) -> Option<GraphArtifactVariant> {
         self.variants
             .iter()
@@ -28,6 +33,9 @@ impl GraphArtifact {
     }
 
     /// Returns the first available artifact variant.
+    ///
+    /// Generated one-shot wrappers use this as the default variant when they
+    /// create a convenience engine.
     pub fn first_variant(&self) -> Option<GraphArtifactVariant> {
         self.variants.first().copied()
     }
@@ -50,6 +58,9 @@ impl TensorDesc {
 }
 
 /// Element type metadata recorded in a compiled graph artifact.
+///
+/// `DType` is metadata only; tensor values are still represented by concrete
+/// Rust element types such as `f32`, `i64`, or `bool`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DType {
     /// Boolean values represented as IREE bool8 tensors.
@@ -69,6 +80,9 @@ pub enum DType {
 }
 
 /// One compiled VMFB variant for a backend/driver pair.
+///
+/// A generated graph can embed multiple variants over time. The runtime selects
+/// the variant whose `driver` matches the active [`Engine`](crate::Engine).
 #[derive(Clone, Copy, Debug)]
 pub struct GraphArtifactVariant {
     /// Embedded VMFB bytes.

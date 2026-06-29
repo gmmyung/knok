@@ -7,6 +7,7 @@ members = [
     "crates/knok-compile",
     "crates/knok/tests/build-tracing-smoke",
     "crates/knok/tests/build-tracing-runtime",
+    "crates/knok/tests/runtime-e2e",
     "crates/knok/tests/no-std-smoke",
 ]
 resolver = "2"

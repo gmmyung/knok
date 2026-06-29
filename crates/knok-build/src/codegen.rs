@@ -276,3 +276,124 @@ fn dtype_expr(elem: ElementType) -> &'static str {
         ElementType::I64 => "::knok::DType::I64",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use knok_core::{Input, TensorType, TypedGraph};
+
+    use super::*;
+
+    fn ty(elem: ElementType, shape: &[usize]) -> TensorType {
+        TensorType {
+            elem,
+            shape: shape.to_vec(),
+        }
+    }
+
+    fn input(name: &str, elem: ElementType, shape: &[usize]) -> Input {
+        Input {
+            name: name.into(),
+            ty: ty(elem, shape),
+        }
+    }
+
+    fn typed_graph(name: &str, inputs: Vec<Input>, outputs: Vec<TensorType>) -> TypedGraph {
+        TypedGraph {
+            name: name.into(),
+            backend: "llvm-cpu".into(),
+            inputs,
+            outputs,
+            lets: Vec::new(),
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn generates_single_output_wrapper_metadata_and_runtime_inputs() {
+        let graph = typed_graph(
+            "forward",
+            vec![input("x", ElementType::F32, &[2, 3])],
+            vec![ty(ElementType::F32, &[2, 3])],
+        );
+
+        let module = graph_module(
+            &graph,
+            Backend::LlvmCpu,
+            "forward.vmfb",
+            &["--some-flag".into()],
+        )
+        .unwrap();
+
+        assert!(module.contains("pub mod forward"));
+        assert!(module.contains("include_bytes!(concat!(env!(\"OUT_DIR\"), \"/forward.vmfb\"))"));
+        assert!(module.contains("function_name: \"knok.forward\""));
+        assert!(module.contains("backend: \"llvm-cpu\""));
+        assert!(module.contains("driver: \"local-task\""));
+        assert!(module.contains("static COMPILE_FLAGS: &[&str] = &[\"--some-flag\"]"));
+        assert!(module.contains("::knok::TensorDesc::new(::knok::DType::F32, &[2, 3])"));
+        assert!(module.contains("x: ::knok::tensor::Tensor2<f32, 2, 3>"));
+        assert!(module.contains("::knok::runtime::raw::Input::F32(&[2, 3], x.as_slice())"));
+        assert!(module.contains("invoke_one_with_engine::<f32>"));
+    }
+
+    #[test]
+    fn generates_multi_output_reads_by_index_and_dtype() {
+        let graph = typed_graph(
+            "stats",
+            vec![input("values", ElementType::F32, &[2, 3])],
+            vec![ty(ElementType::F32, &[2]), ty(ElementType::I64, &[2])],
+        );
+
+        let module = graph_module(&graph, Backend::LlvmCpu, "stats.vmfb", &[]).unwrap();
+
+        assert!(module.contains(
+            "pub fn run(engine: &::knok::Engine, values: ::knok::tensor::Tensor2<f32, 2, 3>) -> ::knok::Result<(::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
+        ));
+        assert!(module.contains("let outputs = engine.invoke(artifact, &["));
+        assert!(module.contains("outputs.read::<f32>(0)"));
+        assert!(module.contains("outputs.read::<i64>(1)"));
+        assert!(module.contains("Ok(("));
+    }
+
+    #[test]
+    fn generates_rank_zero_and_rank_six_tensor_types() {
+        assert_eq!(
+            rust_tensor_type(&ty(ElementType::Bool, &[])),
+            "::knok::tensor::Tensor0<bool>"
+        );
+        assert_eq!(
+            rust_tensor_type(&ty(ElementType::I32, &[1, 2, 3, 4, 5, 6])),
+            "::knok::tensor::Tensor6<i32, 1, 2, 3, 4, 5, 6>"
+        );
+        assert_eq!(shape_array(&ty(ElementType::F64, &[])), "[]");
+        assert_eq!(
+            tensor_desc(&ty(ElementType::BF16, &[4])),
+            "::knok::TensorDesc::new(::knok::DType::BF16, &[4])"
+        );
+    }
+
+    #[test]
+    fn rejects_generated_identifiers_that_are_invalid_or_keywords() {
+        let bad_module = typed_graph("type", Vec::new(), vec![ty(ElementType::F32, &[])]);
+        assert!(graph_module(&bad_module, Backend::LlvmCpu, "bad.vmfb", &[])
+            .unwrap_err()
+            .to_string()
+            .contains("not a valid generated Rust identifier"));
+
+        let bad_input = typed_graph(
+            "ok",
+            vec![input("not-valid", ElementType::F32, &[1])],
+            vec![ty(ElementType::F32, &[1])],
+        );
+        assert!(graph_module(&bad_input, Backend::LlvmCpu, "bad.vmfb", &[])
+            .unwrap_err()
+            .to_string()
+            .contains("not a valid generated Rust identifier"));
+    }
+
+    #[test]
+    #[should_panic(expected = "rank 7 cannot be represented")]
+    fn panics_when_codegen_is_asked_for_unsupported_tensor_rank() {
+        let _ = rust_tensor_type(&ty(ElementType::F32, &[1, 1, 1, 1, 1, 1, 1]));
+    }
+}

@@ -4,6 +4,12 @@ use alloc::string::String;
 
 use crate::Backend;
 
+/// Low-level hosted runtime buffers used by generated graph wrappers.
+///
+/// Most users should call generated `graphs::<name>::call(...)` or
+/// `graphs::<name>::run(&Engine, ...)` functions instead of constructing raw
+/// inputs directly. This module remains public so generated wrappers and custom
+/// embedding code can share one runtime path.
 pub mod raw {
     extern crate alloc;
 
@@ -12,15 +18,22 @@ pub mod raw {
 
     use crate::DType;
 
-    /// Raw input buffer passed to a compiled graph.
+    /// Borrowed host input buffer passed to a compiled graph invocation.
     pub enum Input<'a> {
+        /// Boolean tensor buffer.
         Bool(&'a [usize], &'a [bool]),
+        /// 32-bit float tensor buffer.
         F32(&'a [usize], &'a [f32]),
+        /// 64-bit float tensor buffer.
         F64(&'a [usize], &'a [f64]),
+        /// 32-bit signed integer tensor buffer.
         I32(&'a [usize], &'a [i32]),
+        /// 64-bit signed integer tensor buffer.
         I64(&'a [usize], &'a [i64]),
+        /// IEEE 16-bit float tensor buffer.
         #[cfg(feature = "half")]
         F16(&'a [usize], &'a [crate::half::f16]),
+        /// Brain float tensor buffer.
         #[cfg(feature = "half")]
         BF16(&'a [usize], &'a [crate::half::bf16]),
     }
@@ -228,6 +241,10 @@ pub mod raw {
     impl<T: Copy> Element for T {}
 }
 
+/// Hosted runtime driver selection for [`Engine`].
+///
+/// Generated graph wrappers normally construct a suitable engine through
+/// `Engine::for_artifact` or accept a reusable `Engine` from the caller.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeConfig {
     driver: DriverSelection,
@@ -240,18 +257,23 @@ enum DriverSelection {
 }
 
 impl RuntimeConfig {
+    /// Uses the default hosted driver.
+    ///
+    /// The current default is `local-task`, matching [`Backend::LlvmCpu`].
     pub fn auto() -> Self {
         Self {
             driver: DriverSelection::Auto,
         }
     }
 
+    /// Uses an explicit runtime driver.
     pub fn driver(driver: crate::Driver) -> Self {
         Self {
             driver: DriverSelection::Explicit(driver.name().into()),
         }
     }
 
+    /// Uses the default runtime driver for a compile backend.
     pub fn backend(backend: Backend) -> Self {
         Self {
             driver: DriverSelection::Explicit(backend.default_driver().into()),
@@ -294,6 +316,12 @@ mod hosted {
     use super::{raw, RuntimeConfig};
     use crate::{GraphArtifact, GraphArtifactVariant};
 
+    /// Reusable hosted runtime engine for generated graph artifacts.
+    ///
+    /// An engine owns one IREE runtime instance for a selected driver and caches
+    /// loaded VMFB modules by artifact bytes. Reuse one engine for repeated
+    /// inference instead of calling generated one-shot `call(...)` wrappers in a
+    /// loop.
     pub struct Engine {
         driver_name: String,
         runtime: Runtime,
@@ -301,6 +329,7 @@ mod hosted {
     }
 
     impl Engine {
+        /// Creates an engine from runtime configuration.
         pub fn new(config: RuntimeConfig) -> crate::Result<Self> {
             let driver_name = config.driver_name().to_string();
             let runtime = Runtime::new(DeviceSpec::custom(driver_name.clone()))?;
@@ -311,14 +340,17 @@ mod hosted {
             })
         }
 
+        /// Creates an engine for a compile backend's default runtime driver.
         pub fn for_backend(backend: crate::Backend) -> crate::Result<Self> {
             Self::new(RuntimeConfig::backend(backend))
         }
 
+        /// Creates an engine for an artifact variant's recorded runtime driver.
         pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
             Self::new(RuntimeConfig::driver_name_literal(variant.driver))
         }
 
+        /// Creates an engine for the first variant embedded in an artifact.
         pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
             let variant =
                 artifact
@@ -329,10 +361,16 @@ mod hosted {
             Self::for_variant(variant)
         }
 
+        /// Returns the IREE runtime driver name used by this engine.
         pub fn driver_name(&self) -> &str {
             &self.driver_name
         }
 
+        /// Invokes an artifact with raw input buffers and returns raw outputs.
+        ///
+        /// Generated graph wrappers call this after constructing typed raw
+        /// inputs. This method validates generated artifact metadata when it is
+        /// present.
         pub fn invoke(
             &self,
             artifact: GraphArtifact,
@@ -365,6 +403,7 @@ mod hosted {
             Ok(outputs)
         }
 
+        /// Invokes a single-output artifact and reads that output as `Vec<T>`.
         pub fn invoke_one<T: raw::Output>(
             &self,
             artifact: GraphArtifact,
@@ -479,6 +518,7 @@ mod hosted {
     use super::{raw, RuntimeConfig};
     use crate::GraphArtifact;
 
+    /// Hosted runtime engine placeholder used when the `runtime` feature is disabled.
     pub struct Engine;
 
     impl Engine {
