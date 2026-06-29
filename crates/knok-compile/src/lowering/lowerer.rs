@@ -7,7 +7,10 @@ use knok_core::{
 use melior::{
     dialect::{func, DialectRegistry},
     ir::{
-        attribute::{StringAttribute, TypeAttribute},
+        attribute::{
+            AttributeLike, DenseI32ArrayAttribute, DenseI64ArrayAttribute, StringAttribute,
+            TypeAttribute,
+        },
         operation::{OperationBuilder, OperationMutLike},
         r#type::FunctionType,
         Attribute, Block, BlockLike, Identifier, Location, Module, Region, RegionLike, Type,
@@ -846,6 +849,30 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .collect()
     }
 
+    pub(super) fn append_op_with_built_attrs(
+        &mut self,
+        op_name: &str,
+        operands: &[Value],
+        result_types: &[Type<'c>],
+        attrs: &[(Identifier<'c>, Attribute<'c>)],
+        regions: Vec<Region<'c>>,
+    ) -> anyhow::Result<Vec<RawValue>> {
+        let operands = operands
+            .iter()
+            .map(|value| value.raw.as_value())
+            .collect::<Vec<_>>();
+        let op = OperationBuilder::new(op_name, self.location)
+            .add_operands(&operands)
+            .add_results(result_types)
+            .add_attributes(attrs)
+            .add_regions_vec(regions)
+            .build()?;
+        let op = self.block.append_operation(op);
+        (0..result_types.len())
+            .map(|index| Ok(RawValue::from_value(op.result(index)?.into())))
+            .collect()
+    }
+
     pub(super) fn append_tensor_empty(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
         self.append_op("tensor.empty", &[], ty, ValueKind::Tensor)
     }
@@ -899,9 +926,25 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         ty: &TensorType,
         attrs: &[(String, String)],
     ) -> anyhow::Result<Value> {
+        let attrs = self.parse_attrs(attrs)?;
+        self.append_named_linalg_with_built_attrs(op_name, inputs, output, ty, &attrs)
+    }
+
+    pub(super) fn append_named_linalg_with_built_attrs(
+        &mut self,
+        op_name: &str,
+        inputs: &[Value],
+        output: Value,
+        ty: &TensorType,
+        attrs: &[(Identifier<'c>, Attribute<'c>)],
+    ) -> anyhow::Result<Value> {
         let mut operands = inputs.to_vec();
         operands.push(output);
-        let mut all_attrs = self.segment_attrs(&[inputs.len() as i32, 1]);
+        let mut all_attrs = vec![dense_i32_attr(
+            self.context,
+            "operand_segment_sizes",
+            &[inputs.len() as i32, 1],
+        )];
         all_attrs.extend_from_slice(attrs);
         let result_type = mlir_tensor_type(self.context, ty)?;
         let regions = if op_name == "linalg.softmax" {
@@ -909,7 +952,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         } else {
             vec![self.named_linalg_region(op_name, inputs, ty)?]
         };
-        let results = self.append_op_with_result_types(
+        let results = self.append_op_with_built_attrs(
             op_name,
             &operands,
             &[result_type],
@@ -1048,10 +1091,22 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .map(|kind| format!("#linalg.iterator_type<{kind}>"))
             .collect::<Vec<_>>()
             .join(", ");
-        let mut attrs = self.segment_attrs(&[inputs.len() as i32, outputs.len() as i32]);
-        attrs.push(("indexing_maps".to_string(), format!("[{maps}]")));
-        attrs.push(("iterator_types".to_string(), format!("[{iterators}]")));
-        self.append_op_with_result_types(
+        let attrs = vec![
+            dense_i32_attr(
+                self.context,
+                "operand_segment_sizes",
+                &[inputs.len() as i32, outputs.len() as i32],
+            ),
+            (
+                Identifier::new(self.context, "indexing_maps"),
+                parse_attr(self.context, &format!("[{maps}]"))?,
+            ),
+            (
+                Identifier::new(self.context, "iterator_types"),
+                parse_attr(self.context, &format!("[{iterators}]"))?,
+            ),
+        ];
+        self.append_op_with_built_attrs(
             "linalg.generic",
             &operands,
             &result_types,
@@ -1114,16 +1169,13 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         )?;
         let region = Region::new();
         region.append_block(block);
-        let attrs = vec![
-            (
-                "operand_segment_sizes".to_string(),
-                "array<i32: 1, 0, 0>".to_string(),
-            ),
-            ("static_low".to_string(), dense_i64_array_attr(lows)),
-            ("static_high".to_string(), dense_i64_array_attr(highs)),
+        let attrs = [
+            dense_i32_attr(self.context, "operand_segment_sizes", &[1, 0, 0]),
+            dense_i64_attr(self.context, "static_low", lows)?,
+            dense_i64_attr(self.context, "static_high", highs)?,
         ];
         let result_type = mlir_tensor_type(self.context, ty)?;
-        let results = self.append_op_with_result_types(
+        let results = self.append_op_with_built_attrs(
             "tensor.pad",
             &[input],
             &[result_type],
@@ -1142,16 +1194,13 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         strides: &[usize],
     ) -> anyhow::Result<Value> {
         let result_type = mlir_tensor_type(self.context, ty)?;
-        let attrs = vec![
-            (
-                "operand_segment_sizes".to_string(),
-                "array<i32: 1, 0, 0, 0>".to_string(),
-            ),
-            ("static_offsets".to_string(), dense_i64_array_attr(offsets)),
-            ("static_sizes".to_string(), dense_i64_array_attr(sizes)),
-            ("static_strides".to_string(), dense_i64_array_attr(strides)),
+        let attrs = [
+            dense_i32_attr(self.context, "operand_segment_sizes", &[1, 0, 0, 0]),
+            dense_i64_attr(self.context, "static_offsets", offsets)?,
+            dense_i64_attr(self.context, "static_sizes", sizes)?,
+            dense_i64_attr(self.context, "static_strides", strides)?,
         ];
-        let results = self.append_op_with_result_types(
+        let results = self.append_op_with_built_attrs(
             "tensor.extract_slice",
             &[input],
             &[result_type],
@@ -1169,22 +1218,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         offsets: &[usize],
     ) -> anyhow::Result<Value> {
         let result_type = mlir_tensor_type(self.context, dest_ty)?;
-        let attrs = vec![
-            (
-                "operand_segment_sizes".to_string(),
-                "array<i32: 1, 1, 0, 0, 0>".to_string(),
-            ),
-            ("static_offsets".to_string(), dense_i64_array_attr(offsets)),
-            (
-                "static_sizes".to_string(),
-                dense_i64_array_attr(&source.ty.shape),
-            ),
-            (
-                "static_strides".to_string(),
-                dense_i64_array_attr(&vec![1; source.ty.rank()]),
-            ),
+        let strides = vec![1; source.ty.rank()];
+        let attrs = [
+            dense_i32_attr(self.context, "operand_segment_sizes", &[1, 1, 0, 0, 0]),
+            dense_i64_attr(self.context, "static_offsets", offsets)?,
+            dense_i64_attr(self.context, "static_sizes", &source.ty.shape)?,
+            dense_i64_attr(self.context, "static_strides", &strides)?,
         ];
-        let results = self.append_op_with_result_types(
+        let results = self.append_op_with_built_attrs(
             "tensor.insert_slice",
             &[source, dest],
             &[result_type],
@@ -1202,25 +1243,21 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         reassociation: &str,
         output_shape: Option<&[usize]>,
     ) -> anyhow::Result<Value> {
-        let mut attrs = vec![("reassociation".to_string(), reassociation.to_string())];
+        let mut attrs = vec![(
+            Identifier::new(self.context, "reassociation"),
+            parse_attr(self.context, reassociation)?,
+        )];
         if let Some(output_shape) = output_shape {
-            attrs.push((
-                "static_output_shape".to_string(),
-                dense_i64_array_attr(output_shape),
-            ));
-            attrs.push((
-                "operand_segment_sizes".to_string(),
-                "array<i32: 0>".to_string(),
-            ));
+            attrs.push(dense_i64_attr(
+                self.context,
+                "static_output_shape",
+                output_shape,
+            )?);
+            attrs.push(dense_i32_attr(self.context, "operand_segment_sizes", &[0]));
         }
         let result_type = mlir_tensor_type(self.context, ty)?;
-        let results = self.append_op_with_result_types(
-            op_name,
-            &[input],
-            &[result_type],
-            &attrs,
-            Vec::new(),
-        )?;
+        let results =
+            self.append_op_with_built_attrs(op_name, &[input], &[result_type], &attrs, Vec::new())?;
         Ok(Value::tensor(results[0], ty.clone()))
     }
 
@@ -1250,20 +1287,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 ))
             })
             .collect()
-    }
-
-    pub(super) fn segment_attrs(&self, segments: &[i32]) -> Vec<(String, String)> {
-        vec![(
-            "operand_segment_sizes".to_string(),
-            format!(
-                "array<i32: {}>",
-                segments
-                    .iter()
-                    .map(i32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )]
     }
 
     fn lower_body_outputs(
@@ -1354,17 +1377,34 @@ pub(super) fn append_block_op<'c>(
         .collect()
 }
 
-pub(super) fn dense_i64_array_attr(values: &[usize]) -> String {
-    if values.is_empty() {
-        return "array<i64>".to_string();
-    }
+fn parse_attr<'c>(context: &'c Context, value: &str) -> anyhow::Result<Attribute<'c>> {
+    Attribute::parse(context, value)
+        .ok_or_else(|| anyhow::anyhow!("failed to parse MLIR attribute `{value}`"))
+}
 
-    format!(
-        "array<i64: {}>",
-        values
-            .iter()
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
+fn dense_i32_attr<'c>(
+    context: &'c Context,
+    name: &str,
+    values: &[i32],
+) -> (Identifier<'c>, Attribute<'c>) {
+    let attr = DenseI32ArrayAttribute::new(context, values);
+    (Identifier::new(context, name), unsafe {
+        Attribute::from_raw(attr.to_raw())
+    })
+}
+
+pub(super) fn dense_i64_attr<'c>(
+    context: &'c Context,
+    name: &str,
+    values: &[usize],
+) -> anyhow::Result<(Identifier<'c>, Attribute<'c>)> {
+    let values = values
+        .iter()
+        .copied()
+        .map(i64::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+    let attr = DenseI64ArrayAttribute::new(context, &values);
+    Ok((Identifier::new(context, name), unsafe {
+        Attribute::from_raw(attr.to_raw())
+    }))
 }

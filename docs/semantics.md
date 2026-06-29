@@ -22,6 +22,7 @@ Supported element types are:
 
 Implicit dtype promotion is intentionally not part of the current API. Graphs
 should use matching dtypes, and future casting operations should be explicit.
+See [dtypes.md](dtypes.md) for the support matrix and operation categories.
 
 ## Broadcasting
 

@@ -26,6 +26,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Added coverage HTML and badge artifacts, a configurable line coverage gate,
   and additional public API coverage for artifact metadata and runtime errors.
 - Added more rustdoc for the `knok-build` build-script API.
+- Added release-readiness, compiler setup, dtype policy, and lowering
+  architecture documentation.
 
 ### Changed
 
@@ -35,6 +37,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   instead of thread-local tracing state.
 - Renamed the default hosted execution feature from `host-runtime` to `runtime`
   and let docs.rs build the default runtime-enabled API surface.
+- Replaced additional tensor lowering dense-array attributes with structured
+  melior attribute builders.
 
 ### Fixed
 
