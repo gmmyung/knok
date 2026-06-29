@@ -5,7 +5,7 @@ use knok_core::{
     TensorType, TypedGraph, UnaryOp,
 };
 
-use crate::common::mlir_result_types;
+use crate::{common::mlir_result_types, mlir::canonicalize_and_verify};
 
 pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
     lower_to_mlir_with_registry(graph, &BTreeMap::new())
@@ -13,6 +13,14 @@ pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
 
 /// Lowers a typed graph to an MLIR module, resolving graph calls from `graphs`.
 pub fn lower_to_mlir_with_registry(
+    graph: &TypedGraph,
+    graphs: &BTreeMap<String, TypedGraph>,
+) -> anyhow::Result<String> {
+    let mlir = lower_to_textual_mlir_with_registry(graph, graphs)?;
+    canonicalize_and_verify(&mlir)
+}
+
+pub(crate) fn lower_to_textual_mlir_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
 ) -> anyhow::Result<String> {

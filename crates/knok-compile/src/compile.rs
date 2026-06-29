@@ -8,11 +8,11 @@ use std::{
 
 use fs2::FileExt;
 use knok_core::TypedGraph;
-use melior::{dialect::DialectRegistry, ir::operation::OperationLike, ir::Module, Context};
 
 use crate::{
     backend::{backend_flags, IreeBackend},
     lowering::lower_to_mlir_with_registry,
+    mlir::canonicalize_and_verify,
 };
 
 static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -35,41 +35,43 @@ pub fn compile_graph_with_registry(
     graphs: &BTreeMap<String, TypedGraph>,
 ) -> anyhow::Result<CompiledGraph> {
     let mlir = lower_to_mlir_with_registry(graph, graphs)?;
-    verify_with_melior(&mlir)?;
-    let vmfb = compile_mlir_source(&graph.backend, &mlir)?;
+    let backend = parse_backend(&graph.backend)?;
+    let vmfb = compile_verified_mlir_source(backend, &mlir)?;
     Ok(CompiledGraph { mlir, vmfb })
 }
 
 /// Compiles an MLIR module string to IREE VM bytecode for the given backend.
 pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
+    let backend = parse_backend(backend)?;
+    let mlir = canonicalize_and_verify(mlir)?;
+    compile_verified_mlir_source(backend, &mlir)
+}
+
+fn parse_backend(backend: &str) -> anyhow::Result<IreeBackend> {
+    IreeBackend::from_target_backend(backend).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`"
+        )
+    })
+}
+
+fn compile_verified_mlir_source(backend: IreeBackend, mlir: &str) -> anyhow::Result<Vec<u8>> {
     compile_with_iree(backend, &[], mlir)
 }
 
-fn verify_with_melior(mlir: &str) -> anyhow::Result<()> {
-    let registry = DialectRegistry::new();
-    melior::utility::register_all_dialects(&registry);
-    let context = Context::new();
-    context.append_dialect_registry(&registry);
-    context.load_all_available_dialects();
-    let module = Module::parse(&context, mlir)
-        .ok_or_else(|| anyhow::anyhow!("melior failed to parse generated MLIR"))?;
-    if !module.as_operation().verify() {
-        anyhow::bail!("melior rejected generated MLIR");
-    }
-    Ok(())
-}
-
-fn compile_with_iree(backend: &str, extra_flags: &[String], mlir: &str) -> anyhow::Result<Vec<u8>> {
-    if IreeBackend::from_target_backend(backend).is_none() {
-        anyhow::bail!("unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`");
-    }
+fn compile_with_iree(
+    backend: IreeBackend,
+    extra_flags: &[String],
+    mlir: &str,
+) -> anyhow::Result<Vec<u8>> {
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
     let _compiler_lock = lock_compiler_cache(&cache_dir)?;
     let compiler = iree_compile_command();
-    let flags = backend_flags(backend, extra_flags);
+    let backend_name = backend.target_name();
+    let flags = backend_flags(backend_name, extra_flags);
     let version = compiler_version(&compiler)?;
-    let key = cache_key(backend, mlir, &compiler, &version, &flags);
+    let key = cache_key(backend_name, mlir, &compiler, &version, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     if let Some(vmfb) = read_cached_vmfb(&vmfb_path)? {
         return Ok(vmfb);
@@ -228,12 +230,9 @@ fn cache_key(
 mod tests {
     use knok_core::{type_check, CallOp, ElementType, Expr, Graph, Input, TensorType};
 
-    use crate::lowering::lower_to_mlir;
+    use crate::{lowering::lower_to_mlir, mlir::canonicalize_and_verify};
 
-    use super::{
-        cache_key, compile_mlir_source, read_cached_vmfb, unique_cache_temp_suffix,
-        verify_with_melior,
-    };
+    use super::{cache_key, compile_mlir_source, read_cached_vmfb, unique_cache_temp_suffix};
 
     #[test]
     fn expm1_lowering_uses_direct_math_op() {
@@ -264,7 +263,7 @@ mod tests {
         assert!(mlir.contains("math.expm1"), "{mlir}");
         assert!(!mlir.contains(" = math.exp "), "{mlir}");
         assert!(!mlir.contains("arith.subf"), "{mlir}");
-        verify_with_melior(&mlir).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
     }
 
     #[test]
@@ -313,7 +312,7 @@ mod tests {
 
         let mlir = lower_to_mlir(&graph).unwrap();
         assert_eq!(mlir.matches("tensor.extract_slice").count(), 2, "{mlir}");
-        verify_with_melior(&mlir).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
     }
 
     #[test]
@@ -365,7 +364,7 @@ mod tests {
 
         let mlir = lower_to_mlir(&graph).unwrap();
         assert_eq!(mlir.matches("linalg.matmul").count(), 1, "{mlir}");
-        verify_with_melior(&mlir).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
     }
 
     #[test]
@@ -417,7 +416,7 @@ mod tests {
 
         let mlir = lower_to_mlir(&graph).unwrap();
         assert_eq!(mlir.matches("linalg.matmul").count(), 2, "{mlir}");
-        verify_with_melior(&mlir).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
     }
 
     #[test]
@@ -476,7 +475,7 @@ mod tests {
 
         let mlir = lower_to_mlir(&graph).unwrap();
         assert_eq!(mlir.matches("tensor.extract_slice").count(), 4, "{mlir}");
-        verify_with_melior(&mlir).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
     }
 
     #[test]
@@ -554,5 +553,12 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported IREE backend `unsupported`"));
+    }
+
+    #[test]
+    fn compile_source_rejects_invalid_mlir_before_spawning_compiler() {
+        let error = compile_mlir_source("llvm-cpu", "module @knok {").unwrap_err();
+
+        assert!(error.to_string().contains("generated MLIR"));
     }
 }
