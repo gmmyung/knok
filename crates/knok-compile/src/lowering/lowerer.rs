@@ -1355,6 +1355,10 @@ pub(super) fn append_block_op<'c>(
 }
 
 pub(super) fn dense_i64_array_attr(values: &[usize]) -> String {
+    if values.is_empty() {
+        return "array<i64>".to_string();
+    }
+
     format!(
         "array<i64: {}>",
         values

@@ -730,6 +730,10 @@ fn identity_map(rank: usize) -> String {
 }
 
 fn dense_i64_array(values: &[usize]) -> String {
+    if values.is_empty() {
+        return "array<i64>".to_string();
+    }
+
     format!(
         "array<i64: {}>",
         values
