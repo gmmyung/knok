@@ -1,7 +1,7 @@
 //! MLIR lowering and IREE compilation for `knok` graphs.
 //!
 //! `knok-build` uses this crate from build scripts to turn traced graph IR into
-//! VMFB bytes. MLIR modules are parsed and verified in-process with `melior`;
+//! VMFB bytes. MLIR modules are built and verified in-process with `melior`;
 //! final VMFB compilation is delegated to the `iree-compile` command line tool.
 
 mod backend;

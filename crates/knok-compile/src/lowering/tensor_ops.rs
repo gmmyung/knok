@@ -1,6 +1,8 @@
 use knok_core::TensorType;
 
-use super::lowerer::{append_block_op, mlir_element_type, Lowerer, RawValue, Value, ValueKind};
+use super::lowerer::{
+    append_block_op, dense_i64_attr, mlir_element_type, Lowerer, RawValue, Value, ValueKind,
+};
 use super::shape::{
     axis_broadcast_dimensions, collapse_reassociation_for_removed_axis,
     collapse_reassociation_for_squeezed_broadcast, element_count, ensure_axis_broadcastable,
@@ -65,13 +67,8 @@ impl Lowerer<'_, '_> {
             return Ok(input);
         }
         let empty = self.append_tensor_empty(ty)?;
-        self.append_named_linalg(
-            "linalg.transpose",
-            &[input],
-            empty,
-            ty,
-            &[("permutation".to_string(), dense_i64_array(axes))],
-        )
+        let attrs = [dense_i64_attr(self.context, "permutation", axes)?];
+        self.append_named_linalg_with_built_attrs("linalg.transpose", &[input], empty, ty, &attrs)
     }
 
     pub(super) fn reshape(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
@@ -631,13 +628,8 @@ impl Lowerer<'_, '_> {
         dimensions: &[usize],
     ) -> anyhow::Result<Value> {
         let empty = self.append_tensor_empty(ty)?;
-        self.append_named_linalg(
-            "linalg.broadcast",
-            &[input],
-            empty,
-            ty,
-            &[("dimensions".to_string(), dense_i64_array(dimensions))],
-        )
+        let attrs = [dense_i64_attr(self.context, "dimensions", dimensions)?];
+        self.append_named_linalg_with_built_attrs("linalg.broadcast", &[input], empty, ty, &attrs)
     }
 
     pub(super) fn extract_first_scalar(&mut self, input: Value) -> anyhow::Result<Value> {
@@ -724,21 +716,6 @@ fn identity_map(rank: usize) -> String {
         "({})",
         (0..rank)
             .map(|axis| format!("d{axis}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn dense_i64_array(values: &[usize]) -> String {
-    if values.is_empty() {
-        return "array<i64>".to_string();
-    }
-
-    format!(
-        "array<i64: {}>",
-        values
-            .iter()
-            .map(usize::to_string)
             .collect::<Vec<_>>()
             .join(", ")
     )

@@ -18,8 +18,8 @@ automation-specific rules.
 `#[knok_build::graph]` marks graph functions that live in `build.rs` or modules
 included by `build.rs`. The macro records signature/backend metadata and emits
 registration glue; `compile_graphs!` executes the function with traced tensor
-inputs on the build host, typechecks the resulting graph, emits textual MLIR,
-validates it with `melior`, invokes `iree-compile`, and generates target
+inputs on the build host, typechecks the resulting graph, builds MLIR through
+melior operation builders, validates it, invokes `iree-compile`, and generates target
 wrapper modules. `KNOK_IREE_COMPILE` can point at a specific compiler binary;
 otherwise `knok-compile` expects `iree-compile` on `PATH`.
 
@@ -88,3 +88,10 @@ The Nix shell pins LLVM/MLIR and provisions the IREE compiler from the Python
 wheel when `LIB_IREE_COMPILER` is not already set. docs.rs builds the default
 `knok` feature set, including the hosted runtime API, so public docs should
 describe the normal inference path first.
+
+See also:
+
+- `docs/compiler.md` for compiler acquisition and cache configuration
+- `docs/dtypes.md` for dtype policy
+- `docs/lowering.md` for MLIR builder and parsed-attribute policy
+- `docs/release-readiness.md` for the pre-release checklist

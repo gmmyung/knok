@@ -32,3 +32,6 @@ nix develop --command scripts/coverage.sh
 Runtime E2E tests should assert actual tensor outputs, not only generated MLIR
 text. MLIR string assertions are reserved for internal lowering invariants such
 as cache reuse or a specific lowering form.
+
+Before a release, also run the dry-run publishing checklist in
+[release-readiness.md](release-readiness.md).

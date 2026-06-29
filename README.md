@@ -47,10 +47,11 @@ let engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
 let output = graphs::forward::run(&engine, x)?;
 ```
 
-Build-time graph compilation uses `melior` for MLIR validation and the
-`iree-compile` command line tool for VMFB generation. Put `iree-compile` on
+Build-time graph compilation uses `melior` for MLIR construction/validation and
+the `iree-compile` command line tool for VMFB generation. Put `iree-compile` on
 `PATH`, or set `KNOK_IREE_COMPILE=/path/to/iree-compile`. The Nix development
-shell provides the pinned compiler automatically.
+shell provides the pinned compiler automatically. See
+[docs/compiler.md](docs/compiler.md) for setup details.
 
 ## Feature Modes
 
@@ -79,8 +80,12 @@ and badge outputs under `target/coverage`.
 | --- | --- |
 | [docs/static-graph-syntax.md](docs/static-graph-syntax.md) | Build-time graph authoring syntax. |
 | [docs/semantics.md](docs/semantics.md) | Tensor ranks, dtype, broadcasting, axis, and op semantics. |
+| [docs/dtypes.md](docs/dtypes.md) | Supported dtype matrix and explicit casting policy. |
 | [docs/backends.md](docs/backends.md) | Compiler backends, runtime drivers, and platform notes. |
+| [docs/compiler.md](docs/compiler.md) | `iree-compile` setup, cache knobs, and troubleshooting. |
+| [docs/lowering.md](docs/lowering.md) | MLIR lowering architecture and parsed-attribute policy. |
 | [docs/testing.md](docs/testing.md) | Test layers and validation commands. |
+| [docs/release-readiness.md](docs/release-readiness.md) | Release checklist and dry-run commands. |
 | [DEVELOPERS.md](DEVELOPERS.md) | Crate layout, compile/runtime flow, and release notes. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow and validation commands. |
 | [CHANGELOG.md](CHANGELOG.md) | User-facing changes. |

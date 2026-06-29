@@ -23,6 +23,8 @@ export KNOK_IREE_COMPILE=/path/to/iree-compile
 ```
 
 The Nix development shell installs the pinned compiler and adds it to `PATH`.
+For installation options, cache knobs, and troubleshooting, see
+[compiler.md](compiler.md).
 
 ## Runtime Modes
 
