@@ -228,11 +228,69 @@ fn cache_key(
 
 #[cfg(test)]
 mod tests {
-    use knok_core::{type_check, CallOp, ElementType, Expr, Graph, Input, TensorType};
+    use knok_core::{
+        type_check, AxisSpec, CallOp, Conv2dOptions, ElementType, Expr, Graph, Input, Padding2d,
+        TensorType,
+    };
 
     use crate::{lowering::lower_to_mlir, mlir::canonicalize_and_verify};
 
     use super::{cache_key, compile_mlir_source, read_cached_vmfb, unique_cache_temp_suffix};
+
+    fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {
+        TensorType {
+            elem,
+            shape: shape.to_vec(),
+        }
+    }
+
+    fn input(name: &str, elem: ElementType, shape: &[usize]) -> Input {
+        Input {
+            name: name.into(),
+            ty: tensor(elem, shape),
+        }
+    }
+
+    fn var(name: &str) -> Expr {
+        Expr::Var(name.into())
+    }
+
+    fn constant(value: &str, elem: ElementType) -> Expr {
+        Expr::Const {
+            value: value.into(),
+            elem,
+        }
+    }
+
+    fn call(op: CallOp, args: Vec<Expr>) -> Expr {
+        Expr::Call { op, args }
+    }
+
+    fn typed_graph(
+        name: &str,
+        inputs: Vec<Input>,
+        outputs: Vec<TensorType>,
+        body: Vec<Expr>,
+    ) -> knok_core::TypedGraph {
+        type_check(
+            Graph {
+                name: name.into(),
+                backend: "llvm-cpu".into(),
+                inputs,
+                outputs,
+                lets: Vec::new(),
+                body,
+            },
+            &[],
+        )
+        .unwrap()
+    }
+
+    fn lower_verified(graph: &knok_core::TypedGraph) -> String {
+        let mlir = lower_to_mlir(graph).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
+        mlir
+    }
 
     #[test]
     fn expm1_lowering_uses_direct_math_op() {
@@ -264,6 +322,297 @@ mod tests {
         assert!(!mlir.contains(" = math.exp "), "{mlir}");
         assert!(!mlir.contains("arith.subf"), "{mlir}");
         canonicalize_and_verify(&mlir).unwrap();
+    }
+
+    #[test]
+    fn lowers_elementwise_creation_and_predicate_ops() {
+        let f32x4 = tensor(ElementType::F32, &[4]);
+        let boolx4 = tensor(ElementType::Bool, &[4]);
+        let i32x4 = tensor(ElementType::I32, &[4]);
+        let f32x2x2 = tensor(ElementType::F32, &[2, 2]);
+        let unary_ops = [
+            CallOp::Abs,
+            CallOp::Ceil,
+            CallOp::Exp,
+            CallOp::Exp2,
+            CallOp::ExpM1,
+            CallOp::Floor,
+            CallOp::Log,
+            CallOp::Log1P,
+            CallOp::Log2,
+            CallOp::Log10,
+            CallOp::Relu,
+            CallOp::Rint,
+            CallOp::Round,
+            CallOp::Sigmoid,
+            CallOp::Sin,
+            CallOp::Cos,
+            CallOp::Sqrt,
+            CallOp::Tan,
+            CallOp::Tanh,
+            CallOp::Square,
+            CallOp::Reciprocal,
+            CallOp::ZerosLike,
+            CallOp::OnesLike,
+        ];
+        let mut outputs = Vec::new();
+        let mut body = Vec::new();
+        for op in unary_ops {
+            outputs.push(f32x4.clone());
+            body.push(call(op, vec![var("x")]));
+        }
+        for op in [
+            CallOp::Minimum,
+            CallOp::Maximum,
+            CallOp::Pow,
+            CallOp::LogicalAnd,
+            CallOp::LogicalOr,
+            CallOp::LogicalXor,
+        ] {
+            outputs.push(
+                if matches!(
+                    op,
+                    CallOp::LogicalAnd | CallOp::LogicalOr | CallOp::LogicalXor
+                ) {
+                    boolx4.clone()
+                } else {
+                    f32x4.clone()
+                },
+            );
+            let args = if matches!(
+                op,
+                CallOp::LogicalAnd | CallOp::LogicalOr | CallOp::LogicalXor
+            ) {
+                vec![var("mask"), var("mask")]
+            } else {
+                vec![var("x"), var("y")]
+            };
+            body.push(call(op, args));
+        }
+        for op in [
+            CallOp::Greater,
+            CallOp::GreaterEqual,
+            CallOp::Less,
+            CallOp::LessEqual,
+            CallOp::Equal,
+            CallOp::NotEqual,
+        ] {
+            outputs.push(boolx4.clone());
+            body.push(call(op, vec![var("x"), var("y")]));
+        }
+        outputs.extend([
+            boolx4.clone(),
+            boolx4.clone(),
+            f32x4.clone(),
+            f32x4.clone(),
+            i32x4.clone(),
+            f32x4.clone(),
+            f32x2x2.clone(),
+        ]);
+        body.extend([
+            call(CallOp::IsNan, vec![var("x")]),
+            call(CallOp::LogicalNot, vec![var("mask")]),
+            call(
+                CallOp::Clip,
+                vec![
+                    var("x"),
+                    constant("0.0", ElementType::F32),
+                    constant("6.0", ElementType::F32),
+                ],
+            ),
+            call(CallOp::Where, vec![var("mask"), var("x"), var("y")]),
+            call(
+                CallOp::Arange(i32x4),
+                vec![
+                    constant("0", ElementType::I32),
+                    constant("8", ElementType::I32),
+                    constant("2", ElementType::I32),
+                ],
+            ),
+            call(
+                CallOp::Linspace(f32x4),
+                vec![
+                    constant("0.0", ElementType::F32),
+                    constant("1.0", ElementType::F32),
+                ],
+            ),
+            call(CallOp::Eye(f32x2x2), Vec::new()),
+        ]);
+        let graph = typed_graph(
+            "elementwise_creation",
+            vec![
+                input("x", ElementType::F32, &[4]),
+                input("y", ElementType::F32, &[4]),
+                input("mask", ElementType::Bool, &[4]),
+            ],
+            outputs,
+            body,
+        );
+
+        let mlir = lower_verified(&graph);
+        assert!(mlir.contains("math.expm1"), "{mlir}");
+        assert!(mlir.contains("arith.select"), "{mlir}");
+    }
+
+    #[test]
+    fn lowers_reduction_ops() {
+        let f32_scalar = tensor(ElementType::F32, &[]);
+        let bool_scalar = tensor(ElementType::Bool, &[]);
+        let i64_scalar = tensor(ElementType::I64, &[]);
+        let f32_rows = tensor(ElementType::F32, &[2]);
+        let bool_rows = tensor(ElementType::Bool, &[2]);
+        let i64_rows = tensor(ElementType::I64, &[2]);
+        let mut outputs = Vec::new();
+        let mut body = Vec::new();
+
+        for op in [
+            CallOp::Sum(AxisSpec::All),
+            CallOp::Prod(AxisSpec::All),
+            CallOp::Mean(AxisSpec::All),
+            CallOp::Max(AxisSpec::All),
+            CallOp::Min(AxisSpec::All),
+            CallOp::Var(AxisSpec::All),
+            CallOp::Std(AxisSpec::All),
+            CallOp::Ptp(AxisSpec::All),
+        ] {
+            outputs.push(f32_scalar.clone());
+            body.push(call(op, vec![var("x")]));
+        }
+        for op in [CallOp::Argmax(AxisSpec::All), CallOp::Argmin(AxisSpec::All)] {
+            outputs.push(i64_scalar.clone());
+            body.push(call(op, vec![var("x")]));
+        }
+        for op in [CallOp::All(AxisSpec::All), CallOp::Any(AxisSpec::All)] {
+            outputs.push(bool_scalar.clone());
+            body.push(call(op, vec![var("flags")]));
+        }
+        for op in [
+            CallOp::Sum(AxisSpec::One(1)),
+            CallOp::Prod(AxisSpec::One(1)),
+            CallOp::Mean(AxisSpec::One(1)),
+            CallOp::Max(AxisSpec::One(1)),
+            CallOp::Min(AxisSpec::One(1)),
+            CallOp::Var(AxisSpec::One(1)),
+            CallOp::Std(AxisSpec::One(1)),
+            CallOp::Ptp(AxisSpec::One(1)),
+        ] {
+            outputs.push(f32_rows.clone());
+            body.push(call(op, vec![var("x")]));
+        }
+        for op in [
+            CallOp::Argmax(AxisSpec::One(1)),
+            CallOp::Argmin(AxisSpec::One(1)),
+        ] {
+            outputs.push(i64_rows.clone());
+            body.push(call(op, vec![var("x")]));
+        }
+        for op in [CallOp::All(AxisSpec::One(1)), CallOp::Any(AxisSpec::One(1))] {
+            outputs.push(bool_rows.clone());
+            body.push(call(op, vec![var("flags")]));
+        }
+        outputs.push(tensor(ElementType::F32, &[2, 3]));
+        body.push(call(CallOp::Softmax(AxisSpec::One(1)), vec![var("x")]));
+
+        let graph = typed_graph(
+            "reductions",
+            vec![
+                input("x", ElementType::F32, &[2, 3]),
+                input("flags", ElementType::Bool, &[2, 3]),
+            ],
+            outputs,
+            body,
+        );
+
+        let mlir = lower_verified(&graph);
+        assert!(mlir.contains("linalg.generic"), "{mlir}");
+    }
+
+    #[test]
+    fn lowers_linalg_conv_and_shape_ops() {
+        let conv_options = Conv2dOptions {
+            padding: Padding2d {
+                top: 1,
+                bottom: 1,
+                left: 1,
+                right: 1,
+            },
+            stride: [1, 1],
+            dilation: [1, 1],
+            groups: 1,
+        };
+        let graph = typed_graph(
+            "linalg_conv_shape",
+            vec![
+                input("matrix", ElementType::F32, &[2, 3]),
+                input("rhs", ElementType::F32, &[3, 2]),
+                input("vector", ElementType::F32, &[3]),
+                input("square", ElementType::F32, &[3, 3]),
+                input("x", ElementType::F32, &[2, 3]),
+                input("y", ElementType::F32, &[2, 3]),
+                input("idx", ElementType::I64, &[2, 2]),
+                input("cube", ElementType::F32, &[2, 3, 4]),
+                input("image", ElementType::F32, &[1, 4, 4, 2]),
+                input("kernel", ElementType::F32, &[3, 3, 2, 1]),
+            ],
+            vec![
+                tensor(ElementType::F32, &[2, 2]),
+                tensor(ElementType::F32, &[]),
+                tensor(ElementType::F32, &[]),
+                tensor(ElementType::F32, &[3, 3]),
+                tensor(ElementType::F32, &[2]),
+                tensor(ElementType::F32, &[3]),
+                tensor(ElementType::F32, &[1, 4, 4, 1]),
+                tensor(ElementType::F32, &[6]),
+                tensor(ElementType::F32, &[3, 2]),
+                tensor(ElementType::F32, &[2, 2, 2]),
+                tensor(ElementType::F32, &[2, 2]),
+                tensor(ElementType::F32, &[4, 3]),
+                tensor(ElementType::F32, &[2, 2, 3]),
+                tensor(ElementType::F32, &[4, 6]),
+                tensor(ElementType::F32, &[2, 6]),
+                tensor(ElementType::F32, &[4, 2, 3]),
+            ],
+            vec![
+                call(CallOp::Matmul, vec![var("matrix"), var("rhs")]),
+                call(CallOp::Dot, vec![var("vector"), var("vector")]),
+                call(CallOp::Trace(None), vec![var("square")]),
+                call(CallOp::Outer, vec![var("vector"), var("vector")]),
+                call(CallOp::Vecdot(Some(1)), vec![var("matrix"), var("matrix")]),
+                call(CallOp::Diagonal(None), vec![var("square")]),
+                call(
+                    CallOp::Conv2d(conv_options),
+                    vec![var("image"), var("kernel")],
+                ),
+                call(
+                    CallOp::Reshape(tensor(ElementType::F32, &[6])),
+                    vec![var("x")],
+                ),
+                call(CallOp::Transpose(Vec::new()), vec![var("x")]),
+                call(
+                    CallOp::Gather {
+                        target: tensor(ElementType::F32, &[2, 2, 2]),
+                        axis: 1,
+                    },
+                    vec![var("x"), var("idx")],
+                ),
+                call(
+                    CallOp::Slice {
+                        target: tensor(ElementType::F32, &[2, 2]),
+                        starts: vec![0, 1],
+                    },
+                    vec![var("x")],
+                ),
+                call(CallOp::Concat(0), vec![var("x"), var("y")]),
+                call(CallOp::Stack(0), vec![var("x"), var("y")]),
+                call(CallOp::Tile(vec![2, 2]), vec![var("x")]),
+                call(CallOp::Repeat { axis: 1, count: 2 }, vec![var("x")]),
+                call(CallOp::PermuteDims(vec![2, 0, 1]), vec![var("cube")]),
+            ],
+        );
+
+        let mlir = lower_verified(&graph);
+        assert!(mlir.contains("linalg.matmul"), "{mlir}");
+        assert!(mlir.contains("tensor.extract_slice"), "{mlir}");
     }
 
     #[test]
