@@ -19,6 +19,48 @@ fn batched_matmul_broadcasts_rhs() {
 }
 
 #[test]
+fn matmul_rank_variants_run() {
+    let v = Tensor1::from_array([1.0, 2.0, 3.0]);
+    let n = Tensor2::from_array([[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]);
+
+    let vecvec = graphs::vecvec_matmul_f32::call(v.clone(), v.clone()).unwrap();
+    let vecmat = graphs::vecmat_matmul_f32::call(v, n.clone()).unwrap();
+    assert_close(vecvec.as_slice(), &[14.0]);
+    assert_close(vecmat.as_slice(), &[58.0, 64.0]);
+
+    let x3 = Tensor3::from_array([
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        [[2.0, 0.0, 1.0], [1.0, 1.0, 1.0]],
+    ]);
+    let y3 = Tensor3::from_array([
+        [[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]],
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+    ]);
+    let same_batch = graphs::same_batch_matmul::call(x3, y3).unwrap();
+    assert_close(
+        same_batch.as_slice(),
+        &[58.0, 64.0, 139.0, 154.0, 7.0, 10.0, 9.0, 12.0],
+    );
+
+    let x4 = Tensor4::from_array([
+        [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]],
+        [[[2.0, 0.0, 1.0], [1.0, 1.0, 1.0]]],
+    ]);
+    let y4 = Tensor3::from_array([
+        [[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]],
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+    ]);
+    let broadcast = graphs::broadcast_4d_matmul::call(x4, y4).unwrap();
+    assert_close(
+        broadcast.as_slice(),
+        &[
+            58.0, 64.0, 139.0, 154.0, 22.0, 28.0, 49.0, 64.0, 25.0, 28.0, 27.0, 30.0, 7.0, 10.0,
+            9.0, 12.0,
+        ],
+    );
+}
+
+#[test]
 fn linalg_and_conv_ops_run() {
     let v = Tensor1::from_array([1.0, 2.0, 3.0]);
     let m = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
