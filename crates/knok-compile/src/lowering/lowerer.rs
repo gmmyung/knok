@@ -4,8 +4,20 @@ use knok_core::{
     static_arange_literals, static_eye_literals, static_linspace_literals, BinaryOp, CallOp, Expr,
     TensorType, TypedGraph, UnaryOp,
 };
+use melior::{
+    dialect::{func, DialectRegistry},
+    ir::{
+        attribute::{StringAttribute, TypeAttribute},
+        operation::{OperationBuilder, OperationMutLike},
+        r#type::FunctionType,
+        Attribute, Block, BlockLike, Identifier, Location, Module, Region, RegionLike, Type,
+        Value as MlirValue, ValueLike,
+    },
+    Context,
+};
+use mlir_sys::MlirValue as MlirRawValue;
 
-use crate::common::mlir_result_types;
+use crate::mlir::canonicalize_and_verify;
 
 pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
     lower_to_mlir_with_registry(graph, &BTreeMap::new())
@@ -16,18 +28,24 @@ pub fn lower_to_mlir_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
 ) -> anyhow::Result<String> {
-    let mut lowerer = Lowerer::new(graph, graphs);
+    let registry = DialectRegistry::new();
+    melior::utility::register_all_dialects(&registry);
+    let context = Context::new();
+    context.append_dialect_registry(&registry);
+    context.load_all_available_dialects();
+    let lowerer = Lowerer::new(&context, graph, graphs)?;
     lowerer.lower()
 }
 
-pub(super) struct Lowerer<'a> {
+pub(super) struct Lowerer<'a, 'c> {
+    pub(super) context: &'c Context,
+    pub(super) location: Location<'c>,
+    pub(super) block: Block<'c>,
     pub(super) graph: &'a TypedGraph,
     pub(super) graphs: &'a BTreeMap<String, TypedGraph>,
     pub(super) call_stack: Vec<String>,
     pub(super) tuple_scope_stack: Vec<u64>,
     pub(super) next_tuple_scope: u64,
-    pub(super) next_value: usize,
-    pub(super) lines: Vec<String>,
     pub(super) values: BTreeMap<String, Value>,
     pub(super) node_values: BTreeMap<(u64, u64), Value>,
     pub(super) tuple_values: BTreeMap<(u64, u64), Vec<Value>>,
@@ -35,9 +53,22 @@ pub(super) struct Lowerer<'a> {
 
 #[derive(Clone)]
 pub(super) struct Value {
-    pub(super) name: String,
+    pub(super) raw: RawValue,
     pub(super) ty: TensorType,
     pub(super) kind: ValueKind,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct RawValue(MlirRawValue);
+
+impl RawValue {
+    pub(super) fn from_value(value: MlirValue<'_, '_>) -> Self {
+        Self(value.to_raw())
+    }
+
+    pub(super) fn as_value<'c>(self) -> MlirValue<'c, 'static> {
+        unsafe { MlirValue::from_raw(self.0) }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,9 +78,9 @@ pub(super) enum ValueKind {
 }
 
 impl Value {
-    pub(super) fn scalar(name: String, elem: knok_core::ElementType) -> Self {
+    pub(super) fn scalar(raw: RawValue, elem: knok_core::ElementType) -> Self {
         Self {
-            name,
+            raw,
             ty: TensorType {
                 elem,
                 shape: Vec::new(),
@@ -58,53 +89,58 @@ impl Value {
         }
     }
 
-    pub(super) fn tensor(name: String, ty: TensorType) -> Self {
+    pub(super) fn tensor(raw: RawValue, ty: TensorType) -> Self {
         Self {
-            name,
+            raw,
             ty,
             kind: ValueKind::Tensor,
         }
     }
-
-    pub(super) fn mlir_type(&self) -> String {
-        match self.kind {
-            ValueKind::Scalar => self.ty.elem.mlir_type().to_string(),
-            ValueKind::Tensor => self.ty.mlir_type(),
-        }
-    }
 }
 
-impl<'a> Lowerer<'a> {
-    fn new(graph: &'a TypedGraph, graphs: &'a BTreeMap<String, TypedGraph>) -> Self {
-        Self {
+impl<'a, 'c> Lowerer<'a, 'c> {
+    fn new(
+        context: &'c Context,
+        graph: &'a TypedGraph,
+        graphs: &'a BTreeMap<String, TypedGraph>,
+    ) -> anyhow::Result<Self> {
+        let location = Location::unknown(context);
+        let arg_types = graph
+            .inputs
+            .iter()
+            .map(|input| mlir_tensor_type(context, &input.ty))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let block = Block::new(
+            &arg_types
+                .iter()
+                .copied()
+                .map(|ty| (ty, location))
+                .collect::<Vec<_>>(),
+        );
+        let mut lowerer = Self {
+            context,
+            location,
+            block,
             graph,
             graphs,
             call_stack: vec![graph.name.clone()],
             tuple_scope_stack: vec![0],
             next_tuple_scope: 1,
-            next_value: 0,
-            lines: Vec::new(),
             values: BTreeMap::new(),
             node_values: BTreeMap::new(),
             tuple_values: BTreeMap::new(),
+        };
+        for (index, input) in graph.inputs.iter().enumerate() {
+            let arg = lowerer.block.argument(index)?;
+            lowerer.values.insert(
+                input.name.clone(),
+                Value::tensor(RawValue::from_value(arg.into()), input.ty.clone()),
+            );
         }
+        Ok(lowerer)
     }
 
-    fn lower(&mut self) -> anyhow::Result<String> {
-        let arg_list = self
-            .graph
-            .inputs
-            .iter()
-            .enumerate()
-            .map(|(index, input)| {
-                self.values.insert(
-                    input.name.clone(),
-                    Value::tensor(format!("%arg{index}"), input.ty.clone()),
-                );
-                format!("%arg{index}: {}", input.ty.mlir_type())
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+    fn lower(mut self) -> anyhow::Result<String> {
         for binding in &self.graph.lets {
             let values = self.lower_let_values(&binding.value.kind)?;
             self.bind_values(&binding.names, values, None)?;
@@ -112,32 +148,40 @@ impl<'a> Lowerer<'a> {
         let body = self.lower_body_outputs(&self.graph.body, &self.graph.outputs)?;
         let return_values = body
             .iter()
-            .map(|value| value.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let return_types = body
-            .iter()
-            .map(|value| value.ty.mlir_type())
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.lines
-            .push(format!("    return {} : {}", return_values, return_types));
+            .map(|value| value.raw.as_value())
+            .collect::<Vec<_>>();
+        self.block
+            .append_operation(func::r#return(&return_values, self.location));
 
-        let mut mlir = String::new();
-        mlir.push_str("module @knok {\n");
-        mlir.push_str(&format!(
-            "  func.func @{}({}) -> {} {{\n",
-            self.graph.name,
-            arg_list,
-            mlir_result_types(&self.graph.outputs)
+        let input_types = self
+            .graph
+            .inputs
+            .iter()
+            .map(|input| mlir_tensor_type(self.context, &input.ty))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let output_types = self
+            .graph
+            .outputs
+            .iter()
+            .map(|output| mlir_tensor_type(self.context, output))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let region = Region::new();
+        region.append_block(self.block);
+        let mut module = Module::new(self.location);
+        module.as_operation_mut().set_attribute(
+            "sym_name",
+            StringAttribute::new(self.context, "knok").into(),
+        );
+        let function_type = FunctionType::new(self.context, &input_types, &output_types);
+        module.body().append_operation(func::func(
+            self.context,
+            StringAttribute::new(self.context, &self.graph.name),
+            TypeAttribute::new(function_type.into()),
+            region,
+            &[],
+            self.location,
         ));
-        for line in &self.lines {
-            mlir.push_str(line);
-            mlir.push('\n');
-        }
-        mlir.push_str("  }\n");
-        mlir.push_str("}\n");
-        Ok(mlir)
+        canonicalize_and_verify(&module.as_operation().to_string())
     }
 
     fn lower_expr(&mut self, expr: &Expr) -> anyhow::Result<Value> {
@@ -735,10 +779,491 @@ impl<'a> Lowerer<'a> {
         result
     }
 
-    pub(super) fn fresh(&mut self) -> String {
-        let name = format!("%{}", self.next_value);
-        self.next_value += 1;
-        name
+    pub(super) fn append_op(
+        &mut self,
+        op_name: &str,
+        operands: &[Value],
+        result_ty: &TensorType,
+        result_kind: ValueKind,
+    ) -> anyhow::Result<Value> {
+        let result_type = self.mlir_value_type(result_ty, result_kind)?;
+        let operands = operands
+            .iter()
+            .map(|value| value.raw.as_value())
+            .collect::<Vec<_>>();
+        let op = OperationBuilder::new(op_name, self.location)
+            .add_operands(&operands)
+            .add_results(&[result_type])
+            .build()?;
+        let result = self.block.append_operation(op).result(0)?;
+        Ok(match result_kind {
+            ValueKind::Scalar => Value::scalar(RawValue::from_value(result.into()), result_ty.elem),
+            ValueKind::Tensor => {
+                Value::tensor(RawValue::from_value(result.into()), result_ty.clone())
+            }
+        })
+    }
+
+    pub(super) fn append_op_with_attrs(
+        &mut self,
+        op_name: &str,
+        operands: &[Value],
+        result_ty: &TensorType,
+        result_kind: ValueKind,
+        attrs: &[(String, String)],
+    ) -> anyhow::Result<Value> {
+        let result_type = self.mlir_value_type(result_ty, result_kind)?;
+        let results =
+            self.append_op_with_result_types(op_name, operands, &[result_type], attrs, Vec::new())?;
+        Ok(match result_kind {
+            ValueKind::Scalar => Value::scalar(results[0], result_ty.elem),
+            ValueKind::Tensor => Value::tensor(results[0], result_ty.clone()),
+        })
+    }
+
+    pub(super) fn append_op_with_result_types(
+        &mut self,
+        op_name: &str,
+        operands: &[Value],
+        result_types: &[Type<'c>],
+        attrs: &[(String, String)],
+        regions: Vec<Region<'c>>,
+    ) -> anyhow::Result<Vec<RawValue>> {
+        let operands = operands
+            .iter()
+            .map(|value| value.raw.as_value())
+            .collect::<Vec<_>>();
+        let attrs = self.parse_attrs(attrs)?;
+        let op = OperationBuilder::new(op_name, self.location)
+            .add_operands(&operands)
+            .add_results(result_types)
+            .add_attributes(&attrs)
+            .add_regions_vec(regions)
+            .build()?;
+        let op = self.block.append_operation(op);
+        (0..result_types.len())
+            .map(|index| Ok(RawValue::from_value(op.result(index)?.into())))
+            .collect()
+    }
+
+    pub(super) fn append_tensor_empty(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
+        self.append_op("tensor.empty", &[], ty, ValueKind::Tensor)
+    }
+
+    pub(super) fn append_linalg_fill(
+        &mut self,
+        scalar: Value,
+        output: Value,
+        ty: &TensorType,
+    ) -> anyhow::Result<Value> {
+        if ty.rank() == 0 {
+            let result_type = mlir_tensor_type(self.context, ty)?;
+            let results = self.append_op_with_result_types(
+                "tensor.from_elements",
+                &[scalar],
+                &[result_type],
+                &[],
+                Vec::new(),
+            )?;
+            return Ok(Value::tensor(results[0], ty.clone()));
+        }
+        let output_map = if ty.rank() == 0 {
+            "()".to_string()
+        } else {
+            format!(
+                "({})",
+                (0..ty.rank())
+                    .map(|axis| format!("d{axis}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let iterators = vec!["parallel"; ty.rank()];
+        let results = self.append_linalg_generic(
+            &[scalar],
+            &[output],
+            &[ty.clone()],
+            ty.rank(),
+            &["()".to_string(), output_map],
+            &iterators,
+            |_, _, args| Ok(vec![RawValue::from_value(args[0])]),
+        )?;
+        Ok(Value::tensor(results[0], ty.clone()))
+    }
+
+    pub(super) fn append_named_linalg(
+        &mut self,
+        op_name: &str,
+        inputs: &[Value],
+        output: Value,
+        ty: &TensorType,
+        attrs: &[(String, String)],
+    ) -> anyhow::Result<Value> {
+        let mut operands = inputs.to_vec();
+        operands.push(output);
+        let mut all_attrs = self.segment_attrs(&[inputs.len() as i32, 1]);
+        all_attrs.extend_from_slice(attrs);
+        let result_type = mlir_tensor_type(self.context, ty)?;
+        let regions = if op_name == "linalg.softmax" {
+            Vec::new()
+        } else {
+            vec![self.named_linalg_region(op_name, inputs, ty)?]
+        };
+        let results = self.append_op_with_result_types(
+            op_name,
+            &operands,
+            &[result_type],
+            &all_attrs,
+            regions,
+        )?;
+        Ok(Value::tensor(results[0], ty.clone()))
+    }
+
+    fn named_linalg_region(
+        &self,
+        op_name: &str,
+        inputs: &[Value],
+        ty: &TensorType,
+    ) -> anyhow::Result<Region<'c>> {
+        let block_arg_types = inputs
+            .iter()
+            .map(|value| value.ty.elem)
+            .chain(std::iter::once(ty.elem))
+            .map(|elem| mlir_element_type(self.context, elem).map(|ty| (ty, self.location)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let block = Block::new(&block_arg_types);
+        let args = (0..block_arg_types.len())
+            .map(|index| block.argument(index).map(Into::into))
+            .collect::<Result<Vec<MlirValue<'c, '_>>, _>>()?;
+        let yielded = if matches!(
+            op_name,
+            "linalg.matmul" | "linalg.batch_matmul" | "linalg.conv_2d_nhwc_hwcf"
+        ) {
+            let elem_ty = mlir_element_type(self.context, ty.elem)?;
+            let mul_op = if ty.elem.is_float() {
+                "arith.mulf"
+            } else {
+                "arith.muli"
+            };
+            let add_op = if ty.elem.is_float() {
+                "arith.addf"
+            } else {
+                "arith.addi"
+            };
+            let product = append_block_op(
+                self.context,
+                &block,
+                self.location,
+                mul_op,
+                &[args[0], args[1]],
+                &[elem_ty],
+                &[],
+                Vec::new(),
+            )?[0];
+            append_block_op(
+                self.context,
+                &block,
+                self.location,
+                add_op,
+                &[product.as_value(), args[2]],
+                &[elem_ty],
+                &[],
+                Vec::new(),
+            )?[0]
+        } else {
+            RawValue::from_value(args[0])
+        };
+        append_block_op(
+            self.context,
+            &block,
+            self.location,
+            "linalg.yield",
+            &[yielded.as_value()],
+            &[],
+            &[],
+            Vec::new(),
+        )?;
+        let region = Region::new();
+        region.append_block(block);
+        Ok(region)
+    }
+
+    pub(super) fn append_linalg_generic<F>(
+        &mut self,
+        inputs: &[Value],
+        outputs: &[Value],
+        result_tys: &[TensorType],
+        loop_rank: usize,
+        indexing_maps: &[String],
+        iterator_types: &[&str],
+        build_body: F,
+    ) -> anyhow::Result<Vec<RawValue>>
+    where
+        F: FnOnce(&mut Self, &Block<'c>, &[MlirValue<'c, '_>]) -> anyhow::Result<Vec<RawValue>>,
+    {
+        let mut operands = inputs.to_vec();
+        operands.extend_from_slice(outputs);
+        let block_arg_types = inputs
+            .iter()
+            .chain(outputs)
+            .map(|value| {
+                mlir_element_type(self.context, value.ty.elem).map(|ty| (ty, self.location))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let block = Block::new(&block_arg_types);
+        let args = (0..block_arg_types.len())
+            .map(|index| block.argument(index).map(Into::into))
+            .collect::<Result<Vec<MlirValue<'c, '_>>, _>>()?;
+        let yields = build_body(self, &block, &args)?
+            .into_iter()
+            .map(RawValue::as_value)
+            .collect::<Vec<_>>();
+        append_block_op(
+            self.context,
+            &block,
+            self.location,
+            "linalg.yield",
+            &yields,
+            &[],
+            &[],
+            Vec::new(),
+        )?;
+        let region = Region::new();
+        region.append_block(block);
+        let result_types = result_tys
+            .iter()
+            .map(|ty| mlir_tensor_type(self.context, ty))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let dims = (0..loop_rank)
+            .map(|index| format!("d{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let maps = indexing_maps
+            .iter()
+            .map(|map| format!("affine_map<({dims}) -> {map}>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let iterators = iterator_types
+            .iter()
+            .map(|kind| format!("#linalg.iterator_type<{kind}>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut attrs = self.segment_attrs(&[inputs.len() as i32, outputs.len() as i32]);
+        attrs.push(("indexing_maps".to_string(), format!("[{maps}]")));
+        attrs.push(("iterator_types".to_string(), format!("[{iterators}]")));
+        self.append_op_with_result_types(
+            "linalg.generic",
+            &operands,
+            &result_types,
+            &attrs,
+            vec![region],
+        )
+    }
+
+    pub(super) fn append_index_constant(&mut self, value: usize) -> anyhow::Result<RawValue> {
+        let result_type = Type::index(self.context);
+        let results = self.append_op_with_result_types(
+            "arith.constant",
+            &[],
+            &[result_type],
+            &[("value".to_string(), format!("{value} : index"))],
+            Vec::new(),
+        )?;
+        Ok(results[0])
+    }
+
+    pub(super) fn append_tensor_extract(
+        &mut self,
+        input: Value,
+        indices: &[RawValue],
+    ) -> anyhow::Result<Value> {
+        let mut operands = vec![input.raw.as_value()];
+        operands.extend(indices.iter().copied().map(RawValue::as_value));
+        let result_type = mlir_element_type(self.context, input.ty.elem)?;
+        let op = OperationBuilder::new("tensor.extract", self.location)
+            .add_operands(&operands)
+            .add_results(&[result_type])
+            .build()?;
+        let op = self.block.append_operation(op);
+        let result = RawValue::from_value(op.result(0)?.into());
+        Ok(Value::scalar(result, input.ty.elem))
+    }
+
+    pub(super) fn append_tensor_pad(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        lows: &[usize],
+        highs: &[usize],
+        pad_value: Value,
+    ) -> anyhow::Result<Value> {
+        let block_args = (0..ty.rank())
+            .map(|_| Type::index(self.context))
+            .map(|ty| (ty, self.location))
+            .collect::<Vec<_>>();
+        let block = Block::new(&block_args);
+        append_block_op(
+            self.context,
+            &block,
+            self.location,
+            "tensor.yield",
+            &[pad_value.raw.as_value()],
+            &[],
+            &[],
+            Vec::new(),
+        )?;
+        let region = Region::new();
+        region.append_block(block);
+        let attrs = vec![
+            (
+                "operand_segment_sizes".to_string(),
+                "array<i32: 1, 0, 0>".to_string(),
+            ),
+            ("static_low".to_string(), dense_i64_array_attr(lows)),
+            ("static_high".to_string(), dense_i64_array_attr(highs)),
+        ];
+        let result_type = mlir_tensor_type(self.context, ty)?;
+        let results = self.append_op_with_result_types(
+            "tensor.pad",
+            &[input],
+            &[result_type],
+            &attrs,
+            vec![region],
+        )?;
+        Ok(Value::tensor(results[0], ty.clone()))
+    }
+
+    pub(super) fn append_tensor_extract_slice(
+        &mut self,
+        input: Value,
+        ty: &TensorType,
+        offsets: &[usize],
+        sizes: &[usize],
+        strides: &[usize],
+    ) -> anyhow::Result<Value> {
+        let result_type = mlir_tensor_type(self.context, ty)?;
+        let attrs = vec![
+            (
+                "operand_segment_sizes".to_string(),
+                "array<i32: 1, 0, 0, 0>".to_string(),
+            ),
+            ("static_offsets".to_string(), dense_i64_array_attr(offsets)),
+            ("static_sizes".to_string(), dense_i64_array_attr(sizes)),
+            ("static_strides".to_string(), dense_i64_array_attr(strides)),
+        ];
+        let results = self.append_op_with_result_types(
+            "tensor.extract_slice",
+            &[input],
+            &[result_type],
+            &attrs,
+            Vec::new(),
+        )?;
+        Ok(Value::tensor(results[0], ty.clone()))
+    }
+
+    pub(super) fn append_tensor_insert_slice(
+        &mut self,
+        source: Value,
+        dest: Value,
+        dest_ty: &TensorType,
+        offsets: &[usize],
+    ) -> anyhow::Result<Value> {
+        let result_type = mlir_tensor_type(self.context, dest_ty)?;
+        let attrs = vec![
+            (
+                "operand_segment_sizes".to_string(),
+                "array<i32: 1, 1, 0, 0, 0>".to_string(),
+            ),
+            ("static_offsets".to_string(), dense_i64_array_attr(offsets)),
+            (
+                "static_sizes".to_string(),
+                dense_i64_array_attr(&source.ty.shape),
+            ),
+            (
+                "static_strides".to_string(),
+                dense_i64_array_attr(&vec![1; source.ty.rank()]),
+            ),
+        ];
+        let results = self.append_op_with_result_types(
+            "tensor.insert_slice",
+            &[source, dest],
+            &[result_type],
+            &attrs,
+            Vec::new(),
+        )?;
+        Ok(Value::tensor(results[0], dest_ty.clone()))
+    }
+
+    pub(super) fn append_reassociation_op(
+        &mut self,
+        op_name: &str,
+        input: Value,
+        ty: &TensorType,
+        reassociation: &str,
+        output_shape: Option<&[usize]>,
+    ) -> anyhow::Result<Value> {
+        let mut attrs = vec![("reassociation".to_string(), reassociation.to_string())];
+        if let Some(output_shape) = output_shape {
+            attrs.push((
+                "static_output_shape".to_string(),
+                dense_i64_array_attr(output_shape),
+            ));
+            attrs.push((
+                "operand_segment_sizes".to_string(),
+                "array<i32: 0>".to_string(),
+            ));
+        }
+        let result_type = mlir_tensor_type(self.context, ty)?;
+        let results = self.append_op_with_result_types(
+            op_name,
+            &[input],
+            &[result_type],
+            &attrs,
+            Vec::new(),
+        )?;
+        Ok(Value::tensor(results[0], ty.clone()))
+    }
+
+    pub(super) fn mlir_value_type(
+        &self,
+        ty: &TensorType,
+        kind: ValueKind,
+    ) -> anyhow::Result<Type<'c>> {
+        match kind {
+            ValueKind::Scalar => mlir_element_type(self.context, ty.elem),
+            ValueKind::Tensor => mlir_tensor_type(self.context, ty),
+        }
+    }
+
+    pub(super) fn parse_attrs(
+        &self,
+        attrs: &[(String, String)],
+    ) -> anyhow::Result<Vec<(Identifier<'c>, Attribute<'c>)>> {
+        attrs
+            .iter()
+            .map(|(name, value)| {
+                Ok((
+                    Identifier::new(self.context, name),
+                    Attribute::parse(self.context, value).ok_or_else(|| {
+                        anyhow::anyhow!("failed to parse MLIR attribute `{value}`")
+                    })?,
+                ))
+            })
+            .collect()
+    }
+
+    pub(super) fn segment_attrs(&self, segments: &[i32]) -> Vec<(String, String)> {
+        vec![(
+            "operand_segment_sizes".to_string(),
+            format!(
+                "array<i32: {}>",
+                segments
+                    .iter()
+                    .map(i32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )]
     }
 
     fn lower_body_outputs(
@@ -779,4 +1304,67 @@ impl<'a> Lowerer<'a> {
             ),
         }
     }
+}
+
+pub(super) fn mlir_element_type<'c>(
+    context: &'c Context,
+    elem: knok_core::ElementType,
+) -> anyhow::Result<Type<'c>> {
+    Type::parse(context, elem.mlir_type())
+        .ok_or_else(|| anyhow::anyhow!("failed to parse MLIR element type `{}`", elem.mlir_type()))
+}
+
+pub(super) fn mlir_tensor_type<'c>(
+    context: &'c Context,
+    ty: &TensorType,
+) -> anyhow::Result<Type<'c>> {
+    Type::parse(context, &ty.mlir_type())
+        .ok_or_else(|| anyhow::anyhow!("failed to parse MLIR tensor type `{}`", ty.mlir_type()))
+}
+
+pub(super) fn append_block_op<'c>(
+    context: &'c Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    op_name: &str,
+    operands: &[MlirValue<'c, '_>],
+    result_types: &[Type<'c>],
+    attrs: &[(String, String)],
+    regions: Vec<Region<'c>>,
+) -> anyhow::Result<Vec<RawValue>> {
+    let attrs = attrs
+        .iter()
+        .map(|(name, value)| {
+            Ok((
+                Identifier::new(context, name),
+                Attribute::parse(context, value)
+                    .ok_or_else(|| anyhow::anyhow!("failed to parse MLIR attribute `{value}`"))?,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let op = OperationBuilder::new(op_name, location)
+        .add_operands(operands)
+        .add_results(result_types)
+        .add_attributes(&attrs)
+        .add_regions_vec(regions)
+        .build()?;
+    let op = block.append_operation(op);
+    (0..result_types.len())
+        .map(|index| Ok(RawValue::from_value(op.result(index)?.into())))
+        .collect()
+}
+
+pub(super) fn dense_i64_array_attr(values: &[usize]) -> String {
+    if values.is_empty() {
+        return "array<i64>".to_string();
+    }
+
+    format!(
+        "array<i64: {}>",
+        values
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }

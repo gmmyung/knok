@@ -396,6 +396,11 @@ fn slice_2x3(x: T2<f32, 2, 3>) -> T2<f32, 2, 2> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn slice_scalar(x: T0<f32>) -> T0<f32> {
+    slice(x, [])
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn pad_2x3(x: T2<f32, 2, 3>) -> T2<f32, 3, 4> {
     pad(x, [1, 1])
 }
@@ -617,6 +622,7 @@ fn main() {
         unsqueeze_2x3,
         squeeze_1x2x3,
         slice_2x3,
+        slice_scalar,
         pad_2x3,
         gather_axis1_f32,
         take_axis1_index1_f32,

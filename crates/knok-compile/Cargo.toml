@@ -13,6 +13,7 @@ blake3.workspace = true
 fs2.workspace = true
 knok-core.workspace = true
 melior.workspace = true
+mlir-sys.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true

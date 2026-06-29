@@ -379,6 +379,7 @@ dependencies = [
  "fs2",
  "knok-core",
  "melior",
+ "mlir-sys",
  "proc-macro2",
  "quote",
  "syn",

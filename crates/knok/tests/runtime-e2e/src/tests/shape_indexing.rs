@@ -22,12 +22,14 @@ fn shape_and_index_ops_run() {
     let unsqueeze = graphs::unsqueeze_2x3::call(x.clone()).unwrap();
     let squeeze = graphs::squeeze_1x2x3::call(squeeze_input).unwrap();
     let slice = graphs::slice_2x3::call(x.clone()).unwrap();
+    let scalar_slice = graphs::slice_scalar::call(Tensor0::from_scalar(7.0)).unwrap();
     let pad = graphs::pad_2x3::call(x.clone()).unwrap();
     assert_close(broadcast.as_slice(), &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
     assert_close(reshape.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     assert_close(unsqueeze.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     assert_close(squeeze.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     assert_close(slice.as_slice(), &[2.0, 3.0, 5.0, 6.0]);
+    assert_close(scalar_slice.as_slice(), &[7.0]);
     assert_close(
         pad.as_slice(),
         &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 4.0, 5.0, 6.0],

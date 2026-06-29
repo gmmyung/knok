@@ -1,9 +1,9 @@
 use knok_core::{AxisSpec, ElementType, TensorType};
 
-use super::lowerer::{Lowerer, Value, ValueKind};
-use super::shape::{element_count, format_dim_list, reduction_output_map, reduction_output_shape};
+use super::lowerer::{append_block_op, mlir_element_type, Lowerer, RawValue, Value};
+use super::shape::{element_count, reduction_output_map, reduction_output_shape};
 
-impl Lowerer<'_> {
+impl Lowerer<'_, '_> {
     pub(super) fn mean(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         ensure_non_empty_reduction(&input.ty, axis, "mean")?;
         if input.ty.rank() == 0 && matches!(axis, AxisSpec::All) {
@@ -89,20 +89,15 @@ impl Lowerer<'_> {
     }
 
     fn axis_softmax(&mut self, input: Value, axis: usize) -> anyhow::Result<Value> {
-        let empty = self.fresh();
-        self.lines.push(format!(
-            "    {empty} = tensor.empty() : {}",
-            input.ty.mlir_type()
-        ));
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = linalg.softmax dimension({axis}) ins({} : {}) outs({empty} : {}) -> {}",
-            input.name,
-            input.ty.mlir_type(),
-            input.ty.mlir_type(),
-            input.ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, input.ty))
+        let ty = input.ty.clone();
+        let empty = self.append_tensor_empty(&ty)?;
+        self.append_named_linalg(
+            "linalg.softmax",
+            &[input],
+            empty,
+            &ty,
+            &[("dimension".to_string(), format!("{axis} : i64"))],
+        )
     }
 
     pub(super) fn sigmoid(&mut self, input: Value) -> anyhow::Result<Value> {
@@ -145,50 +140,18 @@ impl Lowerer<'_> {
             elem: input.ty.elem,
             shape: index_ty.shape.clone(),
         };
-        let valid_ty = TensorType {
-            elem: ElementType::Bool,
-            shape: index_ty.shape.clone(),
-        };
-
-        let init_index = self.fill_tensor(&index_ty, "0", ElementType::I64);
+        let init_index = self.fill_tensor(&index_ty, "0", ElementType::I64)?;
         let init_value = self.fill_tensor(
             &value_ty,
             extreme.initial_value(input.ty.elem),
             input.ty.elem,
-        );
-        let init_valid = self.fill_tensor(&valid_ty, "0", ElementType::Bool);
+        )?;
 
         let rank = input.ty.rank();
-        let dims = format_dim_list(rank);
-        let input_map = format!("({dims})");
+        let input_map = identity_map(rank);
         let output_map = reduction_output_map(rank, axis, false);
         let iterator_types = reduction_iterator_types(rank, axis);
-        let result = self.fresh();
-        self.lines
-            .push(format!("    {result}:3 = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {input_map}>, affine_map<({dims}) -> {output_map}>, affine_map<({dims}) -> {output_map}>, affine_map<({dims}) -> {output_map}>],"
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterator_types}]"));
-        self.lines.push(format!(
-            "    }} ins({} : {}) outs({}, {}, {} : {}, {}, {}) {{",
-            input.name,
-            input.ty.mlir_type(),
-            init_index,
-            init_value,
-            init_valid,
-            index_ty.mlir_type(),
-            value_ty.mlir_type(),
-            valid_ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%value: {}, %best_i: i64, %best_v: {}, %valid: i1):",
-            input.ty.elem.mlir_type(),
-            input.ty.elem.mlir_type()
-        ));
-        let candidate_index = self.argmax_candidate_index(&input.ty, axis);
-        let better = self.fresh();
+        let iterator_types = parse_iterator_types(&iterator_types);
         let compare_op = if input.ty.elem.is_float() {
             "arith.cmpf"
         } else {
@@ -200,105 +163,107 @@ impl Lowerer<'_> {
         } else {
             "eq"
         };
-        let ordered = self.fresh();
-        self.lines.push(format!(
-            "      {ordered} = {compare_op} {ordering_predicate}, %value, %best_v : {}",
-            input.ty.elem.mlir_type()
-        ));
-        let equal = self.fresh();
-        self.lines.push(format!(
-            "      {equal} = {compare_op} {equal_predicate}, %value, %best_v : {}",
-            input.ty.elem.mlir_type()
-        ));
-        let lower_index = self.fresh();
-        self.lines.push(format!(
-            "      {lower_index} = arith.cmpi slt, {candidate_index}, %best_i : i64"
-        ));
-        let tied_before = self.fresh();
-        self.lines.push(format!(
-            "      {tied_before} = arith.andi {equal}, {lower_index} : i1"
-        ));
-        let candidate_better = self.fresh();
-        self.lines.push(format!(
-            "      {candidate_better} = arith.ori {ordered}, {tied_before} : i1"
-        ));
-        let true_value = self.fresh();
-        self.lines
-            .push(format!("      {true_value} = arith.constant 1 : i1"));
-        let not_valid = self.fresh();
-        self.lines.push(format!(
-            "      {not_valid} = arith.xori %valid, {true_value} : i1"
-        ));
-        self.lines.push(format!(
-            "      {better} = arith.ori {not_valid}, {candidate_better} : i1"
-        ));
-        let selected_index = self.fresh();
-        self.lines.push(format!(
-            "      {selected_index} = arith.select {better}, {candidate_index}, %best_i : i64"
-        ));
-        let selected_value = self.fresh();
-        self.lines.push(format!(
-            "      {selected_value} = arith.select {better}, %value, %best_v : {}",
-            input.ty.elem.mlir_type()
-        ));
-        let selected_valid = self.fresh();
-        self.lines.push(format!(
-            "      {selected_valid} = arith.ori %valid, {better} : i1"
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {selected_index}, {selected_value}, {selected_valid} : i64, {}, i1",
-            input.ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    }} -> ({}, {}, {})",
-            index_ty.mlir_type(),
-            value_ty.mlir_type(),
-            valid_ty.mlir_type()
-        ));
-        Ok(Value {
-            name: format!("{result}#0"),
-            ty: index_ty,
-            kind: ValueKind::Tensor,
-        })
-    }
-
-    fn argmax_candidate_index(&mut self, input: &TensorType, axis: AxisSpec) -> String {
-        let index = if let Some(axis) = axis.index() {
-            let index = self.fresh();
-            self.lines
-                .push(format!("      {index} = linalg.index {axis} : index"));
-            index
-        } else {
-            let first = self.fresh();
-            self.lines
-                .push(format!("      {first} = linalg.index 0 : index"));
-            let mut flattened = first;
-            for axis in 1..input.rank() {
-                let axis_index = self.fresh();
-                self.lines
-                    .push(format!("      {axis_index} = linalg.index {axis} : index"));
-                let dim_size = self.fresh();
-                self.lines.push(format!(
-                    "      {dim_size} = arith.constant {} : index",
-                    input.shape[axis]
-                ));
-                let scaled = self.fresh();
-                self.lines.push(format!(
-                    "      {scaled} = arith.muli {flattened}, {dim_size} : index"
-                ));
-                let next = self.fresh();
-                self.lines.push(format!(
-                    "      {next} = arith.addi {scaled}, {axis_index} : index"
-                ));
-                flattened = next;
-            }
-            flattened
-        };
-        let index_i64 = self.fresh();
-        self.lines.push(format!(
-            "      {index_i64} = arith.index_cast {index} : index to i64"
-        ));
-        index_i64
+        let input_ty = input.ty.clone();
+        let elem = input.ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[input],
+            &[init_index, init_value],
+            &[index_ty.clone(), value_ty],
+            rank,
+            &[input_map, output_map.clone(), output_map],
+            &iterator_types,
+            |_, block, args| {
+                let elem_ty = mlir_element_type(context, elem)?;
+                let i1_ty = mlir_element_type(context, ElementType::Bool)?;
+                let i64_ty = mlir_element_type(context, ElementType::I64)?;
+                let candidate_index =
+                    arg_candidate_index(context, block, location, &input_ty, axis)?;
+                let ordered = append_block_op(
+                    context,
+                    block,
+                    location,
+                    compare_op,
+                    &[args[0], args[2]],
+                    &[i1_ty],
+                    &[(
+                        "predicate".to_string(),
+                        cmp_predicate_attr(compare_op, ordering_predicate),
+                    )],
+                    Vec::new(),
+                )?[0];
+                let equal = append_block_op(
+                    context,
+                    block,
+                    location,
+                    compare_op,
+                    &[args[0], args[2]],
+                    &[i1_ty],
+                    &[(
+                        "predicate".to_string(),
+                        cmp_predicate_attr(compare_op, equal_predicate),
+                    )],
+                    Vec::new(),
+                )?[0];
+                let lower_index = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "arith.cmpi",
+                    &[candidate_index.as_value(), args[1]],
+                    &[i1_ty],
+                    &[("predicate".to_string(), "2 : i64".to_string())],
+                    Vec::new(),
+                )?[0];
+                let tied_before = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "arith.andi",
+                    &[equal.as_value(), lower_index.as_value()],
+                    &[i1_ty],
+                    &[],
+                    Vec::new(),
+                )?[0];
+                let candidate_better = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "arith.ori",
+                    &[ordered.as_value(), tied_before.as_value()],
+                    &[i1_ty],
+                    &[],
+                    Vec::new(),
+                )?[0];
+                let selected_index = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "arith.select",
+                    &[
+                        candidate_better.as_value(),
+                        candidate_index.as_value(),
+                        args[1],
+                    ],
+                    &[i64_ty],
+                    &[],
+                    Vec::new(),
+                )?[0];
+                let selected_value = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "arith.select",
+                    &[candidate_better.as_value(), args[0], args[2]],
+                    &[elem_ty],
+                    &[],
+                    Vec::new(),
+                )?[0];
+                Ok(vec![selected_index, selected_value])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], index_ty))
     }
 
     pub(super) fn sum(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
@@ -388,61 +353,50 @@ impl Lowerer<'_> {
             elem: input.ty.elem,
             shape: reduction_output_shape(&input.ty.shape, axis, keep_dims),
         };
-        let init = self.fill_tensor(&ty, initial_value, ty.elem);
+        let init = self.fill_tensor(&ty, initial_value, ty.elem)?;
 
         let rank = input.ty.rank();
-        let dims = format_dim_list(rank);
-        let input_map = format!("({dims})");
+        let input_map = identity_map(rank);
         let iterator_types = reduction_iterator_types(rank, axis);
         let output_map = reduction_output_map(rank, axis, keep_dims);
-        let reduced = self.fresh();
-        let name = self.fresh();
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {input_map}>, affine_map<({dims}) -> {output_map}>],"
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterator_types}]"));
-        self.lines.push(format!(
-            "    }} ins({} : {}) outs({init} : {}) {{",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%value: {}, %acc: {}):",
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      {reduced} = {reducer_op} %acc, %value : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {reduced} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value::tensor(name, ty))
+        let iterator_types = parse_iterator_types(&iterator_types);
+        let elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[input],
+            &[init],
+            &[ty.clone()],
+            rank,
+            &[input_map, output_map],
+            &iterator_types,
+            |_, block, args| {
+                let elem_ty = mlir_element_type(context, elem)?;
+                let reduced = append_block_op(
+                    context,
+                    block,
+                    location,
+                    reducer_op,
+                    &[args[1], args[0]],
+                    &[elem_ty],
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok(vec![reduced[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty))
     }
 
-    fn fill_tensor(&mut self, ty: &TensorType, value: &str, elem: ElementType) -> String {
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let scalar = self.fresh();
-        self.lines.push(format!(
-            "    {scalar} = arith.constant {value} : {}",
-            elem.mlir_type()
-        ));
-        let init = self.fresh();
-        self.lines.push(format!(
-            "    {init} = linalg.fill ins({scalar} : {}) outs({empty} : {}) -> {}",
-            elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        init
+    fn fill_tensor(
+        &mut self,
+        ty: &TensorType,
+        value: &str,
+        elem: ElementType,
+    ) -> anyhow::Result<Value> {
+        let empty = self.append_tensor_empty(ty)?;
+        let scalar = self.constant(value, elem)?;
+        self.append_linalg_fill(scalar, empty, ty)
     }
 }
 
@@ -457,6 +411,160 @@ fn reduction_iterator_types(rank: usize, axis: AxisSpec) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn parse_iterator_types(text: &str) -> Vec<&'static str> {
+    text.split(',')
+        .map(str::trim)
+        .map(|value| value.trim_matches('"'))
+        .map(|value| match value {
+            "parallel" => "parallel",
+            "reduction" => "reduction",
+            other => panic!("unknown linalg iterator type `{other}`"),
+        })
+        .collect()
+}
+
+fn identity_map(rank: usize) -> String {
+    if rank == 0 {
+        return "()".to_string();
+    }
+    format!(
+        "({})",
+        (0..rank)
+            .map(|axis| format!("d{axis}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn cmp_predicate_attr(op_name: &str, predicate: &str) -> String {
+    let value = match op_name {
+        "arith.cmpf" => cmpf_predicate_value(predicate),
+        "arith.cmpi" => cmpi_predicate_value(predicate),
+        _ => unreachable!("comparison predicate requested for {op_name}"),
+    };
+    format!("{value} : i64")
+}
+
+fn cmpf_predicate_value(predicate: &str) -> i64 {
+    match predicate {
+        "false" => 0,
+        "oeq" => 1,
+        "ogt" => 2,
+        "oge" => 3,
+        "olt" => 4,
+        "ole" => 5,
+        "one" => 6,
+        "ord" => 7,
+        "ueq" => 8,
+        "ugt" => 9,
+        "uge" => 10,
+        "ult" => 11,
+        "ule" => 12,
+        "une" => 13,
+        "uno" => 14,
+        "true" => 15,
+        other => panic!("unknown arith.cmpf predicate `{other}`"),
+    }
+}
+
+fn cmpi_predicate_value(predicate: &str) -> i64 {
+    match predicate {
+        "eq" => 0,
+        "ne" => 1,
+        "slt" => 2,
+        "sle" => 3,
+        "sgt" => 4,
+        "sge" => 5,
+        "ult" => 6,
+        "ule" => 7,
+        "ugt" => 8,
+        "uge" => 9,
+        other => panic!("unknown arith.cmpi predicate `{other}`"),
+    }
+}
+
+fn arg_candidate_index<'c>(
+    context: &'c melior::Context,
+    block: &melior::ir::Block<'c>,
+    location: melior::ir::Location<'c>,
+    input: &TensorType,
+    axis: AxisSpec,
+) -> anyhow::Result<RawValue> {
+    let index_ty = melior::ir::Type::index(context);
+    let index = if let Some(axis) = axis.index() {
+        linalg_index(context, block, location, axis)?
+    } else {
+        let mut flattened = linalg_index(context, block, location, 0)?;
+        for axis in 1..input.rank() {
+            let axis_index = linalg_index(context, block, location, axis)?;
+            let dim_size = append_block_op(
+                context,
+                block,
+                location,
+                "arith.constant",
+                &[],
+                &[index_ty],
+                &[(
+                    "value".to_string(),
+                    format!("{} : index", input.shape[axis]),
+                )],
+                Vec::new(),
+            )?[0];
+            let scaled = append_block_op(
+                context,
+                block,
+                location,
+                "arith.muli",
+                &[flattened.as_value(), dim_size.as_value()],
+                &[index_ty],
+                &[],
+                Vec::new(),
+            )?[0];
+            flattened = append_block_op(
+                context,
+                block,
+                location,
+                "arith.addi",
+                &[scaled.as_value(), axis_index.as_value()],
+                &[index_ty],
+                &[],
+                Vec::new(),
+            )?[0];
+        }
+        flattened
+    };
+    append_block_op(
+        context,
+        block,
+        location,
+        "arith.index_cast",
+        &[index.as_value()],
+        &[mlir_element_type(context, ElementType::I64)?],
+        &[],
+        Vec::new(),
+    )
+    .map(|values| values[0])
+}
+
+fn linalg_index<'c>(
+    context: &'c melior::Context,
+    block: &melior::ir::Block<'c>,
+    location: melior::ir::Location<'c>,
+    axis: usize,
+) -> anyhow::Result<RawValue> {
+    append_block_op(
+        context,
+        block,
+        location,
+        "linalg.index",
+        &[],
+        &[melior::ir::Type::index(context)],
+        &[("dim".to_string(), format!("{axis} : i64"))],
+        Vec::new(),
+    )
+    .map(|values| values[0])
 }
 
 fn min_numeric_literal(elem: ElementType) -> &'static str {

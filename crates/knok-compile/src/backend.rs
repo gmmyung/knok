@@ -12,6 +12,13 @@ impl IreeBackend {
             _ => None,
         }
     }
+
+    pub(crate) fn target_name(self) -> &'static str {
+        match self {
+            Self::LlvmCpu => "llvm-cpu",
+            Self::MetalSpirv => "metal-spirv",
+        }
+    }
 }
 
 pub(crate) fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
