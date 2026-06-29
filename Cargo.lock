@@ -349,6 +349,7 @@ dependencies = [
 name = "knok-build-macros"
 version = "0.2.0"
 dependencies = [
+ "knok-core",
  "proc-macro2",
  "quote",
  "syn",

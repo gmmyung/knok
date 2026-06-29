@@ -652,4 +652,22 @@ fn main() {
         conv2d_f32,
         grouped_conv2d_f32
     );
+
+    knok_build::compile_mlir_models_with_options!(
+        BuildOptions::default().output_file("knok_mlir_models.rs");
+        imported_add4 {
+            path: "../fixtures/add4.mlir",
+            function: "imported.add4",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T1<f32, 4>],
+        },
+        imported_add_sub4 {
+            path: "../fixtures/add_sub4.mlir",
+            function: "imported.add_sub4",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T1<f32, 4>, T1<f32, 4>],
+        },
+    );
 }

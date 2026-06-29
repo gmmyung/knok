@@ -94,3 +94,55 @@ Generated modules expose:
 - `artifact()` for static metadata and embedded VMFB bytes.
 - `run(&Engine, ...)` for repeated hosted inference.
 - `call(...)` for one-off hosted inference with a convenience engine.
+
+## External MLIR Models
+
+Custom `.mlir` files can be compiled in `build.rs` and exposed with the same
+generated wrapper shape. This path is separate from traced graph IR: the MLIR is
+compiled as an external artifact, while Rust types provide the wrapper
+signature.
+
+```rust
+use knok_build::prelude::*;
+
+fn main() {
+    knok_build::compile_mlir_models!(
+        imported_add {
+            path: "models/add.mlir",
+            function: "imported.add",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T1<f32, 4>],
+        },
+    );
+}
+```
+
+Then import and call it from target code:
+
+```rust
+knok::generated_graphs!(pub mod graphs);
+
+let z = graphs::imported_add::call(x, y)?;
+```
+
+When traced graphs and external MLIR models are generated from the same
+`build.rs`, write one set to a custom output file:
+
+```rust
+knok_build::compile_mlir_models_with_options!(
+    BuildOptions::default().output_file("knok_mlir_models.rs");
+    imported_add {
+        path: "models/add.mlir",
+        function: "imported.add",
+        backend: Backend::LlvmCpu,
+        inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+        outputs: [T1<f32, 4>],
+    },
+);
+```
+
+```rust
+knok::generated_graphs!(pub mod graphs);
+knok::generated_graphs!(pub mod mlir_models, "knok_mlir_models.rs");
+```

@@ -28,6 +28,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Added more rustdoc for the `knok-build` build-script API.
 - Added release-readiness, compiler setup, dtype policy, and lowering
   architecture documentation.
+- Added `compile_mlir_models!` and `compile_mlir_models_with_options!` for
+  build-time compilation of external `.mlir` files into generated wrappers.
 
 ### Changed
 

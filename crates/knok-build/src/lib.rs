@@ -24,12 +24,19 @@
 mod codegen;
 mod trace;
 
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 
-use knok_compile::compile_graph_with_registry;
-use knok_core::TypedGraph;
+use knok_compile::{compile_graph_with_registry, compile_mlir_source};
+use knok_core::{Input, TensorType, TypedGraph};
 
-pub use knok_build_macros::{compile_graphs, compile_graphs_with_options, graph};
+pub use knok_build_macros::{
+    compile_graphs, compile_graphs_with_options, compile_mlir_models,
+    compile_mlir_models_with_options, graph,
+};
 pub use trace::*;
 
 /// Result type used by build-script tracing and code generation.
@@ -113,6 +120,44 @@ pub struct RegisteredGraph {
     backend: Backend,
 }
 
+/// One external MLIR module compiled and wrapped by `compile_mlir_models!`.
+#[derive(Clone, Debug)]
+pub struct MlirModel {
+    /// Generated Rust module name.
+    pub name: String,
+    /// Path to the `.mlir` file, relative to the build-script crate unless absolute.
+    pub path: PathBuf,
+    /// IREE VM function name, such as `imported.forward`.
+    pub function_name: String,
+    /// IREE compile backend.
+    pub backend: Backend,
+    /// Input tensor names and types used by the generated wrapper.
+    pub inputs: Vec<Input>,
+    /// Output tensor types used by the generated wrapper.
+    pub outputs: Vec<TensorType>,
+}
+
+impl MlirModel {
+    /// Creates an external MLIR model descriptor.
+    pub fn new(
+        name: impl Into<String>,
+        path: impl Into<PathBuf>,
+        function_name: impl Into<String>,
+        backend: Backend,
+        inputs: Vec<Input>,
+        outputs: Vec<TensorType>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            function_name: function_name.into(),
+            backend,
+            inputs,
+            outputs,
+        }
+    }
+}
+
 impl GraphRegistry {
     /// Creates an empty graph registry.
     pub fn new() -> Self {
@@ -185,6 +230,55 @@ pub fn emit_registered_graphs_with_options(
     Ok(())
 }
 
+/// Emits wrappers and VMFB artifacts for external MLIR models.
+pub fn emit_mlir_models(models: Vec<MlirModel>) -> Result<()> {
+    emit_mlir_models_with_options(models, BuildOptions::default())
+}
+
+/// Emits external MLIR model wrappers and VMFB artifacts with explicit options.
+pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptions) -> Result<()> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    fs::create_dir_all(&out_dir)?;
+    if env::var_os("KNOK_CACHE_DIR").is_none() {
+        env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
+    }
+    println!("cargo:rerun-if-changed=build.rs");
+
+    let mut generated = String::new();
+    for model in &models {
+        let source_path = resolve_model_path(&model.path)?;
+        println!("cargo:rerun-if-changed={}", source_path.display());
+        let vmfb_name = format!("{}.vmfb", model.name);
+        let vmfb_path = out_dir.join(&vmfb_name);
+        let compile_flags;
+        if options.stub_artifacts {
+            fs::write(&vmfb_path, [0u8; 16])?;
+            compile_flags = Vec::new();
+        } else {
+            let source = fs::read_to_string(&source_path)?;
+            let vmfb = compile_mlir_source(model.backend.name(), &source)?;
+            fs::write(&vmfb_path, vmfb)?;
+            compile_flags = Vec::new();
+        }
+        generated.push_str(&codegen::mlir_model_module(
+            model,
+            &vmfb_name,
+            &compile_flags,
+        )?);
+        generated.push('\n');
+    }
+
+    fs::write(out_dir.join(options.output_file), generated)?;
+    Ok(())
+}
+
+fn resolve_model_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    Ok(PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join(path))
+}
+
 fn compile_registered_graph(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
@@ -197,17 +291,23 @@ pub mod prelude {
     pub use crate::{
         abs, all, all_axis, amax, amax_axis, amin, amin_axis, any, any_axis, arange, arange_step,
         arange_to, argmax, argmax_axis, argmin, argmin_axis, broadcast, ceil, clip, compile_graphs,
-        compile_graphs_with_options, concat, conv2d, conv2d_options, cos, diagonal, diagonal_axes,
-        dot, equal, exp, exp2, expm1, eye, flip, flip_axes, floor, full_like, gather, graph,
-        greater, greater_equal, identity, inner, isnan, less, less_equal, linspace, log, log10,
-        log1p, log2, logical_and, logical_not, logical_or, logical_xor, matmul, max, max_axis,
-        maximum, mean, mean_axis, min, min_axis, minimum, moveaxis, not_equal, ones_like, outer,
-        pad, permute, permute_dims, pow, prod, prod_axis, ptp, ptp_axis, r#where, reciprocal, relu,
-        repeat, reshape, rint, roll, round, sigmoid, sin, slice, softmax, softmax_axis, split,
-        sqrt, square, squeeze, stack, std, std_axis, sum, sum_axis, swapaxes, take,
-        take_along_axis, tan, tanh, tile, trace, trace_axes, transpose, transpose_axes, unsqueeze,
-        var, var_axis, vecdot, vecdot_axis, zeros_like, Backend, BuildOptions, Conv2dOptions,
-        Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6, T0, T1, T2, T3, T4, T5, T6,
+        compile_graphs_with_options, compile_mlir_models, compile_mlir_models_with_options, concat,
+        conv2d, conv2d_options, cos, diagonal, diagonal_axes, dot, equal, exp, exp2, expm1, eye,
+        flip, flip_axes, floor, full_like, gather, graph, greater, greater_equal, identity, inner,
+        isnan, less, less_equal, linspace, log, log10, log1p, log2, logical_and, logical_not,
+        logical_or, logical_xor, matmul, max, max_axis, maximum, mean, mean_axis, min, min_axis,
+        minimum, moveaxis, not_equal, ones_like, outer, pad, permute, permute_dims, pow, prod,
+        prod_axis, ptp, ptp_axis, r#where, reciprocal, relu, repeat, reshape, rint, roll, round,
+        sigmoid, sin, slice, softmax, softmax_axis, split, sqrt, square, squeeze, stack, std,
+        std_axis, sum, sum_axis, swapaxes, take, take_along_axis, tan, tanh, tile, trace,
+        trace_axes, transpose, transpose_axes, unsqueeze, var, var_axis, vecdot, vecdot_axis,
+        zeros_like, Backend, BuildOptions, Conv2dOptions, MlirModel, Tensor0, Tensor1, Tensor2,
+        Tensor3, Tensor4, Tensor5, Tensor6, T0, T1, T2, T3, T4, T5, T6,
     };
     pub use half::{bf16, f16};
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use knok_core::{ElementType, Input, TensorType};
 }

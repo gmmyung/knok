@@ -1,6 +1,6 @@
-use knok_core::{ElementType, TensorType, TypedGraph};
+use knok_core::{ElementType, Input, TensorType, TypedGraph};
 
-use crate::{Backend, Result};
+use crate::{Backend, MlirModel, Result};
 
 pub(crate) fn graph_module(
     graph: &TypedGraph,
@@ -8,15 +8,53 @@ pub(crate) fn graph_module(
     vmfb_name: &str,
     compile_flags: &[String],
 ) -> Result<String> {
-    let module_name = sanitize_ident(&graph.name)?;
-    let input_descs = graph
-        .inputs
+    let function_name = format!("knok.{}", graph.name);
+    generated_module(
+        &graph.name,
+        &function_name,
+        &graph.inputs,
+        &graph.outputs,
+        backend,
+        vmfb_name,
+        compile_flags,
+    )
+}
+
+pub(crate) fn mlir_model_module(
+    model: &MlirModel,
+    vmfb_name: &str,
+    compile_flags: &[String],
+) -> Result<String> {
+    generated_module(
+        &model.name,
+        &model.function_name,
+        &model.inputs,
+        &model.outputs,
+        model.backend,
+        vmfb_name,
+        compile_flags,
+    )
+}
+
+fn generated_module(
+    name: &str,
+    function_name: &str,
+    inputs: &[Input],
+    outputs: &[TensorType],
+    backend: Backend,
+    vmfb_name: &str,
+    compile_flags: &[String],
+) -> Result<String> {
+    let module_name = sanitize_ident(name)?;
+    if !is_vm_function_name(function_name) {
+        anyhow::bail!("`{function_name}` is not a valid IREE VM function name");
+    }
+    let input_descs = inputs
         .iter()
         .map(|input| tensor_desc(&input.ty))
         .collect::<Vec<_>>()
         .join(", ");
-    let output_descs = graph
-        .outputs
+    let output_descs = outputs
         .iter()
         .map(tensor_desc)
         .collect::<Vec<_>>()
@@ -26,21 +64,17 @@ pub(crate) fn graph_module(
         .map(|flag| format!("{flag:?}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let function_name = format!("knok.{}", graph.name);
-    let input_names = graph
-        .inputs
+    let input_names = inputs
         .iter()
         .map(|input| sanitize_ident(&input.name))
         .collect::<Result<Vec<_>>>()?;
-    let input_params = graph
-        .inputs
+    let input_params = inputs
         .iter()
         .zip(input_names.iter())
         .map(|(input, name)| format!("{}: {}", name, rust_tensor_type(&input.ty)))
         .collect::<Vec<_>>()
         .join(", ");
-    let runtime_inputs = graph
-        .inputs
+    let runtime_inputs = inputs
         .iter()
         .zip(input_names.iter())
         .map(|(input, name)| {
@@ -54,9 +88,9 @@ pub(crate) fn graph_module(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let output_type = rust_output_type(&graph.outputs);
+    let output_type = rust_output_type(outputs);
     let call_args = input_names.join(", ");
-    let run_body = run_body(&graph.outputs, &runtime_inputs);
+    let run_body = run_body(outputs, &runtime_inputs);
 
     Ok(format!(
         r#"pub mod {module_name} {{
@@ -183,6 +217,13 @@ fn is_keyword(name: &str) -> bool {
             | "await"
             | "dyn"
     )
+}
+
+fn is_vm_function_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch == '.' || ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn tensor_desc(ty: &TensorType) -> String {
@@ -353,6 +394,47 @@ mod tests {
         assert!(module.contains("outputs.read::<f32>(0)"));
         assert!(module.contains("outputs.read::<i64>(1)"));
         assert!(module.contains("Ok(("));
+    }
+
+    #[test]
+    fn generates_external_mlir_model_wrapper_with_imported_function_name() {
+        let model = MlirModel::new(
+            "imported_add",
+            "models/add.mlir",
+            "imported.add",
+            Backend::LlvmCpu,
+            vec![
+                input("x", ElementType::F32, &[4]),
+                input("y", ElementType::F32, &[4]),
+            ],
+            vec![ty(ElementType::F32, &[4])],
+        );
+
+        let module = mlir_model_module(&model, "imported_add.vmfb", &[]).unwrap();
+
+        assert!(module.contains("pub mod imported_add"));
+        assert!(module.contains("function_name: \"imported.add\""));
+        assert!(module.contains("x: ::knok::tensor::Tensor1<f32, 4>"));
+        assert!(module.contains("y: ::knok::tensor::Tensor1<f32, 4>"));
+        assert!(module.contains("::knok::runtime::raw::Input::F32(&[4], x.as_slice())"));
+        assert!(module.contains("::knok::runtime::raw::Input::F32(&[4], y.as_slice())"));
+    }
+
+    #[test]
+    fn rejects_invalid_external_vm_function_names() {
+        let model = MlirModel::new(
+            "imported_add",
+            "models/add.mlir",
+            "imported.add\"",
+            Backend::LlvmCpu,
+            Vec::new(),
+            vec![ty(ElementType::F32, &[4])],
+        );
+
+        assert!(mlir_model_module(&model, "imported_add.vmfb", &[])
+            .unwrap_err()
+            .to_string()
+            .contains("not a valid IREE VM function name"));
     }
 
     #[test]

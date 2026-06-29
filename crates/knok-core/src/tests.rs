@@ -172,6 +172,9 @@ fn parses_tensor_type_aliases_and_rejects_bad_generics() {
     let scalar = parse_tensor_type(&syn::parse_str("knok::Tensor0<bool>").unwrap()).unwrap();
     assert_eq!(scalar, tensor(ElementType::Bool, &[]));
 
+    let alias = parse_tensor_type(&syn::parse_str("T2<i64, 3, 4>").unwrap()).unwrap();
+    assert_eq!(alias, tensor(ElementType::I64, &[3, 4]));
+
     let too_many = parse_tensor_type(&syn::parse_str("Tensor1<f32, 4, 5>").unwrap()).unwrap_err();
     assert!(too_many
         .to_string()
