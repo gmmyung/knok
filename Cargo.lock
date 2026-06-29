@@ -404,6 +404,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "knok-runtime-e2e"
+version = "0.0.0"
+dependencies = [
+ "knok",
+ "knok-build",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"

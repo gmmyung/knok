@@ -230,7 +230,10 @@ mod tests {
 
     use crate::lowering::lower_to_mlir;
 
-    use super::verify_with_melior;
+    use super::{
+        cache_key, compile_mlir_source, read_cached_vmfb, unique_cache_temp_suffix,
+        verify_with_melior,
+    };
 
     #[test]
     fn expm1_lowering_uses_direct_math_op() {
@@ -474,5 +477,82 @@ mod tests {
         let mlir = lower_to_mlir(&graph).unwrap();
         assert_eq!(mlir.matches("tensor.extract_slice").count(), 4, "{mlir}");
         verify_with_melior(&mlir).unwrap();
+    }
+
+    #[test]
+    fn cache_key_changes_when_compile_inputs_change() {
+        let flags = vec!["--flag-a".to_string()];
+        let base = cache_key("llvm-cpu", "module {}", "iree-compile", "1", &flags);
+        let different_backend = cache_key("metal-spirv", "module {}", "iree-compile", "1", &flags);
+        let different_mlir = cache_key("llvm-cpu", "module @x {}", "iree-compile", "1", &flags);
+        let different_compiler = cache_key("llvm-cpu", "module {}", "custom-compile", "1", &flags);
+        let different_version = cache_key("llvm-cpu", "module {}", "iree-compile", "2", &flags);
+        let different_flags = cache_key(
+            "llvm-cpu",
+            "module {}",
+            "iree-compile",
+            "1",
+            &["--flag-b".to_string()],
+        );
+
+        assert_ne!(base, different_backend);
+        assert_ne!(base, different_mlir);
+        assert_ne!(base, different_compiler);
+        assert_ne!(base, different_version);
+        assert_ne!(base, different_flags);
+    }
+
+    #[test]
+    fn unique_cache_temp_suffixes_are_distinct() {
+        let first = unique_cache_temp_suffix();
+        let second = unique_cache_temp_suffix();
+
+        assert_ne!(first, second);
+        assert!(first.contains(&std::process::id().to_string()));
+    }
+
+    #[test]
+    fn invalid_cached_vmfb_is_removed_and_treated_as_miss() {
+        let dir = std::env::temp_dir().join(format!(
+            "knok-cache-test-{}-{}",
+            std::process::id(),
+            unique_cache_temp_suffix()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bad.vmfb");
+        std::fs::write(&path, [0_u8; 4]).unwrap();
+
+        let cached = read_cached_vmfb(&path).unwrap();
+
+        assert!(cached.is_none());
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn valid_cached_vmfb_is_returned() {
+        let dir = std::env::temp_dir().join(format!(
+            "knok-cache-test-{}-{}",
+            std::process::id(),
+            unique_cache_temp_suffix()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("good.vmfb");
+        let bytes = vec![1_u8; 16];
+        std::fs::write(&path, &bytes).unwrap();
+
+        let cached = read_cached_vmfb(&path).unwrap();
+
+        assert_eq!(cached, Some(bytes));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unsupported_backend_errors_before_spawning_compiler() {
+        let error = compile_mlir_source("unsupported", "module {}").unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("unsupported IREE backend `unsupported`"));
     }
 }

@@ -1,8 +1,15 @@
 use alloc::{vec, vec::Vec};
 use core::fmt;
 
+/// Element type accepted by fixed-rank tensor containers.
+///
+/// This trait supplies zero/one constructors for host-side tensor helpers. It
+/// does not imply that every operation supports every dtype; graph operation
+/// support is checked by `knok-build` and `knok-core`.
 pub trait TensorElement: Copy + Clone + PartialEq + fmt::Debug {
+    /// Additive identity.
     const ZERO: Self;
+    /// Multiplicative identity.
     const ONE: Self;
 }
 
@@ -41,31 +48,37 @@ struct TensorData<T> {
     data: Vec<T>,
 }
 
+/// Rank-0 scalar tensor containing one element.
 #[derive(Clone, PartialEq)]
 pub struct Tensor0<T> {
     storage: TensorData<T>,
 }
 
+/// Rank-1 tensor with statically known length.
 #[derive(Clone, PartialEq)]
 pub struct Tensor1<T, const D0: usize> {
     storage: TensorData<T>,
 }
 
+/// Rank-2 tensor with statically known shape.
 #[derive(Clone, PartialEq)]
 pub struct Tensor2<T, const D0: usize, const D1: usize> {
     storage: TensorData<T>,
 }
 
+/// Rank-3 tensor with statically known shape.
 #[derive(Clone, PartialEq)]
 pub struct Tensor3<T, const D0: usize, const D1: usize, const D2: usize> {
     storage: TensorData<T>,
 }
 
+/// Rank-4 tensor with statically known shape.
 #[derive(Clone, PartialEq)]
 pub struct Tensor4<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize> {
     storage: TensorData<T>,
 }
 
+/// Rank-5 tensor with statically known shape.
 #[derive(Clone, PartialEq)]
 pub struct Tensor5<
     T,
@@ -78,6 +91,7 @@ pub struct Tensor5<
     storage: TensorData<T>,
 }
 
+/// Rank-6 tensor with statically known shape.
 #[derive(Clone, PartialEq)]
 pub struct Tensor6<
     T,
@@ -123,62 +137,75 @@ impl<T> TensorData<T> {
 }
 
 impl<T> Tensor0<T> {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[])?,
         })
     }
 
+    /// Creates a scalar tensor from one value.
     pub fn from_scalar(value: T) -> Self {
         Self {
             storage: TensorData { data: vec![value] },
         }
     }
 
+    /// Creates a scalar tensor from a one-element array.
     pub fn from_array(data: [T; 1]) -> Self {
         Self {
             storage: TensorData { data: data.into() },
         }
     }
 
+    /// Creates a scalar tensor filled with one value.
     pub fn filled(value: T) -> Self {
         Self {
             storage: TensorData { data: vec![value] },
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns the scalar value.
     pub fn get(&self) -> &T {
         &self.storage.data[0]
     }
 
+    /// Returns the scalar value mutably.
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.storage.data[0]
     }
 }
 
 impl<T, const D0: usize> Tensor1<T, D0> {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[D0];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[D0])?,
         })
     }
 
+    /// Creates a tensor from an array.
     pub fn from_array(data: [T; D0]) -> Self {
         Self {
             storage: TensorData { data: data.into() },

@@ -1,0 +1,11 @@
+[package]
+name = "knok-runtime-e2e"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+knok = { path = "../.." }
+
+[build-dependencies]
+knok-build = { path = "../../../knok-build" }

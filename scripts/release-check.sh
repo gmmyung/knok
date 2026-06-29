@@ -9,3 +9,4 @@ cargo check -p knok-no-std-smoke
 cargo doc -p knok --no-deps
 cargo test -p knok
 cargo test -p knok-build-tracing-runtime
+cargo test -p knok-runtime-e2e
