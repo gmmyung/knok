@@ -1,14 +1,13 @@
 use knok_core::TensorType;
 
-use super::lowerer::{Lowerer, Value, ValueKind};
+use super::lowerer::{append_block_op, mlir_element_type, Lowerer, RawValue, Value, ValueKind};
 use super::shape::{
     axis_broadcast_dimensions, collapse_reassociation_for_removed_axis,
     collapse_reassociation_for_squeezed_broadcast, element_count, ensure_axis_broadcastable,
-    ensure_broadcastable, expand_reassociation_for_inserted_axis, format_dim_list,
-    format_shape_list, format_usize_list, parallel_iterators, reassociation_for_rank,
+    ensure_broadcastable, expand_reassociation_for_inserted_axis, reassociation_for_rank,
 };
 
-impl Lowerer<'_> {
+impl Lowerer<'_, '_> {
     pub(super) fn transpose(&mut self, input: Value, axes: &[usize]) -> anyhow::Result<Value> {
         if input.ty.rank() <= 1 {
             return Ok(input);
@@ -65,18 +64,14 @@ impl Lowerer<'_> {
         if axes.iter().copied().eq(0..axes.len()) {
             return Ok(input);
         }
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let permutation = format_usize_list(axes);
-        self.lines.push(format!(
-            "    {name} = linalg.transpose ins({} : {}) outs({empty} : {}) permutation = {permutation}",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        let empty = self.append_tensor_empty(ty)?;
+        self.append_named_linalg(
+            "linalg.transpose",
+            &[input],
+            empty,
+            ty,
+            &[("permutation".to_string(), dense_i64_array(axes))],
+        )
     }
 
     pub(super) fn reshape(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
@@ -103,28 +98,19 @@ impl Lowerer<'_> {
     }
 
     fn expand_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
-        let name = self.fresh();
-        let output_shape = format_shape_list(&ty.shape);
         let reassociation = reassociation_for_rank(ty.rank());
-        self.lines.push(format!(
-            "    {name} = tensor.expand_shape {} {reassociation} output_shape {output_shape} : {} into {}",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_reassociation_op(
+            "tensor.expand_shape",
+            input,
+            ty,
+            &reassociation,
+            Some(&ty.shape),
+        )
     }
 
     fn collapse_to_rank1(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
-        let name = self.fresh();
         let reassociation = reassociation_for_rank(input.ty.rank());
-        self.lines.push(format!(
-            "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_reassociation_op("tensor.collapse_shape", input, ty, &reassociation, None)
     }
 
     pub(super) fn slice(
@@ -133,17 +119,7 @@ impl Lowerer<'_> {
         ty: &TensorType,
         starts: &[usize],
     ) -> anyhow::Result<Value> {
-        let offsets = format_usize_list(starts);
-        let sizes = format_usize_list(&ty.shape);
-        let strides = format_usize_list(&vec![1; ty.rank()]);
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = tensor.extract_slice {}{offsets} {sizes} {strides} : {} to {}",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_tensor_extract_slice(input, ty, starts, &ty.shape, &vec![1; ty.rank()])
     }
 
     pub(super) fn split(
@@ -197,15 +173,14 @@ impl Lowerer<'_> {
         if output_ty.rank() == 0 {
             return self.reshape(sliced, &output_ty);
         }
-        let name = self.fresh();
         let reassociation = collapse_reassociation_for_removed_axis(sliced.ty.rank(), axis);
-        self.lines.push(format!(
-            "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
-            sliced.name,
-            sliced.ty.mlir_type(),
-            output_ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, output_ty))
+        self.append_reassociation_op(
+            "tensor.collapse_shape",
+            sliced,
+            &output_ty,
+            &reassociation,
+            None,
+        )
     }
 
     pub(super) fn gather(
@@ -283,158 +258,120 @@ impl Lowerer<'_> {
         let indices = self.coerce_to_kind(indices, &index_ty, ValueKind::Tensor)?;
         if ty.rank() == 0 {
             let index_value = self.extract_index_value(&indices, &[])?;
-            let index_value = self.normalize_gather_index(&index_value, indexed_axis_size, "    ");
+            let index_value = self.normalize_gather_index(index_value, indexed_axis_size)?;
             let value = self.extract_gather_value(input, &index_value, input_axes)?;
             return self.splat(value, ty);
         }
 
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let dims = format_dim_list(ty.rank());
-        let output_map = format!("({dims})");
+        let output = self.append_tensor_empty(ty)?;
+        let output_map = identity_map(ty.rank());
         let index_map = format_dim_subset(index_axes);
-        let iterators = parallel_iterators(ty.rank());
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {index_map}>, affine_map<({dims}) -> {output_map}>],"
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterators}]"));
-        self.lines.push(format!(
-            "    }} ins({} : {}) outs({empty} : {}) {{",
-            indices.name,
-            indices.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%index_value: {}, %out: {}):",
-            indices.ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        let output_indices = (0..ty.rank())
-            .map(|axis| {
-                let value = self.fresh();
-                self.lines
-                    .push(format!("      {value} = linalg.index {axis} : index"));
-                value
-            })
-            .collect::<Vec<_>>();
-        let index_value = self.index_cast("%index_value", indices.ty.elem.mlir_type(), "      ");
-        let index_value = self.normalize_gather_index(&index_value, indexed_axis_size, "      ");
-        let input_indices = input_axes
-            .iter()
-            .map(|axis| match axis {
-                GatherInputAxis::Index => index_value.clone(),
-                GatherInputAxis::Output(axis) => output_indices[*axis].clone(),
-            })
-            .collect::<Vec<_>>();
-        let result = self.fresh();
-        self.lines.push(format!(
-            "      {result} = tensor.extract {}[{}] : {}",
-            input.name,
-            input_indices.join(", "),
-            input.ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {result} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value::tensor(name, ty.clone()))
+        let iterators = vec!["parallel"; ty.rank()];
+        let input_elem = input.ty.elem;
+        let input_ty = input.ty.clone();
+        let input_raw = input.raw;
+        let index_elem_ty = indices.ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[indices],
+            &[output],
+            &[ty.clone()],
+            ty.rank(),
+            &[index_map, output_map],
+            &iterators,
+            |_, block, args| {
+                let output_indices = (0..ty.rank())
+                    .map(|axis| {
+                        append_block_op(
+                            context,
+                            block,
+                            location,
+                            "linalg.index",
+                            &[],
+                            &[melior::ir::Type::index(context)],
+                            &[("dim".to_string(), format!("{axis} : i64"))],
+                            Vec::new(),
+                        )
+                        .map(|values| values[0])
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let index_value =
+                    index_cast_in_block(context, block, location, args[0], index_elem_ty)?;
+                let index_value = normalize_index_in_block(
+                    context,
+                    block,
+                    location,
+                    index_value,
+                    indexed_axis_size,
+                )?;
+                let input_indices = input_axes
+                    .iter()
+                    .map(|axis| match axis {
+                        GatherInputAxis::Index => index_value,
+                        GatherInputAxis::Output(axis) => output_indices[*axis],
+                    })
+                    .map(RawValue::as_value)
+                    .collect::<Vec<_>>();
+                let mut operands = vec![input_raw.as_value()];
+                operands.extend(input_indices);
+                let result = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "tensor.extract",
+                    &operands,
+                    &[mlir_element_type(context, input_elem)?],
+                    &[],
+                    Vec::new(),
+                )?;
+                let _ = input_ty;
+                Ok(vec![result[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty.clone()))
     }
 
     fn extract_index_value(
         &mut self,
         indices: &Value,
-        index_axes: &[String],
-    ) -> anyhow::Result<String> {
-        let index_value = self.fresh();
-        self.lines.push(format!(
-            "    {index_value} = tensor.extract {}[{}] : {}",
-            indices.name,
-            index_axes.join(", "),
-            indices.ty.mlir_type()
-        ));
-        Ok(self.index_cast(&index_value, indices.ty.elem.mlir_type(), "    "))
+        index_axes: &[RawValue],
+    ) -> anyhow::Result<RawValue> {
+        let index_value = self.append_tensor_extract(indices.clone(), index_axes)?;
+        let result_type = melior::ir::Type::index(self.context);
+        let results = self.append_op_with_result_types(
+            "arith.index_cast",
+            &[index_value],
+            &[result_type],
+            &[],
+            Vec::new(),
+        )?;
+        Ok(results[0])
     }
 
     fn extract_gather_value(
         &mut self,
         input: Value,
-        index_value: &str,
+        index_value: &RawValue,
         input_axes: &[GatherInputAxis],
     ) -> anyhow::Result<Value> {
-        let zero = self.fresh();
-        self.lines
-            .push(format!("    {zero} = arith.constant 0 : index"));
+        let zero = self.append_index_constant(0)?;
         let indices = input_axes
             .iter()
             .map(|axis| match axis {
-                GatherInputAxis::Index => index_value.to_string(),
-                GatherInputAxis::Output(_) => zero.clone(),
+                GatherInputAxis::Index => *index_value,
+                GatherInputAxis::Output(_) => zero,
             })
             .collect::<Vec<_>>();
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = tensor.extract {}[{}] : {}",
-            input.name,
-            indices.join(", "),
-            input.ty.mlir_type()
-        ));
-        Ok(Value::scalar(name, input.ty.elem))
-    }
-
-    fn index_cast(&mut self, value: &str, elem_type: &str, indent: &str) -> String {
-        let index = self.fresh();
-        self.lines.push(format!(
-            "{indent}{index} = arith.index_cast {value} : {elem_type} to index"
-        ));
-        index
+        self.append_tensor_extract(input, &indices)
     }
 
     fn normalize_gather_index(
         &mut self,
-        index_value: &str,
+        index_value: RawValue,
         axis_size: usize,
-        indent: &str,
-    ) -> String {
-        let zero = self.fresh();
-        self.lines
-            .push(format!("{indent}{zero} = arith.constant 0 : index"));
-        let dim = self.fresh();
-        self.lines.push(format!(
-            "{indent}{dim} = arith.constant {axis_size} : index"
-        ));
-        let is_negative = self.fresh();
-        self.lines.push(format!(
-            "{indent}{is_negative} = arith.cmpi slt, {index_value}, {zero} : index"
-        ));
-        let wrapped = self.fresh();
-        self.lines.push(format!(
-            "{indent}{wrapped} = arith.addi {index_value}, {dim} : index"
-        ));
-        let normalized = self.fresh();
-        self.lines.push(format!(
-            "{indent}{normalized} = arith.select {is_negative}, {wrapped}, {index_value} : index"
-        ));
-        let lower_ok = self.fresh();
-        self.lines.push(format!(
-            "{indent}{lower_ok} = arith.cmpi sge, {normalized}, {zero} : index"
-        ));
-        let upper_ok = self.fresh();
-        self.lines.push(format!(
-            "{indent}{upper_ok} = arith.cmpi slt, {normalized}, {dim} : index"
-        ));
-        let in_bounds = self.fresh();
-        self.lines.push(format!(
-            "{indent}{in_bounds} = arith.andi {lower_ok}, {upper_ok} : i1"
-        ));
-        self.lines.push(format!(
-            "{indent}cf.assert {in_bounds}, \"index out of bounds\""
-        ));
-        normalized
+    ) -> anyhow::Result<RawValue> {
+        normalize_index_on_main_block(self, index_value, axis_size)
     }
 
     pub(super) fn concat(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {
@@ -444,14 +381,12 @@ impl Lowerer<'_> {
             elem: lhs.ty.elem,
             shape,
         };
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
+        let empty = self.append_tensor_empty(&ty)?;
         let lhs_offsets = vec![0; ty.rank()];
         let first = self.insert_slice(lhs, empty, &ty, &lhs_offsets)?;
         let mut rhs_offsets = vec![0; ty.rank()];
         rhs_offsets[axis] = ty.shape[axis] - rhs.ty.shape[axis];
-        self.insert_slice(rhs, first.name, &ty, &rhs_offsets)
+        self.insert_slice(rhs, first, &ty, &rhs_offsets)
     }
 
     pub(super) fn stack(&mut self, lhs: Value, rhs: Value, axis: usize) -> anyhow::Result<Value> {
@@ -606,34 +541,8 @@ impl Lowerer<'_> {
         if lows.iter().all(|low| *low == 0) && highs.iter().all(|high| *high == 0) {
             return Ok(input);
         }
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {} : {}",
-            ty.elem.zero_literal(),
-            ty.elem.mlir_type()
-        ));
-        let name = self.fresh();
-        let lows = format_usize_list(lows);
-        let highs = format_usize_list(&highs);
-        self.lines.push(format!(
-            "    {name} = tensor.pad {} low{lows} high{highs} {{",
-            input.name
-        ));
-        let block_args = (0..ty.rank())
-            .map(|axis| format!("%d{axis}: index"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.lines.push(format!("    ^bb0({block_args}):"));
-        self.lines.push(format!(
-            "      tensor.yield {zero} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    }} : {} to {}",
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        let zero = self.constant(ty.elem.zero_literal(), ty.elem)?;
+        self.append_tensor_pad(input, ty, lows, &highs, zero)
     }
 
     fn concat_many(&mut self, mut values: Vec<Value>, axis: usize) -> anyhow::Result<Value> {
@@ -646,30 +555,17 @@ impl Lowerer<'_> {
     }
 
     fn empty_tensor(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        Ok(Value::tensor(empty, ty.clone()))
+        self.append_tensor_empty(ty)
     }
 
     fn insert_slice(
         &mut self,
         source: Value,
-        dest: String,
+        dest: Value,
         dest_ty: &TensorType,
         offsets: &[usize],
     ) -> anyhow::Result<Value> {
-        let offsets = format_usize_list(offsets);
-        let sizes = format_usize_list(&source.ty.shape);
-        let strides = format_usize_list(&vec![1; source.ty.rank()]);
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = tensor.insert_slice {} into {dest}{offsets} {sizes} {strides} : {} into {}",
-            source.name,
-            source.ty.mlir_type(),
-            dest_ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, dest_ty.clone()))
+        self.append_tensor_insert_slice(source, dest, dest_ty, offsets)
     }
 
     fn expand_insert_axis(
@@ -678,16 +574,14 @@ impl Lowerer<'_> {
         ty: &TensorType,
         axis: usize,
     ) -> anyhow::Result<Value> {
-        let name = self.fresh();
-        let output_shape = format_shape_list(&ty.shape);
         let reassociation = expand_reassociation_for_inserted_axis(input.ty.rank(), axis);
-        self.lines.push(format!(
-            "    {name} = tensor.expand_shape {} {reassociation} output_shape {output_shape} : {} into {}",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_reassociation_op(
+            "tensor.expand_shape",
+            input,
+            ty,
+            &reassociation,
+            Some(&ty.shape),
+        )
     }
 
     pub(super) fn broadcast(&mut self, input: Value, ty: &TensorType) -> anyhow::Result<Value> {
@@ -736,33 +630,20 @@ impl Lowerer<'_> {
         ty: &TensorType,
         dimensions: &[usize],
     ) -> anyhow::Result<Value> {
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let dimensions = format_usize_list(dimensions);
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = linalg.broadcast ins({} : {}) outs({empty} : {}) dimensions = {dimensions}",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        let empty = self.append_tensor_empty(ty)?;
+        self.append_named_linalg(
+            "linalg.broadcast",
+            &[input],
+            empty,
+            ty,
+            &[("dimensions".to_string(), dense_i64_array(dimensions))],
+        )
     }
 
     pub(super) fn extract_first_scalar(&mut self, input: Value) -> anyhow::Result<Value> {
-        let name = self.fresh();
-        let zero = self.fresh();
-        self.lines
-            .push(format!("    {zero} = arith.constant 0 : index"));
-        let indices = vec![zero; input.ty.rank()].join(", ");
-        self.lines.push(format!(
-            "    {name} = tensor.extract {}[{}] : {}",
-            input.name,
-            indices,
-            input.ty.mlir_type()
-        ));
-        Ok(Value::scalar(name, input.ty.elem))
+        let zero = self.append_index_constant(0)?;
+        let indices = vec![zero; input.ty.rank()];
+        self.append_tensor_extract(input, &indices)
     }
 
     fn squeeze_singleton_broadcast_dims(
@@ -810,14 +691,14 @@ impl Lowerer<'_> {
         let aligned_output_shape = &ty.shape[padding..];
         let reassociation =
             collapse_reassociation_for_squeezed_broadcast(&input.ty.shape, aligned_output_shape);
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = tensor.collapse_shape {} {reassociation} : {} into {}",
-            input.name,
-            input.ty.mlir_type(),
-            squeezed_ty.mlir_type()
-        ));
-        Ok((Value::tensor(name, squeezed_ty), dimensions))
+        let squeezed = self.append_reassociation_op(
+            "tensor.collapse_shape",
+            input,
+            &squeezed_ty,
+            &reassociation,
+            None,
+        )?;
+        Ok((squeezed, dimensions))
     }
 }
 
@@ -833,4 +714,168 @@ fn format_dim_subset(axes: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("({dims})")
+}
+
+fn identity_map(rank: usize) -> String {
+    if rank == 0 {
+        return "()".to_string();
+    }
+    format!(
+        "({})",
+        (0..rank)
+            .map(|axis| format!("d{axis}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn dense_i64_array(values: &[usize]) -> String {
+    format!(
+        "array<i64: {}>",
+        values
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn index_cast_in_block<'c>(
+    context: &'c melior::Context,
+    block: &melior::ir::Block<'c>,
+    location: melior::ir::Location<'c>,
+    value: melior::ir::Value<'c, '_>,
+    _elem: knok_core::ElementType,
+) -> anyhow::Result<RawValue> {
+    let result = append_block_op(
+        context,
+        block,
+        location,
+        "arith.index_cast",
+        &[value],
+        &[melior::ir::Type::index(context)],
+        &[],
+        Vec::new(),
+    )?;
+    Ok(result[0])
+}
+
+fn normalize_index_on_main_block(
+    lowerer: &mut Lowerer<'_, '_>,
+    index_value: RawValue,
+    axis_size: usize,
+) -> anyhow::Result<RawValue> {
+    normalize_index_in_block(
+        lowerer.context,
+        &lowerer.block,
+        lowerer.location,
+        index_value,
+        axis_size,
+    )
+}
+
+fn normalize_index_in_block<'c>(
+    context: &'c melior::Context,
+    block: &melior::ir::Block<'c>,
+    location: melior::ir::Location<'c>,
+    index_value: RawValue,
+    axis_size: usize,
+) -> anyhow::Result<RawValue> {
+    let index_ty = melior::ir::Type::index(context);
+    let i1_ty = mlir_element_type(context, knok_core::ElementType::Bool)?;
+    let zero = append_block_op(
+        context,
+        block,
+        location,
+        "arith.constant",
+        &[],
+        &[index_ty],
+        &[("value".to_string(), "0 : index".to_string())],
+        Vec::new(),
+    )?[0];
+    let dim = append_block_op(
+        context,
+        block,
+        location,
+        "arith.constant",
+        &[],
+        &[index_ty],
+        &[("value".to_string(), format!("{axis_size} : index"))],
+        Vec::new(),
+    )?[0];
+    let is_negative = append_block_op(
+        context,
+        block,
+        location,
+        "arith.cmpi",
+        &[index_value.as_value(), zero.as_value()],
+        &[i1_ty],
+        &[("predicate".to_string(), "2 : i64".to_string())],
+        Vec::new(),
+    )?[0];
+    let wrapped = append_block_op(
+        context,
+        block,
+        location,
+        "arith.addi",
+        &[index_value.as_value(), dim.as_value()],
+        &[index_ty],
+        &[],
+        Vec::new(),
+    )?[0];
+    let normalized = append_block_op(
+        context,
+        block,
+        location,
+        "arith.select",
+        &[
+            is_negative.as_value(),
+            wrapped.as_value(),
+            index_value.as_value(),
+        ],
+        &[index_ty],
+        &[],
+        Vec::new(),
+    )?[0];
+    let lower_ok = append_block_op(
+        context,
+        block,
+        location,
+        "arith.cmpi",
+        &[normalized.as_value(), zero.as_value()],
+        &[i1_ty],
+        &[("predicate".to_string(), "5 : i64".to_string())],
+        Vec::new(),
+    )?[0];
+    let upper_ok = append_block_op(
+        context,
+        block,
+        location,
+        "arith.cmpi",
+        &[normalized.as_value(), dim.as_value()],
+        &[i1_ty],
+        &[("predicate".to_string(), "2 : i64".to_string())],
+        Vec::new(),
+    )?[0];
+    let in_bounds = append_block_op(
+        context,
+        block,
+        location,
+        "arith.andi",
+        &[lower_ok.as_value(), upper_ok.as_value()],
+        &[i1_ty],
+        &[],
+        Vec::new(),
+    )?[0];
+    append_block_op(
+        context,
+        block,
+        location,
+        "cf.assert",
+        &[in_bounds.as_value()],
+        &[],
+        &[("msg".to_string(), "\"index out of bounds\"".to_string())],
+        Vec::new(),
+    )?;
+    Ok(normalized)
 }

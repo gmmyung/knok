@@ -1,42 +1,56 @@
 use knok_core::{BinaryOp, ElementType, TensorType};
 
-use super::lowerer::{Lowerer, Value, ValueKind};
-use super::shape::{broadcast_result_type, broadcast_shape, format_dim_list, parallel_iterators};
+use super::lowerer::{append_block_op, mlir_element_type, Lowerer, Value, ValueKind};
+use super::shape::{broadcast_result_type, broadcast_shape};
 
-impl Lowerer<'_> {
+impl Lowerer<'_, '_> {
     pub(super) fn constant(&mut self, value: &str, elem: ElementType) -> anyhow::Result<Value> {
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = arith.constant {value} : {}",
-            elem.mlir_type()
-        ));
-        Ok(Value::scalar(name, elem))
+        let ty = TensorType {
+            elem,
+            shape: Vec::new(),
+        };
+        self.append_op_with_attrs(
+            "arith.constant",
+            &[],
+            &ty,
+            ValueKind::Scalar,
+            &[(
+                "value".to_string(),
+                format!("{value} : {}", elem.mlir_type()),
+            )],
+        )
     }
 
     pub(super) fn zero_like(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
         if ty.rank() == 0 {
             return self.constant(ty.elem.zero_literal(), ty.elem);
         }
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = arith.constant dense<{}> : {}",
-            ty.elem.zero_literal(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_op_with_attrs(
+            "arith.constant",
+            &[],
+            ty,
+            ValueKind::Tensor,
+            &[(
+                "value".to_string(),
+                format!("dense<{}> : {}", ty.elem.zero_literal(), ty.mlir_type()),
+            )],
+        )
     }
 
     pub(super) fn one_like(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
         if ty.rank() == 0 {
             return self.constant(ty.elem.one_literal(), ty.elem);
         }
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = arith.constant dense<{}> : {}",
-            ty.elem.one_literal(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_op_with_attrs(
+            "arith.constant",
+            &[],
+            ty,
+            ValueKind::Tensor,
+            &[(
+                "value".to_string(),
+                format!("dense<{}> : {}", ty.elem.one_literal(), ty.mlir_type()),
+            )],
+        )
     }
 
     pub(super) fn dense_constant(
@@ -58,33 +72,23 @@ impl Lowerer<'_> {
                 values.len()
             );
         }
-        let name = self.fresh();
         let literal = nested_dense_literal(values, &ty.shape);
-        self.lines.push(format!(
-            "    {name} = arith.constant dense<{literal}> : {}",
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty.clone()))
+        self.append_op_with_attrs(
+            "arith.constant",
+            &[],
+            ty,
+            ValueKind::Tensor,
+            &[(
+                "value".to_string(),
+                format!("dense<{literal}> : {}", ty.mlir_type()),
+            )],
+        )
     }
 
-    pub(super) fn zero_initialized_tensor(&mut self, ty: &TensorType) -> anyhow::Result<String> {
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {} : {}",
-            ty.elem.zero_literal(),
-            ty.elem.mlir_type()
-        ));
-        let init = self.fresh();
-        self.lines.push(format!(
-            "    {init} = linalg.fill ins({zero} : {}) outs({empty} : {}) -> {}",
-            ty.elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(init)
+    pub(super) fn zero_initialized_tensor(&mut self, ty: &TensorType) -> anyhow::Result<Value> {
+        let empty = self.append_tensor_empty(ty)?;
+        let zero = self.constant(ty.elem.zero_literal(), ty.elem)?;
+        self.append_linalg_fill(zero, empty, ty)
     }
 
     pub(super) fn binary_value(
@@ -140,17 +144,9 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn emit_unary(&mut self, op_name: &str, value: Value) -> anyhow::Result<Value> {
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = {op_name} {} : {}",
-            value.name,
-            value.mlir_type()
-        ));
-        Ok(Value {
-            name,
-            ty: value.ty,
-            kind: value.kind,
-        })
+        let ty = value.ty.clone();
+        let kind = value.kind;
+        self.append_op(op_name, &[value], &ty, kind)
     }
 
     pub(super) fn emit_binary(
@@ -168,20 +164,7 @@ impl Lowerer<'_> {
             };
         let lhs = self.coerce_to_kind(lhs, &ty, result_kind)?;
         let rhs = self.coerce_to_kind(rhs, &ty, result_kind)?;
-        let result_type = match result_kind {
-            ValueKind::Scalar => ty.elem.mlir_type().to_string(),
-            ValueKind::Tensor => ty.mlir_type(),
-        };
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = {op_name} {}, {} : {}",
-            lhs.name, rhs.name, result_type
-        ));
-        Ok(Value {
-            name,
-            ty,
-            kind: result_kind,
-        })
+        self.append_op(op_name, &[lhs, rhs], &ty, result_kind)
     }
 
     pub(super) fn comparison(
@@ -206,9 +189,7 @@ impl Lowerer<'_> {
         } else {
             integer_predicate
         };
-        self.emit_elementwise_binary(&ty, lhs, rhs, |result, lhs, rhs, elem| {
-            format!("      {result} = {op_name} {predicate}, {lhs}, {rhs} : {elem}")
-        })
+        self.emit_elementwise_binary_op(&ty, lhs, rhs, op_name, Some(predicate))
     }
 
     pub(super) fn isnan(&mut self, value: Value) -> anyhow::Result<Value> {
@@ -216,9 +197,7 @@ impl Lowerer<'_> {
             elem: ElementType::Bool,
             shape: value.ty.shape.clone(),
         };
-        self.emit_elementwise_unary(&ty, value, |result, value, elem| {
-            format!("      {result} = arith.cmpf uno, {value}, {value} : {elem}")
-        })
+        self.emit_elementwise_unary_with_duplicate_operand(&ty, value, "arith.cmpf", Some("uno"))
     }
 
     pub(super) fn logical_binary(
@@ -228,9 +207,7 @@ impl Lowerer<'_> {
         rhs: Value,
     ) -> anyhow::Result<Value> {
         let ty = broadcast_result_type(&lhs.ty, &rhs.ty)?;
-        self.emit_elementwise_binary(&ty, lhs, rhs, |result, lhs, rhs, elem| {
-            format!("      {result} = {op_name} {lhs}, {rhs} : {elem}")
-        })
+        self.emit_elementwise_binary_op(&ty, lhs, rhs, op_name, None)
     }
 
     pub(super) fn logical_not(&mut self, value: Value) -> anyhow::Result<Value> {
@@ -274,80 +251,68 @@ impl Lowerer<'_> {
         self.emit_elementwise_ternary(&ty, condition, true_value, false_value)
     }
 
-    fn emit_elementwise_unary<F>(
+    fn emit_elementwise_unary_with_duplicate_operand(
         &mut self,
         ty: &TensorType,
         value: Value,
-        emit_body: F,
-    ) -> anyhow::Result<Value>
-    where
-        F: FnOnce(&str, &str, &str) -> String,
-    {
+        op_name: &str,
+        predicate: Option<&str>,
+    ) -> anyhow::Result<Value> {
         if ty.rank() == 0 {
             let result_kind = value.kind;
-            let value_type = value.mlir_type();
-            let name = self.fresh();
-            self.lines.push(emit_body(&name, &value.name, &value_type));
-            return Ok(Value {
-                name,
-                ty: ty.clone(),
-                kind: result_kind,
-            });
+            return self.append_region_like_scalar_op(
+                op_name,
+                &[value.clone(), value],
+                ty,
+                result_kind,
+                predicate,
+            );
         }
         let value_ty = TensorType {
             elem: value.ty.elem,
             shape: ty.shape.clone(),
         };
         let value = self.coerce_to_kind(value, &value_ty, ValueKind::Tensor)?;
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let dims = format_dim_list(ty.rank());
-        let map = format!("({dims})");
-        let iterators = parallel_iterators(ty.rank());
-        let result = self.fresh();
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>],"
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterators}]"));
-        self.lines.push(format!(
-            "    }} ins({} : {}) outs({empty} : {}) {{",
-            value.name,
-            value.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%value: {}, %out: {}):",
-            value.ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines
-            .push(emit_body(&result, "%value", value.ty.elem.mlir_type()));
-        self.lines.push(format!(
-            "      linalg.yield {result} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-            kind: ValueKind::Tensor,
-        })
+        let output = self.append_tensor_empty(ty)?;
+        let map = identity_map(ty.rank());
+        let iterators = iterator_kinds(ty.rank(), "parallel");
+        let result_elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[value],
+            &[output],
+            &[ty.clone()],
+            ty.rank(),
+            &[map.clone(), map],
+            &iterators,
+            |_, block, args| {
+                let attrs = predicate_attr(op_name, predicate);
+                let result_type = mlir_element_type(context, result_elem)?;
+                let results = append_block_op(
+                    context,
+                    block,
+                    location,
+                    op_name,
+                    &[args[0], args[0]],
+                    &[result_type],
+                    &attrs,
+                    Vec::new(),
+                )?;
+                Ok(vec![results[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty.clone()))
     }
 
-    fn emit_elementwise_binary<F>(
+    fn emit_elementwise_binary_op(
         &mut self,
         ty: &TensorType,
         lhs: Value,
         rhs: Value,
-        emit_body: F,
-    ) -> anyhow::Result<Value>
-    where
-        F: FnOnce(&str, &str, &str, &str) -> String,
-    {
+        op_name: &str,
+        predicate: Option<&str>,
+    ) -> anyhow::Result<Value> {
         if ty.rank() == 0 {
             let result_kind = if lhs.kind == ValueKind::Scalar && rhs.kind == ValueKind::Scalar {
                 ValueKind::Scalar
@@ -364,15 +329,13 @@ impl Lowerer<'_> {
             };
             let lhs = self.coerce_to_kind(lhs, &lhs_ty, result_kind)?;
             let rhs = self.coerce_to_kind(rhs, &rhs_ty, result_kind)?;
-            let operand_type = lhs.mlir_type();
-            let name = self.fresh();
-            self.lines
-                .push(emit_body(&name, &lhs.name, &rhs.name, &operand_type));
-            return Ok(Value {
-                name,
-                ty: ty.clone(),
-                kind: result_kind,
-            });
+            return self.append_region_like_scalar_op(
+                op_name,
+                &[lhs, rhs],
+                ty,
+                result_kind,
+                predicate,
+            );
         }
         let lhs_ty = TensorType {
             elem: lhs.ty.elem,
@@ -384,46 +347,36 @@ impl Lowerer<'_> {
             shape: ty.shape.clone(),
         };
         let rhs = self.coerce_to_kind(rhs, &rhs_ty, ValueKind::Tensor)?;
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let dims = format_dim_list(ty.rank());
-        let map = format!("({dims})");
-        let iterators = parallel_iterators(ty.rank());
-        let result = self.fresh();
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>],"
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterators}]"));
-        self.lines.push(format!(
-            "    }} ins({}, {} : {}, {}) outs({empty} : {}) {{",
-            lhs.name,
-            rhs.name,
-            lhs.mlir_type(),
-            rhs.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%lhs: {}, %rhs: {}, %out: {}):",
-            lhs.ty.elem.mlir_type(),
-            rhs.ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines
-            .push(emit_body(&result, "%lhs", "%rhs", lhs.ty.elem.mlir_type()));
-        self.lines.push(format!(
-            "      linalg.yield {result} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-            kind: ValueKind::Tensor,
-        })
+        let output = self.append_tensor_empty(ty)?;
+        let map = identity_map(ty.rank());
+        let iterators = iterator_kinds(ty.rank(), "parallel");
+        let result_elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[lhs, rhs],
+            &[output],
+            &[ty.clone()],
+            ty.rank(),
+            &[map.clone(), map.clone(), map],
+            &iterators,
+            |_, block, args| {
+                let attrs = predicate_attr(op_name, predicate);
+                let result_type = mlir_element_type(context, result_elem)?;
+                let results = append_block_op(
+                    context,
+                    block,
+                    location,
+                    op_name,
+                    &[args[0], args[1]],
+                    &[result_type],
+                    &attrs,
+                    Vec::new(),
+                )?;
+                Ok(vec![results[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty.clone()))
     }
 
     fn emit_elementwise_ternary(
@@ -453,82 +406,49 @@ impl Lowerer<'_> {
             let condition = self.coerce_to_kind(condition, &condition_ty, result_kind)?;
             let true_value = self.coerce_to_kind(true_value, &value_ty, result_kind)?;
             let false_value = self.coerce_to_kind(false_value, &value_ty, result_kind)?;
-            let value_type = true_value.mlir_type();
-            let name = self.fresh();
-            self.lines.push(format!(
-                "    {name} = arith.select {}, {}, {} : {}",
-                condition.name, true_value.name, false_value.name, value_type
-            ));
-            return Ok(Value {
-                name,
-                ty: ty.clone(),
-                kind: result_kind,
-            });
+            return self.append_region_like_scalar_op(
+                "arith.select",
+                &[condition, true_value, false_value],
+                ty,
+                result_kind,
+                None,
+            );
         }
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let dims = format_dim_list(ty.rank());
-        let map = format!("({dims})");
-        let iterators = parallel_iterators(ty.rank());
-        let selected = self.fresh();
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>, affine_map<({dims}) -> {map}>],"
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterators}]"));
-        self.lines.push(format!(
-            "    }} ins({}, {}, {} : {}, {}, {}) outs({empty} : {}) {{",
-            condition.name,
-            true_value.name,
-            false_value.name,
-            condition.mlir_type(),
-            true_value.mlir_type(),
-            false_value.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%condition: i1, %true_value: {}, %false_value: {}, %out: {}):",
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      {selected} = arith.select %condition, %true_value, %false_value : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {selected} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-            kind: ValueKind::Tensor,
-        })
+        let output = self.append_tensor_empty(ty)?;
+        let map = identity_map(ty.rank());
+        let iterators = iterator_kinds(ty.rank(), "parallel");
+        let result_elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[condition, true_value, false_value],
+            &[output],
+            &[ty.clone()],
+            ty.rank(),
+            &[map.clone(), map.clone(), map.clone(), map],
+            &iterators,
+            |_, block, args| {
+                let result_type = mlir_element_type(context, result_elem)?;
+                let results = append_block_op(
+                    context,
+                    block,
+                    location,
+                    "arith.select",
+                    &[args[0], args[1], args[2]],
+                    &[result_type],
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok(vec![results[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty.clone()))
     }
 
     pub(super) fn splat(&mut self, scalar: Value, ty: &TensorType) -> anyhow::Result<Value> {
         let scalar = self.coerce_to_scalar(scalar)?;
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = linalg.fill ins({} : {}) outs({empty} : {}) -> {}",
-            scalar.name,
-            scalar.ty.elem.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value {
-            name,
-            ty: ty.clone(),
-            kind: ValueKind::Tensor,
-        })
+        let empty = self.append_tensor_empty(ty)?;
+        self.append_linalg_fill(scalar, empty, ty)
     }
 
     pub(super) fn coerce_to_kind(
@@ -556,6 +476,23 @@ impl Lowerer<'_> {
             }
         }
     }
+
+    fn append_region_like_scalar_op(
+        &mut self,
+        op_name: &str,
+        operands: &[Value],
+        ty: &TensorType,
+        result_kind: ValueKind,
+        predicate: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        self.append_op_with_attrs(
+            op_name,
+            operands,
+            ty,
+            result_kind,
+            &predicate_attr(op_name, predicate),
+        )
+    }
 }
 
 fn nested_dense_literal(values: &[String], shape: &[usize]) -> String {
@@ -582,4 +519,71 @@ fn nested_dense_literal(values: &[String], shape: &[usize]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{items}]")
+}
+
+fn identity_map(rank: usize) -> String {
+    if rank == 0 {
+        return "()".to_string();
+    }
+    format!(
+        "({})",
+        (0..rank)
+            .map(|index| format!("d{index}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn iterator_kinds(rank: usize, kind: &'static str) -> Vec<&'static str> {
+    vec![kind; rank]
+}
+
+fn predicate_attr(op_name: &str, predicate: Option<&str>) -> Vec<(String, String)> {
+    let Some(predicate) = predicate else {
+        return Vec::new();
+    };
+    let value = match op_name {
+        "arith.cmpf" => cmpf_predicate_value(predicate),
+        "arith.cmpi" => cmpi_predicate_value(predicate),
+        _ => return Vec::new(),
+    };
+    vec![("predicate".to_string(), format!("{value} : i64"))]
+}
+
+fn cmpf_predicate_value(predicate: &str) -> i64 {
+    match predicate {
+        "false" => 0,
+        "oeq" => 1,
+        "ogt" => 2,
+        "oge" => 3,
+        "olt" => 4,
+        "ole" => 5,
+        "one" => 6,
+        "ord" => 7,
+        "ueq" => 8,
+        "ugt" => 9,
+        "uge" => 10,
+        "ult" => 11,
+        "ule" => 12,
+        "une" => 13,
+        "uno" => 14,
+        "true" => 15,
+        other => panic!("unknown arith.cmpf predicate `{other}`"),
+    }
+}
+
+fn cmpi_predicate_value(predicate: &str) -> i64 {
+    match predicate {
+        "eq" => 0,
+        "ne" => 1,
+        "slt" => 2,
+        "sle" => 3,
+        "sgt" => 4,
+        "sge" => 5,
+        "ult" => 6,
+        "ule" => 7,
+        "ugt" => 8,
+        "uge" => 9,
+        other => panic!("unknown arith.cmpi predicate `{other}`"),
+    }
 }

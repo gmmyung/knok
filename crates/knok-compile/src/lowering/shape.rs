@@ -4,28 +4,6 @@ pub(super) fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
 }
 
-pub(super) fn format_shape_list(shape: &[usize]) -> String {
-    format!(
-        "[{}]",
-        shape
-            .iter()
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-pub(super) fn format_usize_list(values: &[usize]) -> String {
-    format!(
-        "[{}]",
-        values
-            .iter()
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
 pub(super) fn reassociation_for_rank(rank: usize) -> String {
     let dims = (0..rank)
         .map(|index| index.to_string())
@@ -94,20 +72,6 @@ fn format_reassociation_groups(groups: Vec<Vec<usize>>) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{groups}]")
-}
-
-pub(super) fn format_dim_list(rank: usize) -> String {
-    (0..rank)
-        .map(|index| format!("d{index}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-pub(super) fn parallel_iterators(rank: usize) -> String {
-    (0..rank)
-        .map(|_| "\"parallel\"")
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 pub(super) fn broadcast_result_type(

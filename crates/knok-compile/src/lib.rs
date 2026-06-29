@@ -5,7 +5,6 @@
 //! final VMFB compilation is delegated to the `iree-compile` command line tool.
 
 mod backend;
-mod common;
 mod compile;
 mod lowering;
 mod mlir;

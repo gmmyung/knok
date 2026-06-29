@@ -1,9 +1,8 @@
+use super::lowerer::{append_block_op, mlir_element_type, Lowerer, RawValue, Value, ValueKind};
+use super::shape::element_count;
 use knok_core::{BinaryOp, TensorType};
 
-use super::lowerer::{Lowerer, Value, ValueKind};
-use super::shape::{element_count, format_dim_list, parallel_iterators};
-
-impl Lowerer<'_> {
+impl Lowerer<'_, '_> {
     pub(super) fn dot(&mut self, lhs: Value, rhs: Value) -> anyhow::Result<Value> {
         self.inner(lhs, rhs)
     }
@@ -79,46 +78,42 @@ impl Lowerer<'_> {
         };
         let lhs = self.reshape(lhs, &lhs_flat_ty)?;
         let rhs = self.reshape(rhs, &rhs_flat_ty)?;
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let product = self.fresh();
+        let empty = self.append_tensor_empty(&ty)?;
         let mul_op = if ty.elem.is_float() {
             "arith.mulf"
         } else {
             "arith.muli"
         };
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<(d0, d1) -> (d0)>, affine_map<(d0, d1) -> (d1)>, affine_map<(d0, d1) -> (d0, d1)>],"
-        ));
-        self.lines
-            .push("      iterator_types = [\"parallel\", \"parallel\"]".to_string());
-        self.lines.push(format!(
-            "    }} ins({}, {} : {}, {}) outs({empty} : {}) {{",
-            lhs.name,
-            rhs.name,
-            lhs.ty.mlir_type(),
-            rhs.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%lhs: {}, %rhs: {}, %out: {}):",
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      {product} = {mul_op} %lhs, %rhs : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {product} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value::tensor(name, ty))
+        let elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[lhs, rhs],
+            &[empty],
+            &[ty.clone()],
+            2,
+            &[
+                "(d0)".to_string(),
+                "(d1)".to_string(),
+                "(d0, d1)".to_string(),
+            ],
+            &["parallel", "parallel"],
+            |_, block, args| {
+                let elem_ty = mlir_element_type(context, elem)?;
+                let product = append_block_op(
+                    context,
+                    block,
+                    location,
+                    mul_op,
+                    &[args[0], args[1]],
+                    &[elem_ty],
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok(vec![product[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty))
     }
 
     pub(super) fn trace(
@@ -185,38 +180,18 @@ impl Lowerer<'_> {
         let output_indices = (0..ty.rank())
             .map(|axis| format!("d{axis}"))
             .collect::<Vec<_>>();
-        let empty = self.fresh();
-        self.lines
-            .push(format!("    {empty} = tensor.empty() : {}", ty.mlir_type()));
-        let name = self.fresh();
-        let dims = format_dim_list(ty.rank());
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {}>, affine_map<({dims}) -> {}>],",
-            affine_tuple(&input_indices),
-            affine_tuple(&output_indices)
-        ));
-        self.lines.push(format!(
-            "      iterator_types = [{}]",
-            parallel_iterators(ty.rank())
-        ));
-        self.lines.push(format!(
-            "    }} ins({} : {}) outs({empty} : {}) {{",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%value: {}, %out: {}):",
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield %value : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value::tensor(name, ty))
+        let output = self.append_tensor_empty(&ty)?;
+        let iterators = vec!["parallel"; ty.rank()];
+        let raw = self.append_linalg_generic(
+            &[input],
+            &[output],
+            &[ty.clone()],
+            ty.rank(),
+            &[affine_tuple(&input_indices), affine_tuple(&output_indices)],
+            &iterators,
+            |_, _, args| Ok(vec![RawValue::from_value(args[0])]),
+        )?;
+        Ok(Value::tensor(raw[0], ty))
     }
 
     fn emit_two_input_reduction(
@@ -232,14 +207,11 @@ impl Lowerer<'_> {
         let rhs = self.ensure_tensor_value(rhs)?;
         let init = self.zero_initialized_tensor(&ty)?;
         let output_rank = ty.rank();
-        let dims = format_dim_list(loop_rank);
         let output_indices = (0..output_rank)
             .map(|axis| format!("d{axis}"))
             .collect::<Vec<_>>();
-        let iterators = contraction_iterators(output_rank);
-        let name = self.fresh();
-        let product = self.fresh();
-        let sum = self.fresh();
+        let mut iterators = vec!["parallel"; output_rank];
+        iterators.push("reduction");
         let mul_op = if ty.elem.is_float() {
             "arith.mulf"
         } else {
@@ -250,43 +222,46 @@ impl Lowerer<'_> {
         } else {
             "arith.addi"
         };
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {}>, affine_map<({dims}) -> {}>, affine_map<({dims}) -> {}>],",
-            affine_tuple(lhs_indices),
-            affine_tuple(rhs_indices),
-            affine_tuple(&output_indices)
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterators}]"));
-        self.lines.push(format!(
-            "    }} ins({}, {} : {}, {}) outs({init} : {}) {{",
-            lhs.name,
-            rhs.name,
-            lhs.ty.mlir_type(),
-            rhs.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%lhs: {}, %rhs: {}, %acc: {}):",
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      {product} = {mul_op} %lhs, %rhs : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      {sum} = {add_op} %acc, {product} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {sum} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value::tensor(name, ty))
+        let elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[lhs, rhs],
+            &[init],
+            &[ty.clone()],
+            loop_rank,
+            &[
+                affine_tuple(lhs_indices),
+                affine_tuple(rhs_indices),
+                affine_tuple(&output_indices),
+            ],
+            &iterators,
+            |_, block, args| {
+                let elem_ty = mlir_element_type(context, elem)?;
+                let product = append_block_op(
+                    context,
+                    block,
+                    location,
+                    mul_op,
+                    &[args[0], args[1]],
+                    &[elem_ty],
+                    &[],
+                    Vec::new(),
+                )?;
+                let sum = append_block_op(
+                    context,
+                    block,
+                    location,
+                    add_op,
+                    &[args[2], product[0].as_value()],
+                    &[elem_ty],
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok(vec![sum[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty))
     }
 
     fn emit_one_input_reduction(
@@ -299,47 +274,42 @@ impl Lowerer<'_> {
         let input = self.ensure_tensor_value(input)?;
         let init = self.zero_initialized_tensor(&ty)?;
         let output_rank = ty.rank();
-        let dims = format_dim_list(loop_rank);
         let output_indices = (0..output_rank)
             .map(|axis| format!("d{axis}"))
             .collect::<Vec<_>>();
-        let iterators = contraction_iterators(output_rank);
-        let name = self.fresh();
-        let sum = self.fresh();
+        let mut iterators = vec!["parallel"; output_rank];
+        iterators.push("reduction");
         let add_op = if ty.elem.is_float() {
             "arith.addf"
         } else {
             "arith.addi"
         };
-        self.lines.push(format!("    {name} = linalg.generic {{"));
-        self.lines.push(format!(
-            "      indexing_maps = [affine_map<({dims}) -> {}>, affine_map<({dims}) -> {}>],",
-            affine_tuple(input_indices),
-            affine_tuple(&output_indices)
-        ));
-        self.lines
-            .push(format!("      iterator_types = [{iterators}]"));
-        self.lines.push(format!(
-            "    }} ins({} : {}) outs({init} : {}) {{",
-            input.name,
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    ^bb0(%value: {}, %acc: {}):",
-            ty.elem.mlir_type(),
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      {sum} = {add_op} %acc, %value : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "      linalg.yield {sum} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!("    }} -> {}", ty.mlir_type()));
-        Ok(Value::tensor(name, ty))
+        let elem = ty.elem;
+        let context = self.context;
+        let location = self.location;
+        let raw = self.append_linalg_generic(
+            &[input],
+            &[init],
+            &[ty.clone()],
+            loop_rank,
+            &[affine_tuple(input_indices), affine_tuple(&output_indices)],
+            &iterators,
+            |_, block, args| {
+                let elem_ty = mlir_element_type(context, elem)?;
+                let sum = append_block_op(
+                    context,
+                    block,
+                    location,
+                    add_op,
+                    &[args[1], args[0]],
+                    &[elem_ty],
+                    &[],
+                    Vec::new(),
+                )?;
+                Ok(vec![sum[0]])
+            },
+        )?;
+        Ok(Value::tensor(raw[0], ty))
     }
 
     fn ensure_tensor_value(&mut self, value: Value) -> anyhow::Result<Value> {
@@ -351,12 +321,6 @@ impl Lowerer<'_> {
             }
         }
     }
-}
-
-fn contraction_iterators(output_rank: usize) -> String {
-    let mut values = vec!["\"parallel\""; output_rank];
-    values.push("\"reduction\"");
-    values.join(", ")
 }
 
 fn affine_tuple(indices: &[String]) -> String {

@@ -2,7 +2,7 @@ use knok_core::{Conv2dOptions, TensorType};
 
 use super::lowerer::{Lowerer, Value};
 
-impl Lowerer<'_> {
+impl Lowerer<'_, '_> {
     pub(super) fn conv2d(
         &mut self,
         input: Value,
@@ -36,18 +36,14 @@ impl Lowerer<'_> {
             ],
         };
         let init = self.zero_initialized_tensor(&ty)?;
-        let name = self.fresh();
         let attrs = conv2d_attrs(options);
-        self.lines.push(format!(
-            "    {name} = linalg.conv_2d_nhwc_hwcf{attrs} ins({}, {} : {}, {}) outs({init} : {}) -> {}",
-            input.name,
-            kernel.name,
-            input.ty.mlir_type(),
-            kernel.ty.mlir_type(),
-            ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty))
+        self.append_named_linalg(
+            "linalg.conv_2d_nhwc_hwcf",
+            &[input, kernel],
+            init,
+            &ty,
+            &attrs,
+        )
     }
 
     fn grouped_conv2d(
@@ -112,39 +108,36 @@ impl Lowerer<'_> {
                 input.ty.shape[3],
             ],
         };
-        let zero = self.fresh();
-        self.lines.push(format!(
-            "    {zero} = arith.constant {} : {}",
-            ty.elem.zero_literal(),
-            ty.elem.mlir_type()
-        ));
-        let name = self.fresh();
-        self.lines.push(format!(
-            "    {name} = tensor.pad {} low[0, {}, {}, 0] high[0, {}, {}, 0] {{",
-            input.name, padding.top, padding.left, padding.bottom, padding.right
-        ));
-        self.lines
-            .push("    ^bb0(%d0: index, %d1: index, %d2: index, %d3: index):".to_string());
-        self.lines.push(format!(
-            "      tensor.yield {zero} : {}",
-            ty.elem.mlir_type()
-        ));
-        self.lines.push(format!(
-            "    }} : {} to {}",
-            input.ty.mlir_type(),
-            ty.mlir_type()
-        ));
-        Ok(Value::tensor(name, ty))
+        let zero = self.constant(ty.elem.zero_literal(), ty.elem)?;
+        self.append_tensor_pad(
+            input,
+            &ty,
+            &[0, padding.top, padding.left, 0],
+            &[0, padding.bottom, padding.right, 0],
+            zero,
+        )
     }
 }
 
-fn conv2d_attrs(options: &Conv2dOptions) -> String {
+fn conv2d_attrs(options: &Conv2dOptions) -> Vec<(String, String)> {
     if options.dilation == [1, 1] && options.stride == [1, 1] {
-        String::new()
+        Vec::new()
     } else {
-        format!(
-            " {{dilations = dense<[{}, {}]> : vector<2xi64>, strides = dense<[{}, {}]> : vector<2xi64>}}",
-            options.dilation[0], options.dilation[1], options.stride[0], options.stride[1]
-        )
+        vec![
+            (
+                "dilations".to_string(),
+                format!(
+                    "dense<[{}, {}]> : vector<2xi64>",
+                    options.dilation[0], options.dilation[1]
+                ),
+            ),
+            (
+                "strides".to_string(),
+                format!(
+                    "dense<[{}, {}]> : vector<2xi64>",
+                    options.stride[0], options.stride[1]
+                ),
+            ),
+        ]
     }
 }
