@@ -10,7 +10,7 @@ use fs2::FileExt;
 use knok_core::TypedGraph;
 
 use crate::{
-    backend::{backend_flags, IreeBackend},
+    backend::{backend_flags, supported_backend_names, IreeBackend},
     lowering::lower_to_mlir_with_registry,
     mlir::canonicalize_and_verify,
 };
@@ -49,9 +49,12 @@ pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>>
 
 fn parse_backend(backend: &str) -> anyhow::Result<IreeBackend> {
     IreeBackend::from_target_backend(backend).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unsupported IREE backend `{backend}`; expected `llvm-cpu` or `metal-spirv`"
-        )
+        let expected = supported_backend_names()
+            .iter()
+            .map(|backend| format!("`{backend}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::anyhow!("unsupported IREE backend `{backend}`; expected one of {expected}")
     })
 }
 

@@ -20,4 +20,6 @@ syn.workspace = true
 thiserror.workspace = true
 
 [features]
+cuda = []
 half = ["knok-core/half"]
+vulkan = []

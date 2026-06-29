@@ -16,3 +16,7 @@ knok-core.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 trybuild.workspace = true
+
+[features]
+cuda = ["knok-compile/cuda"]
+vulkan = ["knok-compile/vulkan"]

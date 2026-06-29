@@ -1,14 +1,24 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IreeBackend {
     LlvmCpu,
+    #[cfg(any(target_os = "macos", doc))]
     MetalSpirv,
+    #[cfg(feature = "vulkan")]
+    VulkanSpirv,
+    #[cfg(feature = "cuda")]
+    Cuda,
 }
 
 impl IreeBackend {
     pub(crate) fn from_target_backend(name: &str) -> Option<Self> {
         match name {
             "llvm-cpu" => Some(Self::LlvmCpu),
+            #[cfg(any(target_os = "macos", doc))]
             "metal-spirv" => Some(Self::MetalSpirv),
+            #[cfg(feature = "vulkan")]
+            "vulkan-spirv" => Some(Self::VulkanSpirv),
+            #[cfg(feature = "cuda")]
+            "cuda" => Some(Self::Cuda),
             _ => None,
         }
     }
@@ -16,9 +26,26 @@ impl IreeBackend {
     pub(crate) fn target_name(self) -> &'static str {
         match self {
             Self::LlvmCpu => "llvm-cpu",
+            #[cfg(any(target_os = "macos", doc))]
             Self::MetalSpirv => "metal-spirv",
+            #[cfg(feature = "vulkan")]
+            Self::VulkanSpirv => "vulkan-spirv",
+            #[cfg(feature = "cuda")]
+            Self::Cuda => "cuda",
         }
     }
+}
+
+pub(crate) fn supported_backend_names() -> &'static [&'static str] {
+    &[
+        "llvm-cpu",
+        #[cfg(any(target_os = "macos", doc))]
+        "metal-spirv",
+        #[cfg(feature = "vulkan")]
+        "vulkan-spirv",
+        #[cfg(feature = "cuda")]
+        "cuda",
+    ]
 }
 
 pub(crate) fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
@@ -28,9 +55,11 @@ pub(crate) fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String
         format!("--iree-hal-target-backends={backend}"),
         "--iree-input-demote-f64-to-f32=false".to_string(),
     ];
+    #[cfg(any(target_os = "macos", doc))]
     if capability == IreeBackend::MetalSpirv {
         flags.push("--iree-metal-compile-to-metallib=false".to_string());
-    } else if capability == IreeBackend::LlvmCpu
+    }
+    if capability == IreeBackend::LlvmCpu
         && !extra_flags
             .iter()
             .any(|flag| flag.starts_with("--iree-llvmcpu-target-cpu="))
@@ -65,6 +94,7 @@ mod tests {
         assert!(!flags.contains(&"--iree-llvmcpu-target-cpu=generic".to_string()));
     }
 
+    #[cfg(any(target_os = "macos", doc))]
     #[test]
     fn metal_flags_disable_metallib_output() {
         let flags = backend_flags("metal-spirv", &["--custom".to_string()]);
@@ -73,5 +103,27 @@ mod tests {
         assert!(flags.contains(&"--iree-metal-compile-to-metallib=false".to_string()));
         assert!(flags.contains(&"--custom".to_string()));
         assert!(!flags.contains(&"--iree-llvmcpu-target-cpu=generic".to_string()));
+    }
+
+    #[cfg(feature = "vulkan")]
+    #[test]
+    fn vulkan_flags_select_vulkan_spirv() {
+        let flags = backend_flags("vulkan-spirv", &["--iree-vulkan-target=ampere".to_string()]);
+
+        assert!(flags.contains(&"--iree-hal-target-backends=vulkan-spirv".to_string()));
+        assert!(flags.contains(&"--iree-vulkan-target=ampere".to_string()));
+        assert!(!flags.contains(&"--iree-llvmcpu-target-cpu=generic".to_string()));
+        assert!(!flags.contains(&"--iree-metal-compile-to-metallib=false".to_string()));
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn cuda_flags_select_cuda() {
+        let flags = backend_flags("cuda", &["--cuda_use_streams=true".to_string()]);
+
+        assert!(flags.contains(&"--iree-hal-target-backends=cuda".to_string()));
+        assert!(flags.contains(&"--cuda_use_streams=true".to_string()));
+        assert!(!flags.contains(&"--iree-llvmcpu-target-cpu=generic".to_string()));
+        assert!(!flags.contains(&"--iree-metal-compile-to-metallib=false".to_string()));
     }
 }

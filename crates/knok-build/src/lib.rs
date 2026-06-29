@@ -47,8 +47,15 @@ pub type Result<T> = anyhow::Result<T>;
 pub enum Backend {
     /// CPU backend compiled through IREE's LLVM CPU target.
     LlvmCpu,
-    /// Apple Metal backend compiled through IREE's Metal/SPIR-V path.
+    /// Apple Metal backend compiled through IREE's Metal/SPIR-V path on macOS.
+    #[cfg(any(target_os = "macos", doc))]
     MetalSpirv,
+    /// Vulkan backend compiled through IREE's Vulkan/SPIR-V path.
+    #[cfg(feature = "vulkan")]
+    VulkanSpirv,
+    /// NVIDIA CUDA backend compiled through IREE's CUDA target.
+    #[cfg(feature = "cuda")]
+    Cuda,
 }
 
 impl Backend {
@@ -56,7 +63,12 @@ impl Backend {
     pub const fn name(self) -> &'static str {
         match self {
             Self::LlvmCpu => "llvm-cpu",
+            #[cfg(any(target_os = "macos", doc))]
             Self::MetalSpirv => "metal-spirv",
+            #[cfg(feature = "vulkan")]
+            Self::VulkanSpirv => "vulkan-spirv",
+            #[cfg(feature = "cuda")]
+            Self::Cuda => "cuda",
         }
     }
 
@@ -64,7 +76,12 @@ impl Backend {
     pub const fn default_driver(self) -> &'static str {
         match self {
             Self::LlvmCpu => "local-task",
+            #[cfg(any(target_os = "macos", doc))]
             Self::MetalSpirv => "metal",
+            #[cfg(feature = "vulkan")]
+            Self::VulkanSpirv => "vulkan",
+            #[cfg(feature = "cuda")]
+            Self::Cuda => "cuda",
         }
     }
 }
@@ -303,6 +320,29 @@ mod tests {
         assert_eq!(graph_vmfb_name("forward"), "forward.vmfb");
         assert_eq!(mlir_model_vmfb_name("forward"), "mlir-model-forward.vmfb");
         assert_ne!(graph_vmfb_name("forward"), mlir_model_vmfb_name("forward"));
+    }
+
+    #[test]
+    fn backend_names_match_iree_driver_pairs() {
+        assert_eq!(Backend::LlvmCpu.name(), "llvm-cpu");
+        assert_eq!(Backend::LlvmCpu.default_driver(), "local-task");
+        #[cfg(any(target_os = "macos", doc))]
+        {
+            assert_eq!(Backend::MetalSpirv.name(), "metal-spirv");
+            assert_eq!(Backend::MetalSpirv.default_driver(), "metal");
+        }
+
+        #[cfg(feature = "vulkan")]
+        {
+            assert_eq!(Backend::VulkanSpirv.name(), "vulkan-spirv");
+            assert_eq!(Backend::VulkanSpirv.default_driver(), "vulkan");
+        }
+
+        #[cfg(feature = "cuda")]
+        {
+            assert_eq!(Backend::Cuda.name(), "cuda");
+            assert_eq!(Backend::Cuda.default_driver(), "cuda");
+        }
     }
 }
 
