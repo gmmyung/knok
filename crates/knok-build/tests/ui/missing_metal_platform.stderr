@@ -1,0 +1,5 @@
+error[E0599]: no variant or associated item named `MetalSpirv` found for enum `knok_build::Backend` in the current scope
+ --> tests/ui/missing_metal_platform.rs:5:40
+  |
+5 | #[knok_build::graph(backend = Backend::MetalSpirv)]
+  |                                        ^^^^^^^^^^ variant or associated item not found in `knok_build::Backend`

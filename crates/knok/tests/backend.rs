@@ -5,16 +5,56 @@ use knok::{
 
 #[test]
 fn backend_capabilities_describe_supported_targets() {
-    assert_eq!(SUPPORTED_BACKENDS, &[Backend::LlvmCpu, Backend::MetalSpirv]);
+    let expected_backends = [
+        Backend::LlvmCpu,
+        #[cfg(any(target_os = "macos", doc))]
+        Backend::MetalSpirv,
+        #[cfg(feature = "vulkan")]
+        Backend::VulkanSpirv,
+        #[cfg(feature = "cuda")]
+        Backend::Cuda,
+    ];
+
+    assert_eq!(SUPPORTED_BACKENDS, &expected_backends);
     assert_eq!(Backend::from_name("llvm-cpu"), Some(Backend::LlvmCpu));
+    #[cfg(any(target_os = "macos", doc))]
     assert_eq!(Backend::from_name("metal-spirv"), Some(Backend::MetalSpirv));
+    #[cfg(not(any(target_os = "macos", doc)))]
+    assert_eq!(Backend::from_name("metal-spirv"), None);
+    #[cfg(feature = "vulkan")]
+    assert_eq!(
+        Backend::from_name("vulkan-spirv"),
+        Some(Backend::VulkanSpirv)
+    );
+    #[cfg(not(feature = "vulkan"))]
     assert_eq!(Backend::from_name("vulkan-spirv"), None);
+    #[cfg(feature = "cuda")]
+    assert_eq!(Backend::from_name("cuda"), Some(Backend::Cuda));
+    #[cfg(not(feature = "cuda"))]
+    assert_eq!(Backend::from_name("cuda"), None);
     assert_eq!(Backend::LlvmCpu.name(), "llvm-cpu");
     assert_eq!(Backend::LlvmCpu.default_driver(), "local-task");
-    assert!(Backend::MetalSpirv.supports_driver(Driver::Metal));
-    assert!(!Backend::MetalSpirv.supports_driver(Driver::LocalTask));
+    #[cfg(any(target_os = "macos", doc))]
+    {
+        assert!(Backend::MetalSpirv.supports_driver(Driver::Metal));
+        assert!(!Backend::MetalSpirv.supports_driver(Driver::LocalTask));
+    }
+    #[cfg(feature = "vulkan")]
+    assert!(Backend::VulkanSpirv.supports_driver(Driver::Vulkan));
+    #[cfg(feature = "cuda")]
+    assert!(Backend::Cuda.supports_driver(Driver::Cuda));
+    #[cfg(any(target_os = "macos", doc))]
     assert_eq!(Driver::from_name("metal"), Some(Driver::Metal));
+    #[cfg(not(any(target_os = "macos", doc)))]
+    assert_eq!(Driver::from_name("metal"), None);
+    #[cfg(feature = "vulkan")]
+    assert_eq!(Driver::from_name("vulkan"), Some(Driver::Vulkan));
+    #[cfg(not(feature = "vulkan"))]
     assert_eq!(Driver::from_name("vulkan"), None);
+    #[cfg(feature = "cuda")]
+    assert_eq!(Driver::from_name("cuda"), Some(Driver::Cuda));
+    #[cfg(not(feature = "cuda"))]
+    assert_eq!(Driver::from_name("cuda"), None);
 }
 
 #[test]

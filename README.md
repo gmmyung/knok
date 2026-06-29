@@ -65,6 +65,10 @@ Existing `.mlir` files can also be compiled from `build.rs` with
   wrappers can typecheck, but hosted runtime execution is unavailable.
 - `features = ["half"]` enables `half::f16` and `half::bf16` tensor element
   types and re-exports them as `knok::half::{f16, bf16}`.
+- `Backend::MetalSpirv` is available on macOS targets.
+- `features = ["vulkan"]` and `features = ["cuda"]` expose the matching IREE
+  backend/driver pairs. Use the same feature on `knok-build` when authoring
+  graphs for those targets.
 - Build-time graph tracing lives in `knok-build`, a build-dependency crate that
   runs on the compile host.
 

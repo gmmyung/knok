@@ -30,6 +30,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   architecture documentation.
 - Added `compile_mlir_models!` and `compile_mlir_models_with_options!` for
   build-time compilation of external `.mlir` files into generated wrappers.
+- Added feature-gated Vulkan/SPIR-V and CUDA backend/driver variants, and made
+  Metal/SPIR-V a macOS-only backend.
 
 ### Changed
 

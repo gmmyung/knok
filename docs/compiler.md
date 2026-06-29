@@ -56,7 +56,10 @@ Set `KNOK_IREE_COMPILE` or put `iree-compile` on `PATH`.
 
 `unsupported IREE backend`
 
-The current compile backends are `llvm-cpu` and `metal-spirv`.
+`llvm-cpu` is always exposed. `metal-spirv` is exposed on macOS.
+`vulkan-spirv` and `cuda` are exposed when the corresponding `vulkan` or `cuda`
+crate feature is enabled and the selected `iree-compile` binary was built with
+that target backend.
 
 `runtime driver mismatch`
 
