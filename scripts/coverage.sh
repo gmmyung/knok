@@ -4,7 +4,7 @@ set -euo pipefail
 output_dir="${CARGO_LLVM_COV_OUTPUT_DIR:-target/coverage}"
 html_dir="$output_dir/html"
 badge_dir="$output_dir/badge"
-badge_path="$badge_dir/coverage.svg"
+badge_path="$badge_dir/coverage.json"
 min_lines="${KNOK_COVERAGE_MIN_LINES-20}"
 mkdir -p "$output_dir"
 rm -rf "$html_dir"
@@ -48,25 +48,12 @@ badge_color="$(
 )"
 mkdir -p "$badge_dir"
 cat >"$badge_path" <<EOF
-<svg xmlns="http://www.w3.org/2000/svg" width="104" height="20" role="img" aria-label="coverage: $line_coverage">
-  <title>coverage: $line_coverage</title>
-  <linearGradient id="s" x2="0" y2="100%">
-    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
-    <stop offset="1" stop-opacity=".1"/>
-  </linearGradient>
-  <clipPath id="r"><rect width="104" height="20" rx="3" fill="#fff"/></clipPath>
-  <g clip-path="url(#r)">
-    <rect width="61" height="20" fill="#555"/>
-    <rect x="61" width="43" height="20" fill="$badge_color"/>
-    <rect width="104" height="20" fill="url(#s)"/>
-  </g>
-  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="11">
-    <text x="31" y="15" fill="#010101" fill-opacity=".3">coverage</text>
-    <text x="31" y="14">coverage</text>
-    <text x="82" y="15" fill="#010101" fill-opacity=".3">$line_coverage</text>
-    <text x="82" y="14">$line_coverage</text>
-  </g>
-</svg>
+{
+  "schemaVersion": 1,
+  "label": "coverage",
+  "message": "$line_coverage",
+  "color": "$badge_color"
+}
 EOF
 
 cargo llvm-cov report \
@@ -84,4 +71,4 @@ fi
 echo "Line coverage: $line_coverage"
 echo "LCOV report written to $output_dir/lcov.info"
 echo "HTML report written to $html_dir/index.html"
-echo "Coverage badge written to $badge_path"
+echo "Coverage badge endpoint written to $badge_path"

@@ -42,20 +42,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-badge
-          path: target/coverage/badge/coverage.svg
+          path: target/coverage/badge/coverage.json
           if-no-files-found: error
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           publish_dir="$(mktemp -d)"
-          cp target/coverage/badge/coverage.svg "$publish_dir/coverage.svg"
+          cp target/coverage/badge/coverage.json "$publish_dir/coverage.json"
           cd "$publish_dir"
           git init
           git checkout -b badges
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add coverage.svg
+          git add coverage.json
           git commit -m "Update coverage badge"
           git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
       - if: always()
@@ -65,7 +65,7 @@ jobs:
               echo "### Coverage"
               echo
               echo "Minimum line coverage: ${KNOK_COVERAGE_MIN_LINES}%"
-              if [[ -f target/coverage/badge/coverage.svg ]]; then
+              if [[ -f target/coverage/badge/coverage.json ]]; then
                 echo
                 echo "Coverage badge artifact: \`coverage-badge\`"
               fi
