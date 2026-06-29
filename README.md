@@ -5,13 +5,44 @@
 [![docs.rs](https://docs.rs/knok/badge.svg)](https://docs.rs/knok)
 [![crates.io](https://img.shields.io/crates/v/knok.svg)](https://crates.io/crates/knok)
 
-`knok` is an experimental static-shape tensor graph frontend for Rust. Graphs
-are traced by executing host Rust from `build.rs`, compiled to IREE VM bytecode
-during `cargo build`, and embedded into the target crate as generated wrappers.
+`knok` lets you write static-shape tensor graphs in Rust, compile them during
+`cargo build`, and call the compiled graph as a typed Rust function.
+
+Graphs are authored in `build.rs`, lowered through MLIR, compiled with IREE, and
+embedded into your crate as generated wrappers. The target code only sees typed
+tensor inputs and outputs.
+
+## Install
+
+Add `knok` to your target crate and `knok-build` to build dependencies:
+
+```toml
+[dependencies]
+knok = "0.2"
+
+[build-dependencies]
+knok-build = "0.2"
+```
+
+Build-time compilation needs `iree-compile` on `PATH`. You can also point to it
+explicitly:
+
+```sh
+export KNOK_IREE_COMPILE=/path/to/iree-compile
+```
+
+The Nix development shell in this repository provides the pinned compiler:
+
+```sh
+nix develop
+```
+
+See [docs/compiler.md](docs/compiler.md) for compiler setup, cache knobs, and
+troubleshooting.
 
 ## Quickstart
 
-Define graph functions in `build.rs`:
+Define a graph in `build.rs`:
 
 ```rust
 use knok_build::prelude::*;
@@ -26,75 +57,123 @@ fn main() {
 }
 ```
 
-Import and run the generated wrapper from target code:
+Import the generated module and call it from normal Rust code:
 
 ```rust
 use knok::prelude::*;
 
 knok::generated_graphs!(pub mod graphs);
 
-fn run(x: Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
+fn run_once(x: Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
     graphs::forward::call(x)
 }
 ```
 
-For repeated hosted inference, reuse an engine:
+For repeated inference, create an engine once and reuse it:
 
 ```rust
 use knok::{Backend, Engine, RuntimeConfig};
+use knok::prelude::*;
 
-let engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
-let output = graphs::forward::run(&engine, x)?;
+knok::generated_graphs!(pub mod graphs);
+
+fn run_many(xs: impl IntoIterator<Item = Tensor2<f32, 2, 2>>) -> knok::Result<()> {
+    let engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
+
+    for x in xs {
+        let y = graphs::forward::run(&engine, x)?;
+        // use y
+    }
+
+    Ok(())
+}
 ```
-
-Build-time graph compilation uses `melior` for MLIR construction/validation and
-the `iree-compile` command line tool for VMFB generation. Put `iree-compile` on
-`PATH`, or set `KNOK_IREE_COMPILE=/path/to/iree-compile`. The Nix development
-shell provides the pinned compiler automatically. See
-[docs/compiler.md](docs/compiler.md) for setup details.
 
 Existing `.mlir` files can also be compiled from `build.rs` with
 `knok_build::compile_mlir_models!` and imported through the same
-`knok::generated_graphs!` runtime wrapper flow. See
-[docs/static-graph-syntax.md](docs/static-graph-syntax.md#external-mlir-models).
+`knok::generated_graphs!` flow.
 
-## Feature Modes
+## What It Supports
 
-- Default features enable `std` and hosted runtime execution.
-- `default-features = false` builds `knok` as `no_std + alloc`; generated
-  wrappers can typecheck, but hosted runtime execution is unavailable.
-- `features = ["half"]` enables `half::f16` and `half::bf16` tensor element
-  types and re-exports them as `knok::half::{f16, bf16}`.
-- `Backend::MetalSpirv` is available on macOS targets.
-- `features = ["vulkan"]` and `features = ["cuda"]` expose the matching IREE
-  backend/driver pairs. Use the same feature on `knok-build` when authoring
-  graphs for those targets.
-- Build-time graph tracing lives in `knok-build`, a build-dependency crate that
-  runs on the compile host.
+- Static-shape tensors with ranks 0 through 6.
+- Explicit dtype handling. `f32`, integer, and bool tensors are available by
+  default; `f16` and `bf16` are behind the `half` feature.
+- Single-output and multi-output graphs.
+- Elementwise arithmetic, comparisons, logical predicates, reductions, shape
+  transforms, slicing/padding, matmul, convolution, pooling, and related tensor
+  operations.
+- Build-time graph construction with `knok-build`.
+- Hosted execution through IREE with the `knok` runtime API.
+- External MLIR model import for users who already have MLIR.
 
-## Validation
+The operation semantics are documented in [docs/semantics.md](docs/semantics.md)
+and dtype support is tracked in [docs/dtypes.md](docs/dtypes.md).
+
+## Backends
+
+`knok` separates the compile-time IREE target backend from the runtime driver.
+Most users should start with `Backend::LlvmCpu`.
+
+| Backend | Runtime driver | Availability |
+| --- | --- | --- |
+| `Backend::LlvmCpu` | `local-task` | Always |
+| `Backend::MetalSpirv` | `metal` | macOS |
+| `Backend::VulkanSpirv` | `vulkan` | `vulkan` feature |
+| `Backend::Cuda` | `cuda` | `cuda` feature |
+
+Enable feature-gated backends on both sides when you compile graphs and run them:
+
+```toml
+[dependencies]
+knok = { version = "0.2", features = ["vulkan"] }
+
+[build-dependencies]
+knok-build = { version = "0.2", features = ["vulkan"] }
+```
+
+Use `cuda` instead of `vulkan` for CUDA. Metal is exposed only on macOS targets.
+See [docs/backends.md](docs/backends.md) for platform notes.
+
+## Feature Flags
+
+| Feature | Effect |
+| --- | --- |
+| `runtime` | Enables hosted execution through IREE. Included by default. |
+| `std` | Enables standard-library support. Included by default. |
+| `half` | Enables `half::f16` and `half::bf16` tensor element types. |
+| `vulkan` | Exposes the Vulkan SPIR-V backend and runtime driver. |
+| `cuda` | Exposes the CUDA backend and runtime driver. |
+| `embedded-runtime` | Enables the IREE runtime dependency without enabling `std`. |
+
+With `default-features = false`, generated wrapper types can still typecheck in
+`no_std + alloc` targets, but hosted runtime execution is disabled.
+
+## Learn More
+
+- [Static graph syntax](docs/static-graph-syntax.md): author graphs in
+  `build.rs`, including external MLIR imports.
+- [Tensor semantics](docs/semantics.md): rank, broadcasting, axis handling, and
+  operation behavior.
+- [Dtypes](docs/dtypes.md): supported element types and explicit casting policy.
+- [Backends](docs/backends.md): compiler backends, runtime drivers, and platform
+  notes.
+- [Compiler setup](docs/compiler.md): `iree-compile` installation and cache
+  behavior.
+
+## Development
+
+Run the full local validation suite:
 
 ```sh
 scripts/release-check.sh
+```
+
+Generate coverage artifacts:
+
+```sh
 scripts/coverage.sh
 ```
 
-`release-check.sh` covers formatting, core/lowering/build tracing tests, no-std
-wrapper checks, docs, and runtime E2E fixtures. `coverage.sh` writes LCOV, HTML,
-and badge outputs under `target/coverage`.
-
-## Documentation Map
-
-| File | Purpose |
-| --- | --- |
-| [docs/static-graph-syntax.md](docs/static-graph-syntax.md) | Build-time graph authoring syntax. |
-| [docs/semantics.md](docs/semantics.md) | Tensor ranks, dtype, broadcasting, axis, and op semantics. |
-| [docs/dtypes.md](docs/dtypes.md) | Supported dtype matrix and explicit casting policy. |
-| [docs/backends.md](docs/backends.md) | Compiler backends, runtime drivers, and platform notes. |
-| [docs/compiler.md](docs/compiler.md) | `iree-compile` setup, cache knobs, and troubleshooting. |
-| [docs/lowering.md](docs/lowering.md) | MLIR lowering architecture and parsed-attribute policy. |
-| [docs/testing.md](docs/testing.md) | Test layers and validation commands. |
-| [docs/release-readiness.md](docs/release-readiness.md) | Release checklist and dry-run commands. |
-| [DEVELOPERS.md](DEVELOPERS.md) | Crate layout, compile/runtime flow, and release notes. |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor workflow and validation commands. |
-| [CHANGELOG.md](CHANGELOG.md) | User-facing changes. |
+Contributor-oriented notes live in [CONTRIBUTING.md](CONTRIBUTING.md) and
+[DEVELOPERS.md](DEVELOPERS.md). User-facing changes are tracked in
+[CHANGELOG.md](CHANGELOG.md).
