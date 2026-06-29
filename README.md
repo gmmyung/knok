@@ -100,7 +100,7 @@ Existing `.mlir` files can also be compiled from `build.rs` with
   default; `f16` and `bf16` are behind the `half` feature.
 - Single-output and multi-output graphs.
 - Elementwise arithmetic, comparisons, logical predicates, reductions, shape
-  transforms, slicing/padding, matmul, convolution, pooling, and related tensor
+  transforms, slicing/padding, matmul, convolution, and related tensor
   operations.
 - Build-time graph construction with `knok-build`.
 - Hosted execution through IREE with the `knok` runtime API.
