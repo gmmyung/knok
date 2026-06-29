@@ -207,3 +207,77 @@ fn affine_tuple(indices: &[String]) -> String {
         format!("({})", indices.join(", "))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use knok_core::{ElementType, TensorType};
+
+    use super::*;
+
+    fn f32_tensor(shape: &[usize]) -> TensorType {
+        TensorType {
+            elem: ElementType::F32,
+            shape: shape.to_vec(),
+        }
+    }
+
+    fn matmul_spec_error(lhs: &[usize], rhs: &[usize]) -> String {
+        match MatmulSpec::new(&f32_tensor(lhs), &f32_tensor(rhs)) {
+            Ok(_) => panic!("expected matmul spec error for {lhs:?} @ {rhs:?}"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn vector_vector_matmul_is_scalar_reduction() {
+        let spec = MatmulSpec::new(&f32_tensor(&[3]), &f32_tensor(&[3])).unwrap();
+
+        assert!(spec.output_shape.is_empty());
+        assert_eq!(spec.lhs_indices("d0"), vec!["d0"]);
+        assert_eq!(spec.rhs_indices("d0"), vec!["d0"]);
+        assert_eq!(spec.output_batch_rank(), 0);
+    }
+
+    #[test]
+    fn matrix_vector_matmul_keeps_lhs_rows() {
+        let spec = MatmulSpec::new(&f32_tensor(&[2, 3]), &f32_tensor(&[3])).unwrap();
+
+        assert_eq!(spec.output_shape, vec![2]);
+        assert_eq!(spec.lhs_indices("d1"), vec!["d0", "d1"]);
+        assert_eq!(spec.rhs_indices("d1"), vec!["d1"]);
+        assert_eq!(spec.output_batch_rank(), 0);
+    }
+
+    #[test]
+    fn vector_matrix_matmul_keeps_rhs_columns() {
+        let spec = MatmulSpec::new(&f32_tensor(&[3]), &f32_tensor(&[3, 2])).unwrap();
+
+        assert_eq!(spec.output_shape, vec![2]);
+        assert_eq!(spec.lhs_indices("d1"), vec!["d1"]);
+        assert_eq!(spec.rhs_indices("d1"), vec!["d1", "d0"]);
+        assert_eq!(spec.output_batch_rank(), 0);
+    }
+
+    #[test]
+    fn batched_matmul_broadcasts_batch_dimensions() {
+        let spec = MatmulSpec::new(&f32_tensor(&[2, 1, 4, 3]), &f32_tensor(&[1, 5, 3, 6])).unwrap();
+
+        assert_eq!(spec.output_shape, vec![2, 5, 4, 6]);
+        assert_eq!(spec.lhs_indices("d4"), vec!["d0", "0", "d2", "d4"]);
+        assert_eq!(spec.rhs_indices("d4"), vec!["0", "d1", "d4", "d3"]);
+        assert_eq!(spec.output_batch_rank(), 2);
+    }
+
+    #[test]
+    fn affine_tuple_formats_empty_and_nonempty_maps() {
+        assert_eq!(affine_tuple(&[]), "()");
+        assert_eq!(affine_tuple(&["d0".into(), "d2".into()]), "(d0, d2)");
+    }
+
+    #[test]
+    fn matmul_spec_rejects_invalid_inputs() {
+        assert!(matmul_spec_error(&[], &[3]).contains("rank at least 1"));
+        assert!(matmul_spec_error(&[2, 4], &[3, 2]).contains("inner dimensions differ"));
+        assert!(matmul_spec_error(&[2, 3, 4], &[5, 4, 2]).contains("broadcast dimension"));
+    }
+}

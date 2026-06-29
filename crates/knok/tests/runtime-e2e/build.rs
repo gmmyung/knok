@@ -21,7 +21,27 @@ fn matmul_2x3_3x2(x: T2<f32, 2, 3>, y: T2<f32, 3, 2>) -> T2<f32, 2, 2> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn vecvec_matmul_f32(x: T1<f32, 3>, y: T1<f32, 3>) -> T0<f32> {
+    matmul(x, y)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn vecmat_matmul_f32(x: T1<f32, 3>, y: T2<f32, 3, 2>) -> T1<f32, 2> {
+    matmul(x, y)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn batched_matmul(x: T3<f32, 2, 2, 3>, y: T2<f32, 3, 2>) -> T3<f32, 2, 2, 2> {
+    matmul(x, y)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn same_batch_matmul(x: T3<f32, 2, 2, 3>, y: T3<f32, 2, 3, 2>) -> T3<f32, 2, 2, 2> {
+    matmul(x, y)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn broadcast_4d_matmul(x: T4<f32, 2, 1, 2, 3>, y: T3<f32, 2, 3, 2>) -> T4<f32, 2, 2, 2, 2> {
     matmul(x, y)
 }
 
@@ -547,7 +567,11 @@ fn main() {
         elementwise_select,
         multi_output_stats,
         matmul_2x3_3x2,
+        vecvec_matmul_f32,
+        vecmat_matmul_f32,
         batched_matmul,
+        same_batch_matmul,
+        broadcast_4d_matmul,
         arange_step_i32,
         linspace_f32,
         identity_f32,
