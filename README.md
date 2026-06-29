@@ -53,6 +53,11 @@ the `iree-compile` command line tool for VMFB generation. Put `iree-compile` on
 shell provides the pinned compiler automatically. See
 [docs/compiler.md](docs/compiler.md) for setup details.
 
+Existing `.mlir` files can also be compiled from `build.rs` with
+`knok_build::compile_mlir_models!` and imported through the same
+`knok::generated_graphs!` runtime wrapper flow. See
+[docs/static-graph-syntax.md](docs/static-graph-syntax.md#external-mlir-models).
+
 ## Feature Modes
 
 - Default features enable `std` and hosted runtime execution.

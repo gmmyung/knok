@@ -7,27 +7,24 @@ pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(
             ty.span(),
-            "expected Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, or Tensor6 type",
+            "expected Tensor0/T0 through Tensor6/T6 type",
         ));
     };
     let segment = path.segments.last().ok_or_else(|| {
-        syn::Error::new(
-            path.span(),
-            "expected Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, or Tensor6 type",
-        )
+        syn::Error::new(path.span(), "expected Tensor0/T0 through Tensor6/T6 type")
     })?;
     let rank = match segment.ident.to_string().as_str() {
-        "Tensor0" => 0,
-        "Tensor1" => 1,
-        "Tensor2" => 2,
-        "Tensor3" => 3,
-        "Tensor4" => 4,
-        "Tensor5" => 5,
-        "Tensor6" => 6,
+        "Tensor0" | "T0" => 0,
+        "Tensor1" | "T1" => 1,
+        "Tensor2" | "T2" => 2,
+        "Tensor3" | "T3" => 3,
+        "Tensor4" | "T4" => 4,
+        "Tensor5" | "T5" => 5,
+        "Tensor6" | "T6" => 6,
         _ => {
             return Err(syn::Error::new(
                 segment.ident.span(),
-                "expected Tensor0<T>, Tensor1<T, D0>, Tensor2<T, D0, D1>, Tensor3<T, D0, D1, D2>, Tensor4<T, D0, D1, D2, D3>, Tensor5<T, D0, D1, D2, D3, D4>, or Tensor6<T, D0, D1, D2, D3, D4, D5>",
+                "expected Tensor0<T>/T0<T>, Tensor1<T, D0>/T1<T, D0>, ..., or Tensor6<T, D0, D1, D2, D3, D4, D5>/T6<T, D0, D1, D2, D3, D4, D5>",
             ));
         }
     };
