@@ -206,7 +206,7 @@ pub fn emit_registered_graphs_with_options(
         .collect::<BTreeMap<_, _>>();
 
     for registered in &graphs {
-        let vmfb_name = format!("{}.vmfb", registered.graph.name);
+        let vmfb_name = graph_vmfb_name(&registered.graph.name);
         let vmfb_path = out_dir.join(&vmfb_name);
         let compile_flags;
         if options.stub_artifacts {
@@ -248,7 +248,7 @@ pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptio
     for model in &models {
         let source_path = resolve_model_path(&model.path)?;
         println!("cargo:rerun-if-changed={}", source_path.display());
-        let vmfb_name = format!("{}.vmfb", model.name);
+        let vmfb_name = mlir_model_vmfb_name(&model.name);
         let vmfb_path = out_dir.join(&vmfb_name);
         let compile_flags;
         if options.stub_artifacts {
@@ -279,11 +279,31 @@ fn resolve_model_path(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).join(path))
 }
 
+fn graph_vmfb_name(name: &str) -> String {
+    format!("{name}.vmfb")
+}
+
+fn mlir_model_vmfb_name(name: &str) -> String {
+    format!("mlir-model-{name}.vmfb")
+}
+
 fn compile_registered_graph(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
 ) -> Result<knok_compile::CompiledGraph> {
     compile_graph_with_registry(graph, graphs).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_mlir_artifacts_do_not_collide_with_traced_graph_artifacts() {
+        assert_eq!(graph_vmfb_name("forward"), "forward.vmfb");
+        assert_eq!(mlir_model_vmfb_name("forward"), "mlir-model-forward.vmfb");
+        assert_ne!(graph_vmfb_name("forward"), mlir_model_vmfb_name("forward"));
+    }
 }
 
 /// Common build-script imports for graph definitions.

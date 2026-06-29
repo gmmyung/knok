@@ -410,9 +410,12 @@ mod tests {
             vec![ty(ElementType::F32, &[4])],
         );
 
-        let module = mlir_model_module(&model, "imported_add.vmfb", &[]).unwrap();
+        let module = mlir_model_module(&model, "mlir-model-imported_add.vmfb", &[]).unwrap();
 
         assert!(module.contains("pub mod imported_add"));
+        assert!(module.contains(
+            "include_bytes!(concat!(env!(\"OUT_DIR\"), \"/mlir-model-imported_add.vmfb\"))"
+        ));
         assert!(module.contains("function_name: \"imported.add\""));
         assert!(module.contains("x: ::knok::tensor::Tensor1<f32, 4>"));
         assert!(module.contains("y: ::knok::tensor::Tensor1<f32, 4>"));

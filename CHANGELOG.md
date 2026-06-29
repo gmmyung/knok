@@ -45,6 +45,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 ### Fixed
 
 - Exported `squeeze` from `knok_build::prelude`.
+- Namespaced external MLIR VMFB artifact filenames so they cannot overwrite
+  traced graph artifacts with the same logical name.
 
 ### Removed
 
