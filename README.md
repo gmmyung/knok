@@ -185,7 +185,7 @@ Generate coverage artifacts:
 scripts/coverage.sh
 ```
 
-Run local release-mode runtime benchmarks:
+Run local Criterion runtime benchmarks:
 
 ```sh
 scripts/benchmark.sh

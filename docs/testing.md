@@ -38,7 +38,6 @@ Before a release, also run the dry-run publishing checklist in
 [release-readiness.md](release-readiness.md).
 
 `scripts/benchmark.sh` is not part of `release-check.sh`. It runs the separate
-release-mode benchmark crate under `benchmarks/runtime` and should be run when
+Criterion benchmark crate under `benchmarks/runtime` and should be run when
 changing runtime dispatch, backend selection, tensor conversion, or generated
-wrapper code. It writes `target/benchmark-summary.csv` and
-`target/benchmark-summary.json` inside the benchmark crate.
+wrapper code.
