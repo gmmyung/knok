@@ -42,6 +42,13 @@ Graph functions can return tuples. Generated wrappers preserve tuple order and
 dtype. Raw single-output helpers reject multi-output artifacts; generated typed
 wrappers should be preferred.
 
+## Pooling
+
+`max_pool2d` and `avg_pool2d` use NHWC rank-4 input layout. Options are static:
+kernel, stride, dilation, and top/bottom/left/right padding are known at build
+time. `avg_pool2d` uses zero padding and divides by the full window size, so
+padded elements are included in the average denominator.
+
 ## Operation Surface
 
 - Elementwise arithmetic: `+`, `-`, `*`, `/`, unary `-`, `abs`, `minimum`,
@@ -55,7 +62,8 @@ wrappers should be preferred.
   `repeat`, `pad`, `flip`, `roll`.
 - Axis movement: `transpose`, `transpose_axes`, `permute`, `permute_dims`,
   `swapaxes`, `moveaxis`.
-- Linalg and convolution: `matmul`, `dot`, `vecdot`, `inner`, `outer`, `trace`,
-  `diagonal`, `conv2d`, `conv2d_options`.
+- Linalg, convolution, and pooling: `matmul`, `dot`, `vecdot`, `inner`,
+  `outer`, `trace`, `diagonal`, `conv2d`, `conv2d_options`, `max_pool2d`,
+  `max_pool2d_options`, `avg_pool2d`, `avg_pool2d_options`.
 - Creation and math: `zeros_like`, `ones_like`, `full_like`, `arange`,
   `linspace`, `eye`, `identity`, floating-point math functions.

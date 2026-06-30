@@ -15,7 +15,7 @@ mod tests;
 pub use ast::{
     static_arange_literals, static_eye_literals, static_linspace_literals, AxisSpec, BinaryOp,
     CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input, Let, Padding2d,
-    StaticScalar, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue, UnaryOp,
+    Pool2dOptions, StaticScalar, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue, UnaryOp,
 };
 pub use type_parse::parse_tensor_type;
 pub use typecheck::type_check;

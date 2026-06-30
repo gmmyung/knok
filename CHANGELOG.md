@@ -36,6 +36,9 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   benchmark harness.
 - Added Criterion runtime benchmarks for matmul, batched matmul, large
   elementwise graphs, reductions, softmax, layout operations, MLP, and conv2d.
+- Added static NHWC `max_pool2d` and `avg_pool2d` graph operations with
+  build-time shape validation and runtime E2E coverage.
+- Added a Criterion max-pooling benchmark with an `ndarray` baseline.
 
 ### Changed
 

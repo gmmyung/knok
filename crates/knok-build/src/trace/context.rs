@@ -286,6 +286,11 @@ mod tests {
                 .dilation(1, 1)
                 .groups(1),
         );
+        let _: T4<f32, 1, 1, 1, 1> = max_pool2d(image.clone());
+        let _: T4<f32, 1, 2, 2, 1> = avg_pool2d_options(
+            image.clone(),
+            Pool2dOptions::new(2, 2).padding(1, 0, 1, 0).stride(2, 2),
+        );
 
         let product: T2<f32, 2, 2> = matmul(matrix.clone(), rhs);
         let row_sum: T1<f32, 2> = sum_axis(matrix.clone(), 1);

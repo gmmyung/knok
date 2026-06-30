@@ -4,6 +4,7 @@ mod creation;
 mod elementwise;
 mod expr;
 mod linalg;
+mod pool;
 mod reductions;
 mod shape;
 mod tensor;
@@ -21,6 +22,7 @@ pub use linalg::{
     diagonal, diagonal_axes, dot, inner, matmul, outer, trace, trace_axes, vecdot, vecdot_axis,
     Matmul,
 };
+pub use pool::{avg_pool2d, avg_pool2d_options, max_pool2d, max_pool2d_options, Pool2dOptions};
 pub use reductions::{
     all, all_axis, amax, amax_axis, amin, amin_axis, any, any_axis, argmax, argmax_axis, argmin,
     argmin_axis, max, max_axis, mean, mean_axis, min, min_axis, prod, prod_axis, ptp, ptp_axis,

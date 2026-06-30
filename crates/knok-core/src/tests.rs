@@ -1,6 +1,6 @@
 use crate::{
     parse_tensor_type, type_check, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr,
-    Graph, GraphSignature, Input, Let, TensorType,
+    Graph, GraphSignature, Input, Let, Pool2dOptions, TensorType,
 };
 
 fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {
@@ -265,6 +265,8 @@ fn typechecks_linalg_creation_and_predicate_ops() {
             tensor(ElementType::F32, &[4]),
             tensor(ElementType::F32, &[3]),
             tensor(ElementType::F32, &[1, 2, 2, 1]),
+            tensor(ElementType::F32, &[1, 2, 2, 2]),
+            tensor(ElementType::F32, &[1, 2, 2, 2]),
         ],
         lets: Vec::new(),
         body: vec![
@@ -304,12 +306,22 @@ fn typechecks_linalg_creation_and_predicate_ops() {
                 op: CallOp::Conv2d(Conv2dOptions::default()),
                 args: vec![var("image"), var("kernel")],
             },
+            Expr::Call {
+                op: CallOp::MaxPool2d(Pool2dOptions::default()),
+                args: vec![var("image")],
+            },
+            Expr::Call {
+                op: CallOp::AvgPool2d(Pool2dOptions::default()),
+                args: vec![var("image")],
+            },
         ],
     };
 
     let typed = type_check(graph, &[]).unwrap();
     assert_eq!(typed.outputs[0], tensor(ElementType::Bool, &[3]));
     assert_eq!(typed.outputs[5], tensor(ElementType::F32, &[1, 2, 2, 1]));
+    assert_eq!(typed.outputs[6], tensor(ElementType::F32, &[1, 2, 2, 2]));
+    assert_eq!(typed.outputs[7], tensor(ElementType::F32, &[1, 2, 2, 2]));
 }
 
 #[test]

@@ -561,6 +561,16 @@ fn grouped_conv2d_f32(x: T4<f32, 1, 3, 3, 2>, k: T4<f32, 2, 2, 1, 2>) -> T4<f32,
     conv2d_options(x, k, Conv2dOptions::new().groups(2))
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn max_pool2d_f32(x: T4<f32, 1, 4, 4, 1>) -> T4<f32, 1, 2, 2, 1> {
+    max_pool2d(x)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn avg_pool2d_padded_f32(x: T4<f32, 1, 3, 3, 1>) -> T4<f32, 1, 2, 2, 1> {
+    avg_pool2d_options(x, Pool2dOptions::new(2, 2).padding(1, 0, 1, 0).stride(2, 2))
+}
+
 fn main() {
     knok_build::compile_graphs!(
         affine_relu,
@@ -674,7 +684,9 @@ fn main() {
         diagonal_f32,
         diagonal_axes_f32,
         conv2d_f32,
-        grouped_conv2d_f32
+        grouped_conv2d_f32,
+        max_pool2d_f32,
+        avg_pool2d_padded_f32
     );
 
     knok_build::compile_mlir_models_with_options!(
