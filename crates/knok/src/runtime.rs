@@ -4,12 +4,7 @@ use alloc::string::String;
 
 use crate::Backend;
 
-/// Low-level hosted runtime buffers used by generated graph wrappers.
-///
-/// Most users should call generated `graphs::<name>::call(...)` or
-/// `graphs::<name>::run(&Engine, ...)` functions instead of constructing raw
-/// inputs directly. This module remains public so generated wrappers and custom
-/// embedding code can share one runtime path.
+#[doc(hidden)]
 pub mod raw {
     extern crate alloc;
 
@@ -366,12 +361,7 @@ mod hosted {
             &self.driver_name
         }
 
-        /// Invokes an artifact with raw input buffers and returns raw outputs.
-        ///
-        /// Generated graph wrappers call this after constructing typed raw
-        /// inputs. This method validates generated artifact metadata when it is
-        /// present.
-        pub fn invoke(
+        pub(crate) fn invoke(
             &self,
             artifact: GraphArtifact,
             inputs: &[raw::Input<'_>],
@@ -403,8 +393,7 @@ mod hosted {
             Ok(outputs)
         }
 
-        /// Invokes a single-output artifact and reads that output as `Vec<T>`.
-        pub fn invoke_one<T: raw::Output>(
+        pub(crate) fn invoke_one<T: raw::Output>(
             &self,
             artifact: GraphArtifact,
             inputs: &[raw::Input<'_>],
@@ -542,7 +531,7 @@ mod hosted {
             ""
         }
 
-        pub fn invoke(
+        pub(crate) fn invoke(
             &self,
             _artifact: GraphArtifact,
             _inputs: &[raw::Input<'_>],
@@ -550,7 +539,7 @@ mod hosted {
             Err(crate::Error::HostedRuntimeDisabled)
         }
 
-        pub fn invoke_one<T: raw::Output>(
+        pub(crate) fn invoke_one<T: raw::Output>(
             &self,
             _artifact: GraphArtifact,
             _inputs: &[raw::Input<'_>],

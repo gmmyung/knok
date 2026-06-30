@@ -43,6 +43,9 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   and let docs.rs build the default runtime-enabled API surface.
 - Replaced additional tensor lowering dense-array attributes with structured
   melior attribute builders.
+- Hid raw runtime invocation internals from the public API. Generated graph
+  wrappers remain the supported execution surface; callers should use generated
+  `run` / `run_once` helpers instead of calling `Engine::invoke` directly.
 
 ### Fixed
 

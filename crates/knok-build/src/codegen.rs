@@ -80,7 +80,7 @@ fn generated_module(
         .map(|(input, name)| {
             let shape = shape_array(&input.ty);
             format!(
-                "::knok::runtime::raw::Input::{}(&{}, {}.as_slice())",
+                "::knok::__private::Input::{}(&{}, {}.as_slice())",
                 runtime_input_variant(input.ty.elem),
                 shape,
                 name
@@ -153,7 +153,7 @@ fn run_body(outputs: &[TensorType], runtime_inputs: &str) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            "let outputs = engine.invoke(artifact, &[{}])?;\n        Ok(({reads}))",
+            "let outputs = ::knok::__private::invoke_with_engine(engine, artifact, &[{}])?;\n        Ok(({reads}))",
             runtime_inputs
         )
     }
@@ -373,7 +373,7 @@ mod tests {
         assert!(module.contains("static COMPILE_FLAGS: &[&str] = &[\"--some-flag\"]"));
         assert!(module.contains("::knok::TensorDesc::new(::knok::DType::F32, &[2, 3])"));
         assert!(module.contains("x: ::knok::tensor::Tensor2<f32, 2, 3>"));
-        assert!(module.contains("::knok::runtime::raw::Input::F32(&[2, 3], x.as_slice())"));
+        assert!(module.contains("::knok::__private::Input::F32(&[2, 3], x.as_slice())"));
         assert!(module.contains("invoke_one_with_engine::<f32>"));
     }
 
@@ -390,7 +390,8 @@ mod tests {
         assert!(module.contains(
             "pub fn run(engine: &::knok::Engine, values: ::knok::tensor::Tensor2<f32, 2, 3>) -> ::knok::Result<(::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
         ));
-        assert!(module.contains("let outputs = engine.invoke(artifact, &["));
+        assert!(module
+            .contains("let outputs = ::knok::__private::invoke_with_engine(engine, artifact, &["));
         assert!(module.contains("outputs.read::<f32>(0)"));
         assert!(module.contains("outputs.read::<i64>(1)"));
         assert!(module.contains("Ok(("));
@@ -419,8 +420,8 @@ mod tests {
         assert!(module.contains("function_name: \"imported.add\""));
         assert!(module.contains("x: ::knok::tensor::Tensor1<f32, 4>"));
         assert!(module.contains("y: ::knok::tensor::Tensor1<f32, 4>"));
-        assert!(module.contains("::knok::runtime::raw::Input::F32(&[4], x.as_slice())"));
-        assert!(module.contains("::knok::runtime::raw::Input::F32(&[4], y.as_slice())"));
+        assert!(module.contains("::knok::__private::Input::F32(&[4], x.as_slice())"));
+        assert!(module.contains("::knok::__private::Input::F32(&[4], y.as_slice())"));
     }
 
     #[test]

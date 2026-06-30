@@ -14,11 +14,12 @@ use melior::{
         operation::{OperationBuilder, OperationMutLike},
         r#type::FunctionType,
         Attribute, Block, BlockLike, Identifier, Location, Module, Region, RegionLike, Type,
-        Value as MlirValue, ValueLike,
+        Value as MlirValue,
     },
     Context,
 };
-use mlir_sys::MlirValue as MlirRawValue;
+
+pub(super) use super::value::{RawValue, Value, ValueKind};
 
 use crate::mlir::canonicalize_and_verify;
 
@@ -52,53 +53,6 @@ pub(super) struct Lowerer<'a, 'c> {
     pub(super) values: BTreeMap<String, Value>,
     pub(super) node_values: BTreeMap<(u64, u64), Value>,
     pub(super) tuple_values: BTreeMap<(u64, u64), Vec<Value>>,
-}
-
-#[derive(Clone)]
-pub(super) struct Value {
-    pub(super) raw: RawValue,
-    pub(super) ty: TensorType,
-    pub(super) kind: ValueKind,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct RawValue(MlirRawValue);
-
-impl RawValue {
-    pub(super) fn from_value(value: MlirValue<'_, '_>) -> Self {
-        Self(value.to_raw())
-    }
-
-    pub(super) fn as_value<'c>(self) -> MlirValue<'c, 'static> {
-        unsafe { MlirValue::from_raw(self.0) }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ValueKind {
-    Scalar,
-    Tensor,
-}
-
-impl Value {
-    pub(super) fn scalar(raw: RawValue, elem: knok_core::ElementType) -> Self {
-        Self {
-            raw,
-            ty: TensorType {
-                elem,
-                shape: Vec::new(),
-            },
-            kind: ValueKind::Scalar,
-        }
-    }
-
-    pub(super) fn tensor(raw: RawValue, ty: TensorType) -> Self {
-        Self {
-            raw,
-            ty,
-            kind: ValueKind::Tensor,
-        }
-    }
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {

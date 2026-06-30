@@ -136,6 +136,29 @@ impl<T> TensorData<T> {
     }
 }
 
+/// Common storage API implemented by all fixed-rank tensor containers.
+pub trait FixedTensor<T>: Sized {
+    /// Static tensor shape.
+    const SHAPE: &'static [usize];
+
+    /// Creates a tensor from row-major data and validates the element count.
+    fn from_vec(data: Vec<T>) -> crate::Result<Self>;
+
+    /// Creates a tensor filled with one value.
+    fn filled(value: T) -> Self
+    where
+        T: Clone;
+
+    /// Returns row-major tensor storage.
+    fn as_slice(&self) -> &[T];
+
+    /// Returns mutable row-major tensor storage.
+    fn as_mut_slice(&mut self) -> &mut [T];
+
+    /// Consumes the tensor and returns row-major storage.
+    fn into_vec(self) -> Vec<T>;
+}
+
 impl<T> Tensor0<T> {
     /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[];
@@ -544,253 +567,125 @@ impl<
     }
 }
 
-impl<T: TensorElement> Tensor0<T> {
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
+macro_rules! impl_fixed_tensor_common {
+    ($name:ident, $debug_name:literal, []) => {
+        impl<T> FixedTensor<T> for $name<T> {
+            const SHAPE: &'static [usize] = Self::SHAPE;
 
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
+            fn from_vec(data: Vec<T>) -> crate::Result<Self> {
+                Self::from_vec(data)
+            }
+
+            fn filled(value: T) -> Self
+            where
+                T: Clone,
+            {
+                Self::filled(value)
+            }
+
+            fn as_slice(&self) -> &[T] {
+                self.as_slice()
+            }
+
+            fn as_mut_slice(&mut self) -> &mut [T] {
+                self.as_mut_slice()
+            }
+
+            fn into_vec(self) -> Vec<T> {
+                self.into_vec()
+            }
+        }
+
+        impl<T: TensorElement> $name<T> {
+            pub fn zeros() -> Self {
+                Self::filled(T::ZERO)
+            }
+
+            pub fn ones() -> Self {
+                Self::filled(T::ONE)
+            }
+        }
+
+        impl<T> TryFrom<Vec<T>> for $name<T> {
+            type Error = crate::Error;
+
+            fn try_from(data: Vec<T>) -> crate::Result<Self> {
+                Self::from_vec(data)
+            }
+        }
+
+        impl<T: fmt::Debug> fmt::Debug for $name<T> {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter
+                    .debug_struct($debug_name)
+                    .field("shape", &Self::SHAPE)
+                    .field("data", &self.storage.data)
+                    .finish()
+            }
+        }
+    };
+    ($name:ident, $debug_name:literal, [$($dim:ident),*]) => {
+        impl<T, $(const $dim: usize),*> FixedTensor<T> for $name<T, $($dim),*> {
+            const SHAPE: &'static [usize] = Self::SHAPE;
+
+            fn from_vec(data: Vec<T>) -> crate::Result<Self> {
+                Self::from_vec(data)
+            }
+
+            fn filled(value: T) -> Self
+            where
+                T: Clone,
+            {
+                Self::filled(value)
+            }
+
+            fn as_slice(&self) -> &[T] {
+                self.as_slice()
+            }
+
+            fn as_mut_slice(&mut self) -> &mut [T] {
+                self.as_mut_slice()
+            }
+
+            fn into_vec(self) -> Vec<T> {
+                self.into_vec()
+            }
+        }
+
+        impl<T: TensorElement, $(const $dim: usize),*> $name<T, $($dim),*> {
+            pub fn zeros() -> Self {
+                Self::filled(T::ZERO)
+            }
+
+            pub fn ones() -> Self {
+                Self::filled(T::ONE)
+            }
+        }
+
+        impl<T, $(const $dim: usize),*> TryFrom<Vec<T>> for $name<T, $($dim),*> {
+            type Error = crate::Error;
+
+            fn try_from(data: Vec<T>) -> crate::Result<Self> {
+                Self::from_vec(data)
+            }
+        }
+
+        impl<T: fmt::Debug, $(const $dim: usize),*> fmt::Debug for $name<T, $($dim),*> {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter
+                    .debug_struct($debug_name)
+                    .field("shape", &Self::SHAPE)
+                    .field("data", &self.storage.data)
+                    .finish()
+            }
+        }
+    };
 }
 
-impl<T: TensorElement, const D0: usize> Tensor1<T, D0> {
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
-
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
-}
-
-impl<T: TensorElement, const D0: usize, const D1: usize> Tensor2<T, D0, D1> {
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
-
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
-}
-
-impl<T: TensorElement, const D0: usize, const D1: usize, const D2: usize> Tensor3<T, D0, D1, D2> {
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
-
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
-}
-
-impl<T: TensorElement, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
-    Tensor4<T, D0, D1, D2, D3>
-{
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
-
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
-}
-
-impl<
-        T: TensorElement,
-        const D0: usize,
-        const D1: usize,
-        const D2: usize,
-        const D3: usize,
-        const D4: usize,
-    > Tensor5<T, D0, D1, D2, D3, D4>
-{
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
-
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
-}
-
-impl<
-        T: TensorElement,
-        const D0: usize,
-        const D1: usize,
-        const D2: usize,
-        const D3: usize,
-        const D4: usize,
-        const D5: usize,
-    > Tensor6<T, D0, D1, D2, D3, D4, D5>
-{
-    pub fn zeros() -> Self {
-        Self::filled(T::ZERO)
-    }
-
-    pub fn ones() -> Self {
-        Self::filled(T::ONE)
-    }
-}
-
-impl<T> TryFrom<Vec<T>> for Tensor0<T> {
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<T, const D0: usize> TryFrom<Vec<T>> for Tensor1<T, D0> {
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<T, const D0: usize, const D1: usize> TryFrom<Vec<T>> for Tensor2<T, D0, D1> {
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<T, const D0: usize, const D1: usize, const D2: usize> TryFrom<Vec<T>>
-    for Tensor3<T, D0, D1, D2>
-{
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize> TryFrom<Vec<T>>
-    for Tensor4<T, D0, D1, D2, D3>
-{
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize, const D4: usize>
-    TryFrom<Vec<T>> for Tensor5<T, D0, D1, D2, D3, D4>
-{
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<
-        T,
-        const D0: usize,
-        const D1: usize,
-        const D2: usize,
-        const D3: usize,
-        const D4: usize,
-        const D5: usize,
-    > TryFrom<Vec<T>> for Tensor6<T, D0, D1, D2, D3, D4, D5>
-{
-    type Error = crate::Error;
-
-    fn try_from(data: Vec<T>) -> crate::Result<Self> {
-        Self::from_vec(data)
-    }
-}
-
-impl<T: fmt::Debug> fmt::Debug for Tensor0<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor0")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
-
-impl<T: fmt::Debug, const D0: usize> fmt::Debug for Tensor1<T, D0> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor1")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
-
-impl<T: fmt::Debug, const D0: usize, const D1: usize> fmt::Debug for Tensor2<T, D0, D1> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor2")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
-
-impl<T: fmt::Debug, const D0: usize, const D1: usize, const D2: usize> fmt::Debug
-    for Tensor3<T, D0, D1, D2>
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor3")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
-
-impl<T: fmt::Debug, const D0: usize, const D1: usize, const D2: usize, const D3: usize> fmt::Debug
-    for Tensor4<T, D0, D1, D2, D3>
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor4")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
-
-impl<
-        T: fmt::Debug,
-        const D0: usize,
-        const D1: usize,
-        const D2: usize,
-        const D3: usize,
-        const D4: usize,
-    > fmt::Debug for Tensor5<T, D0, D1, D2, D3, D4>
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor5")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
-
-impl<
-        T: fmt::Debug,
-        const D0: usize,
-        const D1: usize,
-        const D2: usize,
-        const D3: usize,
-        const D4: usize,
-        const D5: usize,
-    > fmt::Debug for Tensor6<T, D0, D1, D2, D3, D4, D5>
-{
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Tensor6")
-            .field("shape", &Self::SHAPE)
-            .field("data", &self.storage.data)
-            .finish()
-    }
-}
+impl_fixed_tensor_common!(Tensor0, "Tensor0", []);
+impl_fixed_tensor_common!(Tensor1, "Tensor1", [D0]);
+impl_fixed_tensor_common!(Tensor2, "Tensor2", [D0, D1]);
+impl_fixed_tensor_common!(Tensor3, "Tensor3", [D0, D1, D2]);
+impl_fixed_tensor_common!(Tensor4, "Tensor4", [D0, D1, D2, D3]);
+impl_fixed_tensor_common!(Tensor5, "Tensor5", [D0, D1, D2, D3, D4]);
+impl_fixed_tensor_common!(Tensor6, "Tensor6", [D0, D1, D2, D3, D4, D5]);
