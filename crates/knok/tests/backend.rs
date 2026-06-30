@@ -1,6 +1,7 @@
 use knok::{
-    Backend, DType, Driver, Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig,
-    TensorDesc, SUPPORTED_BACKENDS,
+    tensor::{FixedTensor, Tensor1, Tensor2},
+    Backend, DType, Driver, Engine, Error, Graph, GraphArtifact, GraphArtifactVariant,
+    RuntimeConfig, TensorDesc, SUPPORTED_BACKENDS,
 };
 
 #[test]
@@ -106,20 +107,28 @@ fn graph_artifact_metadata_selects_variants() {
 }
 
 #[test]
-fn raw_inputs_report_shape_and_dtype() {
-    let bools = [true, false];
-    let floats = [1.0_f32, 2.0];
-    let ints = [1_i64, 2];
+fn typed_graph_handle_preserves_artifact_and_tensor_metadata() {
+    static VMFB: [u8; 16] = [0; 16];
+    static INPUTS: [TensorDesc; 1] = [TensorDesc::new(DType::F32, &[1, 2])];
+    static OUTPUTS: [TensorDesc; 1] = [TensorDesc::new(DType::I64, &[2])];
+    static VARIANTS: [GraphArtifactVariant; 1] = [GraphArtifactVariant {
+        vmfb: &VMFB,
+        backend: "llvm-cpu",
+        driver: "local-task",
+        compile_flags: &[],
+    }];
+    let artifact = GraphArtifact {
+        function_name: "forward",
+        input_descs: &INPUTS,
+        output_descs: &OUTPUTS,
+        variants: &VARIANTS,
+    };
+    let graph: Graph<Tensor2<f32, 1, 2>, Tensor1<i64, 2>> = Graph::new(artifact);
 
-    let bool_input = knok::__private::Input::Bool(&[2], &bools);
-    let float_input = knok::__private::Input::F32(&[1, 2], &floats);
-    let int_input = knok::__private::Input::I64(&[2], &ints);
-
-    assert_eq!(bool_input.shape(), &[2]);
-    assert_eq!(bool_input.dtype(), DType::Bool);
-    assert_eq!(float_input.shape(), &[1, 2]);
-    assert_eq!(float_input.dtype(), DType::F32);
-    assert_eq!(int_input.dtype(), DType::I64);
+    assert_eq!(graph.artifact().function_name, "forward");
+    assert_eq!(graph.artifact().input_descs[0].elem, DType::F32);
+    assert_eq!(<Tensor2<f32, 1, 2> as FixedTensor<f32>>::SHAPE, &[1, 2]);
+    assert_eq!(<Tensor1<i64, 2> as FixedTensor<i64>>::SHAPE, &[2]);
 }
 
 #[test]

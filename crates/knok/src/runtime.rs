@@ -4,8 +4,7 @@ use alloc::string::String;
 
 use crate::Backend;
 
-#[doc(hidden)]
-pub mod raw {
+pub(crate) mod raw {
     extern crate alloc;
 
     #[cfg(feature = "runtime")]
@@ -62,42 +61,6 @@ pub mod raw {
             }
         }
     }
-
-    /// Element types supported by the raw hosted single-output convenience path.
-    pub trait Output: Copy {
-        #[cfg(feature = "runtime")]
-        fn read_output(outputs: Outputs) -> crate::Result<alloc::vec::Vec<Self>>;
-    }
-
-    #[cfg(feature = "runtime")]
-    macro_rules! impl_output {
-        ($ty:ty) => {
-            impl Output for $ty {
-                fn read_output(outputs: Outputs) -> crate::Result<alloc::vec::Vec<Self>> {
-                    outputs.one::<Self>()
-                }
-            }
-        };
-    }
-
-    #[cfg(feature = "runtime")]
-    impl_output!(f32);
-    #[cfg(feature = "runtime")]
-    impl_output!(f64);
-    #[cfg(feature = "runtime")]
-    impl_output!(bool);
-    #[cfg(feature = "runtime")]
-    impl_output!(i32);
-    #[cfg(feature = "runtime")]
-    impl_output!(i64);
-
-    #[cfg(all(feature = "runtime", feature = "half"))]
-    impl_output!(crate::half::f16);
-    #[cfg(all(feature = "runtime", feature = "half"))]
-    impl_output!(crate::half::bf16);
-
-    #[cfg(not(feature = "runtime"))]
-    impl<T: Copy> Output for T {}
 
     /// Outputs returned by a raw hosted graph invocation.
     #[cfg(feature = "runtime")]
@@ -393,15 +356,6 @@ mod hosted {
             Ok(outputs)
         }
 
-        pub(crate) fn invoke_one<T: raw::Output>(
-            &self,
-            artifact: GraphArtifact,
-            inputs: &[raw::Input<'_>],
-        ) -> crate::Result<Vec<T>> {
-            let outputs = self.invoke(artifact, inputs)?;
-            T::read_output(outputs)
-        }
-
         fn resolve_function(
             &self,
             vmfb: &'static [u8],
@@ -502,8 +456,6 @@ mod hosted {
 
 #[cfg(not(feature = "runtime"))]
 mod hosted {
-    use alloc::vec::Vec;
-
     use super::{raw, RuntimeConfig};
     use crate::GraphArtifact;
 
@@ -536,14 +488,6 @@ mod hosted {
             _artifact: GraphArtifact,
             _inputs: &[raw::Input<'_>],
         ) -> crate::Result<raw::Outputs> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub(crate) fn invoke_one<T: raw::Output>(
-            &self,
-            _artifact: GraphArtifact,
-            _inputs: &[raw::Input<'_>],
-        ) -> crate::Result<Vec<T>> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
     }

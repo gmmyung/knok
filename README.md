@@ -69,6 +69,9 @@ fn run_once(x: Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
 }
 ```
 
+Each generated module also exposes a typed `GRAPH` handle for code that wants
+the lower-level `knok::Graph<I, O>` value.
+
 For repeated inference, create an engine once and reuse it:
 
 ```rust

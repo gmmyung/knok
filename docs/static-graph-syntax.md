@@ -91,6 +91,7 @@ knok::generated_graphs!(pub mod graphs, "custom_knok_graphs.rs");
 
 Generated modules expose:
 
+- `GRAPH`, a typed `knok::Graph<I, O>` handle.
 - `artifact()` for static metadata and embedded VMFB bytes.
 - `run(&Engine, ...)` for repeated hosted inference.
 - `call(...)` for one-off hosted inference with a convenience engine.
