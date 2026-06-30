@@ -14,6 +14,11 @@ use crate::{
 /// Generated modules expose a `GRAPH` value and thin `run` / `call` helpers.
 /// The graph owns no runtime resources; it only carries static artifact
 /// metadata and the Rust input/output types expected by the wrapper.
+///
+/// Most users call generated module functions such as
+/// `graphs::forward::run(&engine, input)` or `graphs::forward::call(input)`.
+/// Use `Graph` directly when passing a generated graph handle through another
+/// abstraction.
 #[derive(Clone, Copy, Debug)]
 pub struct Graph<I, O> {
     artifact: GraphArtifact,
@@ -41,6 +46,10 @@ where
     O: GraphOutput,
 {
     /// Runs the graph with a reusable hosted runtime engine.
+    ///
+    /// The engine's runtime driver must match a variant embedded in this
+    /// graph's artifact. Constructing the engine with [`Engine::for_artifact`]
+    /// is the usual way to keep the driver aligned.
     pub fn run(&self, engine: &Engine, inputs: I) -> crate::Result<O> {
         RawGraphInputs::with_raw_inputs(&inputs, |raw_inputs| {
             RawGraphOutput::read_raw_outputs(engine.invoke(self.artifact, raw_inputs)?)
@@ -48,14 +57,12 @@ where
     }
 
     /// Runs the graph once by constructing an engine for the artifact's default variant.
+    ///
+    /// This is convenient for occasional calls. Reuse an [`Engine`] and call
+    /// [`Graph::run`] in loops.
     pub fn run_once(&self, inputs: I) -> crate::Result<O> {
         let engine = Engine::for_artifact(self.artifact)?;
         self.run(&engine, inputs)
-    }
-
-    /// Alias for [`Graph::run_once`].
-    pub fn call(&self, inputs: I) -> crate::Result<O> {
-        self.run_once(inputs)
     }
 }
 

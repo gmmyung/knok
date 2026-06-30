@@ -21,6 +21,7 @@
 nix develop --command scripts/release-check.sh
 nix develop --command cargo test -p knok-runtime-e2e
 nix develop --command scripts/coverage.sh
+nix develop --command scripts/benchmark.sh
 ```
 
 `coverage.sh` writes:
@@ -35,3 +36,7 @@ as cache reuse or a specific lowering form.
 
 Before a release, also run the dry-run publishing checklist in
 [release-readiness.md](release-readiness.md).
+
+`scripts/benchmark.sh` is not part of `release-check.sh`. It builds a separate
+release-mode benchmark crate and should be run when changing runtime dispatch,
+backend selection, tensor conversion, or generated wrapper code.

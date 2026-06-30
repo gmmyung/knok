@@ -1,0 +1,13 @@
+[package]
+name = "knok-runtime-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+knok = { path = "../../crates/knok" }
+
+[build-dependencies]
+knok-build = { path = "../../crates/knok-build" }
+
+[workspace]
