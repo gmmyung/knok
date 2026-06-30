@@ -2,6 +2,8 @@ use knok_core::{ElementType, Input, TensorType, TypedGraph};
 
 use crate::{Backend, MlirModel, Result};
 
+const MAX_GRAPH_TUPLE_ARITY: usize = 12;
+
 pub(crate) fn graph_module(
     graph: &TypedGraph,
     backend: Backend,
@@ -49,6 +51,8 @@ fn generated_module(
     if !is_vm_function_name(function_name) {
         anyhow::bail!("`{function_name}` is not a valid IREE VM function name");
     }
+    ensure_supported_tuple_arity("input", inputs.len())?;
+    ensure_supported_tuple_arity("output", outputs.len())?;
     let input_descs = inputs
         .iter()
         .map(|input| tensor_desc(&input.ty))
@@ -74,23 +78,11 @@ fn generated_module(
         .map(|(input, name)| format!("{}: {}", name, rust_tensor_type(&input.ty)))
         .collect::<Vec<_>>()
         .join(", ");
-    let runtime_inputs = inputs
-        .iter()
-        .zip(input_names.iter())
-        .map(|(input, name)| {
-            let shape = shape_array(&input.ty);
-            format!(
-                "::knok::__private::Input::{}(&{}, {}.as_slice())",
-                runtime_input_variant(input.ty.elem),
-                shape,
-                name
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let input_type = rust_input_type(inputs);
+    let input_expr = rust_input_expr(&input_names);
     let output_type = rust_output_type(outputs);
-    let call_args = input_names.join(", ");
-    let run_body = run_body(outputs, &runtime_inputs);
+    let run_params = prefixed_params("engine: &::knok::Engine", &input_params);
+    let call_params = input_params.clone();
 
     Ok(format!(
         r#"pub mod {module_name} {{
@@ -105,7 +97,7 @@ fn generated_module(
     static INPUT_DESCS: &[::knok::TensorDesc] = &[{input_descs}];
     static OUTPUT_DESCS: &[::knok::TensorDesc] = &[{output_descs}];
 
-    pub fn artifact() -> ::knok::GraphArtifact {{
+    pub const fn artifact() -> ::knok::GraphArtifact {{
         ::knok::GraphArtifact {{
             function_name: "{function_name}",
             input_descs: INPUT_DESCS,
@@ -114,14 +106,14 @@ fn generated_module(
         }}
     }}
 
-    pub fn run(engine: &::knok::Engine, {input_params}) -> ::knok::Result<{output_type}> {{
-        let artifact = artifact();
-        {run_body}
+    pub static GRAPH: ::knok::Graph<{input_type}, {output_type}> = ::knok::Graph::new(artifact());
+
+    pub fn run({run_params}) -> ::knok::Result<{output_type}> {{
+        GRAPH.run(engine, {input_expr})
     }}
 
-    pub fn call({input_params}) -> ::knok::Result<{output_type}> {{
-        let engine = ::knok::Engine::for_artifact(artifact())?;
-        run(&engine, {call_args})
+    pub fn call({call_params}) -> ::knok::Result<{output_type}> {{
+        GRAPH.run_once({input_expr})
     }}
 }}
 "#,
@@ -130,32 +122,20 @@ fn generated_module(
     ))
 }
 
-fn run_body(outputs: &[TensorType], runtime_inputs: &str) -> String {
-    if outputs.len() == 1 {
-        let output = &outputs[0];
-        format!(
-            "let output = ::knok::__private::invoke_one_with_engine::<{}>(engine, artifact, &[{}])?;\n        <{}>::from_vec(output)",
-            rust_element_type(output.elem),
-            runtime_inputs,
-            rust_tensor_type(output),
-        )
+fn ensure_supported_tuple_arity(kind: &str, len: usize) -> Result<()> {
+    if len > MAX_GRAPH_TUPLE_ARITY {
+        anyhow::bail!(
+            "generated graph {kind} arity {len} exceeds the supported maximum of {MAX_GRAPH_TUPLE_ARITY}"
+        );
+    }
+    Ok(())
+}
+
+fn prefixed_params(prefix: &str, params: &str) -> String {
+    if params.is_empty() {
+        prefix.into()
     } else {
-        let reads = outputs
-            .iter()
-            .enumerate()
-            .map(|(index, output)| {
-                format!(
-                    "<{}>::from_vec(outputs.read::<{}>({index})?)?",
-                    rust_tensor_type(output),
-                    rust_element_type(output.elem)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "let outputs = ::knok::__private::invoke_with_engine(engine, artifact, &[{}])?;\n        Ok(({reads}))",
-            runtime_inputs
-        )
+        format!("{prefix}, {params}")
     }
 }
 
@@ -259,6 +239,37 @@ fn rust_output_type(outputs: &[TensorType]) -> String {
     }
 }
 
+fn rust_input_type(inputs: &[Input]) -> String {
+    match inputs {
+        [] => "()".into(),
+        [input] => rust_tensor_type(&input.ty),
+        _ => format!(
+            "({})",
+            inputs
+                .iter()
+                .map(|input| rust_tensor_type(&input.ty))
+                .map(|ty| format!("{ty},"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    }
+}
+
+fn rust_input_expr(input_names: &[String]) -> String {
+    match input_names {
+        [] => "()".into(),
+        [name] => name.clone(),
+        _ => format!(
+            "({})",
+            input_names
+                .iter()
+                .map(|name| format!("{name},"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    }
+}
+
 fn rust_tensor_type(ty: &TensorType) -> String {
     let elem = rust_element_type(ty.elem);
     match ty.shape.as_slice() {
@@ -279,18 +290,6 @@ fn rust_tensor_type(ty: &TensorType) -> String {
             "rank {} cannot be represented by knok tensor containers",
             ty.shape.len()
         ),
-    }
-}
-
-fn runtime_input_variant(elem: ElementType) -> &'static str {
-    match elem {
-        ElementType::Bool => "Bool",
-        ElementType::F32 => "F32",
-        ElementType::F64 => "F64",
-        ElementType::F16 => "F16",
-        ElementType::BF16 => "BF16",
-        ElementType::I32 => "I32",
-        ElementType::I64 => "I64",
     }
 }
 
@@ -373,8 +372,12 @@ mod tests {
         assert!(module.contains("static COMPILE_FLAGS: &[&str] = &[\"--some-flag\"]"));
         assert!(module.contains("::knok::TensorDesc::new(::knok::DType::F32, &[2, 3])"));
         assert!(module.contains("x: ::knok::tensor::Tensor2<f32, 2, 3>"));
-        assert!(module.contains("::knok::__private::Input::F32(&[2, 3], x.as_slice())"));
-        assert!(module.contains("invoke_one_with_engine::<f32>"));
+        assert!(module.contains(
+            "pub static GRAPH: ::knok::Graph<::knok::tensor::Tensor2<f32, 2, 3>, ::knok::tensor::Tensor2<f32, 2, 3>>"
+        ));
+        assert!(module.contains("GRAPH.run(engine, x)"));
+        assert!(module.contains("GRAPH.run_once(x)"));
+        assert!(!module.contains("__private"));
     }
 
     #[test]
@@ -390,11 +393,12 @@ mod tests {
         assert!(module.contains(
             "pub fn run(engine: &::knok::Engine, values: ::knok::tensor::Tensor2<f32, 2, 3>) -> ::knok::Result<(::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
         ));
-        assert!(module
-            .contains("let outputs = ::knok::__private::invoke_with_engine(engine, artifact, &["));
-        assert!(module.contains("outputs.read::<f32>(0)"));
-        assert!(module.contains("outputs.read::<i64>(1)"));
-        assert!(module.contains("Ok(("));
+        assert!(module.contains(
+            "pub static GRAPH: ::knok::Graph<::knok::tensor::Tensor2<f32, 2, 3>, (::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
+        ));
+        assert!(module.contains("GRAPH.run(engine, values)"));
+        assert!(module.contains("GRAPH.run_once(values)"));
+        assert!(!module.contains("__private"));
     }
 
     #[test]
@@ -420,8 +424,12 @@ mod tests {
         assert!(module.contains("function_name: \"imported.add\""));
         assert!(module.contains("x: ::knok::tensor::Tensor1<f32, 4>"));
         assert!(module.contains("y: ::knok::tensor::Tensor1<f32, 4>"));
-        assert!(module.contains("::knok::__private::Input::F32(&[4], x.as_slice())"));
-        assert!(module.contains("::knok::__private::Input::F32(&[4], y.as_slice())"));
+        assert!(module.contains(
+            "pub static GRAPH: ::knok::Graph<(::knok::tensor::Tensor1<f32, 4>, ::knok::tensor::Tensor1<f32, 4>,), ::knok::tensor::Tensor1<f32, 4>>"
+        ));
+        assert!(module.contains("GRAPH.run(engine, (x, y,))"));
+        assert!(module.contains("GRAPH.run_once((x, y,))"));
+        assert!(!module.contains("__private"));
     }
 
     #[test]
@@ -439,6 +447,38 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not a valid IREE VM function name"));
+    }
+
+    #[test]
+    fn rejects_tuple_arities_that_runtime_traits_do_not_support() {
+        let inputs = (0..13)
+            .map(|index| input(&format!("x{index}"), ElementType::F32, &[1]))
+            .collect::<Vec<_>>();
+        let too_many_inputs =
+            typed_graph("too_many_inputs", inputs, vec![ty(ElementType::F32, &[1])]);
+
+        assert!(
+            graph_module(&too_many_inputs, Backend::LlvmCpu, "bad.vmfb", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("input arity 13 exceeds the supported maximum of 12")
+        );
+
+        let outputs = (0..13)
+            .map(|_| ty(ElementType::F32, &[1]))
+            .collect::<Vec<_>>();
+        let too_many_outputs = typed_graph(
+            "too_many_outputs",
+            vec![input("x", ElementType::F32, &[1])],
+            outputs,
+        );
+
+        assert!(
+            graph_module(&too_many_outputs, Backend::LlvmCpu, "bad.vmfb", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("output arity 13 exceeds the supported maximum of 12")
+        );
     }
 
     #[test]

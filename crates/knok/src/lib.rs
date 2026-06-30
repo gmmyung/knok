@@ -27,10 +27,8 @@ pub use half;
 pub mod artifact;
 /// Backend and runtime driver identifiers supported by generated artifacts.
 pub mod backend;
-#[doc(hidden)]
-pub mod __private {
-    pub use crate::private::*;
-}
+/// Typed generated graph handles and runtime boundary traits.
+pub mod graph;
 mod private;
 pub mod runtime;
 /// Fixed-rank tensor containers used by generated graph wrappers.
@@ -43,7 +41,7 @@ pub mod prelude {
     pub use crate::tensor::{
         FixedTensor, Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6, TensorElement,
     };
-    pub use crate::{Backend, Driver};
+    pub use crate::{Backend, Driver, Graph};
 }
 
 #[macro_export]
@@ -79,6 +77,7 @@ macro_rules! generated_graphs {
 
 pub use artifact::{DType, GraphArtifact, GraphArtifactVariant, TensorDesc};
 pub use backend::{Backend, Driver, SUPPORTED_BACKENDS};
+pub use graph::Graph;
 pub use runtime::{Engine, RuntimeConfig};
 
 /// Result alias used by the public runtime and tensor APIs.

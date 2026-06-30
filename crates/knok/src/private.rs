@@ -1,19 +1,29 @@
 extern crate alloc;
 
-pub use crate::runtime::raw::{Input, Output, Outputs};
+use alloc::vec::Vec;
 
-pub fn invoke_with_engine(
-    engine: &crate::Engine,
-    artifact: crate::GraphArtifact,
-    inputs: &[Input<'_>],
-) -> crate::Result<Outputs> {
-    engine.invoke(artifact, inputs)
+use crate::runtime::raw;
+
+pub trait Sealed {}
+
+pub trait RawGraphInputs {
+    fn push_raw_inputs<'a>(&'a self, inputs: &mut Vec<raw::Input<'a>>);
 }
 
-pub fn invoke_one_with_engine<T: Output>(
-    engine: &crate::Engine,
-    artifact: crate::GraphArtifact,
-    inputs: &[Input<'_>],
-) -> crate::Result<alloc::vec::Vec<T>> {
-    engine.invoke_one(artifact, inputs)
+pub trait RawGraphOutput: Sized {
+    fn read_raw_outputs(outputs: raw::Outputs) -> crate::Result<Self>;
+}
+
+pub trait RawGraphTensor: Sized {
+    type Element: RawGraphElement + raw::Element;
+
+    const SHAPE: &'static [usize];
+
+    fn from_vec(data: Vec<Self::Element>) -> crate::Result<Self>;
+
+    fn as_slice(&self) -> &[Self::Element];
+}
+
+pub trait RawGraphElement: Copy {
+    fn raw_input<'a>(shape: &'static [usize], data: &'a [Self]) -> raw::Input<'a>;
 }
