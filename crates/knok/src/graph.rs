@@ -42,9 +42,9 @@ where
 {
     /// Runs the graph with a reusable hosted runtime engine.
     pub fn run(&self, engine: &Engine, inputs: I) -> crate::Result<O> {
-        let mut raw_inputs = Vec::new();
-        RawGraphInputs::push_raw_inputs(&inputs, &mut raw_inputs);
-        RawGraphOutput::read_raw_outputs(engine.invoke(self.artifact, &raw_inputs)?)
+        RawGraphInputs::with_raw_inputs(&inputs, |raw_inputs| {
+            RawGraphOutput::read_raw_outputs(engine.invoke(self.artifact, raw_inputs)?)
+        })
     }
 
     /// Runs the graph once by constructing an engine for the artifact's default variant.
@@ -74,7 +74,9 @@ pub trait GraphElement: crate::private::Sealed + RawGraphElement {}
 impl crate::private::Sealed for () {}
 
 impl RawGraphInputs for () {
-    fn push_raw_inputs<'a>(&'a self, _inputs: &mut Vec<raw::Input<'a>>) {}
+    fn with_raw_inputs<'a, R>(&'a self, run: impl FnOnce(&[raw::Input<'a>]) -> R) -> R {
+        run(&[])
+    }
 }
 
 impl GraphInputs for () {}
@@ -98,11 +100,12 @@ impl<T> RawGraphInputs for T
 where
     T: GraphTensor,
 {
-    fn push_raw_inputs<'a>(&'a self, inputs: &mut Vec<raw::Input<'a>>) {
-        inputs.push(<T::Element as RawGraphElement>::raw_input(
+    fn with_raw_inputs<'a, R>(&'a self, run: impl FnOnce(&[raw::Input<'a>]) -> R) -> R {
+        let inputs = [<T::Element as RawGraphElement>::raw_input(
             T::SHAPE,
             self.as_slice(),
-        ));
+        )];
+        run(&inputs)
     }
 }
 
@@ -197,15 +200,16 @@ macro_rules! impl_graph_tuple {
         where
             $($name: GraphTensor,)+
         {
-            fn push_raw_inputs<'a>(&'a self, inputs: &mut Vec<raw::Input<'a>>) {
-                $(
-                    inputs.push(
+            fn with_raw_inputs<'a, R>(&'a self, run: impl FnOnce(&[raw::Input<'a>]) -> R) -> R {
+                let inputs = [
+                    $(
                         <$name::Element as RawGraphElement>::raw_input(
                             $name::SHAPE,
                             self.$index.as_slice(),
                         ),
-                    );
-                )+
+                    )+
+                ];
+                run(&inputs)
             }
         }
 
