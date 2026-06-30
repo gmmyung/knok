@@ -374,6 +374,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let rhs = self.lower_expr(&args[1])?;
                 self.matmul(lhs, rhs)
             }
+            CallOp::MaxPool2d(options) => {
+                let input = self.lower_expr(&args[0])?;
+                self.max_pool2d(input, options)
+            }
+            CallOp::AvgPool2d(options) => {
+                let input = self.lower_expr(&args[0])?;
+                self.avg_pool2d(input, options)
+            }
             CallOp::Min(axis) => {
                 let input = self.lower_expr(&args[0])?;
                 self.min(input, *axis)

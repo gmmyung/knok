@@ -3,6 +3,7 @@ mod conv;
 mod linalg;
 mod matmul;
 mod permute;
+mod pool;
 mod rules;
 
 pub(crate) use common::{broadcast_shape_slices, expect_numeric_element};
@@ -13,4 +14,5 @@ pub(crate) use linalg::{
 };
 pub(crate) use matmul::matmul_result_type;
 pub(crate) use permute::validate_permute;
+pub(crate) use pool::{avg_pool2d_result_type, max_pool2d_result_type};
 pub(crate) use rules::{infer_call_result, infer_call_results};

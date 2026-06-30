@@ -123,4 +123,21 @@ fn linalg_and_conv_ops_run() {
         grouped.as_slice(),
         &[6.0, 60.0, 8.0, 80.0, 12.0, 120.0, 14.0, 140.0],
     );
+
+    let pool_input = Tensor4::from_array([[
+        [[-8.0], [-7.0], [-6.0], [-5.0]],
+        [[-4.0], [-3.0], [-2.0], [-1.0]],
+        [[1.0], [2.0], [3.0], [4.0]],
+        [[5.0], [6.0], [7.0], [8.0]],
+    ]]);
+    let max_pool = graphs::max_pool2d_f32::call(pool_input).unwrap();
+    assert_close(max_pool.as_slice(), &[-3.0, -1.0, 6.0, 8.0]);
+
+    let avg_input = Tensor4::from_array([[
+        [[1.0], [2.0], [3.0]],
+        [[4.0], [5.0], [6.0]],
+        [[7.0], [8.0], [9.0]],
+    ]]);
+    let avg_pool = graphs::avg_pool2d_padded_f32::call(avg_input).unwrap();
+    assert_close(avg_pool.as_slice(), &[0.25, 1.25, 2.75, 7.0]);
 }
