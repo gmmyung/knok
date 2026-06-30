@@ -96,6 +96,20 @@ Generated modules expose:
 - `run(&Engine, ...)` for repeated hosted inference.
 - `call(...)` for one-off hosted inference with a convenience engine.
 
+Most application code should call `run` or `call`. Use `GRAPH` directly when a
+library wants to pass around the typed graph handle, inspect its artifact, or
+build a small abstraction over generated wrappers.
+
+For repeated hosted inference, prefer an engine created from the artifact:
+
+```rust
+let engine = knok::Engine::for_artifact(graphs::forward::artifact())?;
+let y = graphs::forward::run(&engine, x)?;
+```
+
+That keeps runtime driver selection aligned with the backend used by
+`knok-build`.
+
 ## External MLIR Models
 
 Custom `.mlir` files can be compiled in `build.rs` and exposed with the same

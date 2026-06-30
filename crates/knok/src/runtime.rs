@@ -232,6 +232,9 @@ impl RuntimeConfig {
     }
 
     /// Uses the default runtime driver for a compile backend.
+    ///
+    /// Prefer [`Engine::for_artifact`] when running a generated graph and the
+    /// artifact is available.
     pub fn backend(backend: Backend) -> Self {
         Self {
             driver: DriverSelection::Explicit(backend.default_driver().into()),
@@ -299,6 +302,9 @@ mod hosted {
         }
 
         /// Creates an engine for a compile backend's default runtime driver.
+        ///
+        /// Prefer [`Engine::for_artifact`] when running generated graphs so the
+        /// engine follows the driver recorded in the artifact.
         pub fn for_backend(backend: crate::Backend) -> crate::Result<Self> {
             Self::new(RuntimeConfig::backend(backend))
         }
@@ -309,6 +315,10 @@ mod hosted {
         }
 
         /// Creates an engine for the first variant embedded in an artifact.
+        ///
+        /// This is the preferred reusable-engine constructor for generated
+        /// graphs because it keeps runtime driver selection aligned with the
+        /// build-time backend metadata.
         pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
             let variant =
                 artifact

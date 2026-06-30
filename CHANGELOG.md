@@ -32,6 +32,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   build-time compilation of external `.mlir` files into generated wrappers.
 - Added feature-gated Vulkan/SPIR-V and CUDA backend/driver variants, and made
   Metal/SPIR-V a macOS-only backend.
+- Added runtime workflow documentation and a standalone release-mode runtime
+  benchmark harness.
 
 ### Changed
 
@@ -46,6 +48,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Replaced generated raw runtime invocation glue with typed `Graph<I, O>`
   handles. Generated `run` / `call` wrappers remain the supported execution
   surface; callers should not call raw runtime internals directly.
+- Simplified the low-level `Graph` API to `artifact`, `run`, and `run_once`;
+  generated modules still expose `call` for one-shot execution.
 
 ### Fixed
 

@@ -72,16 +72,17 @@ fn run_once(x: Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
 Each generated module also exposes a typed `GRAPH` handle for code that wants
 the lower-level `knok::Graph<I, O>` value.
 
-For repeated inference, create an engine once and reuse it:
+For repeated inference, create an engine from the generated artifact once and
+reuse it:
 
 ```rust
-use knok::{Backend, Engine, RuntimeConfig};
+use knok::Engine;
 use knok::prelude::*;
 
 knok::generated_graphs!(pub mod graphs);
 
 fn run_many(xs: impl IntoIterator<Item = Tensor2<f32, 2, 2>>) -> knok::Result<()> {
-    let engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu))?;
+    let engine = Engine::for_artifact(graphs::forward::artifact())?;
 
     for x in xs {
         let y = graphs::forward::run(&engine, x)?;
@@ -91,6 +92,9 @@ fn run_many(xs: impl IntoIterator<Item = Tensor2<f32, 2, 2>>) -> knok::Result<()
     Ok(())
 }
 ```
+
+`Engine::for_artifact` uses the runtime driver recorded by `knok-build`, so the
+engine matches the backend used to compile the graph.
 
 Existing `.mlir` files can also be compiled from `build.rs` with
 `knok_build::compile_mlir_models!` and imported through the same
@@ -160,8 +164,11 @@ With `default-features = false`, generated wrapper types can still typecheck in
 - [Dtypes](docs/dtypes.md): supported element types and explicit casting policy.
 - [Backends](docs/backends.md): compiler backends, runtime drivers, and platform
   notes.
+- [Runtime workflow](docs/runtime.md): generated wrappers, `Graph`, and
+  reusable engines.
 - [Compiler setup](docs/compiler.md): `iree-compile` installation and cache
   behavior.
+- [Benchmarks](docs/benchmarks.md): local runtime benchmark harness and shapes.
 
 ## Development
 
