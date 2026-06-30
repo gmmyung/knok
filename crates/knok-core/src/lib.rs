@@ -14,7 +14,8 @@ mod tests;
 
 pub use ast::{
     AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
-    Let, Padding2d, StaticScalar, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue, UnaryOp,
+    Let, Padding2d, Pool2dOptions, StaticScalar, TensorType, TypedExpr, TypedGraph, TypedLet,
+    TypedValue, UnaryOp,
 };
 pub use ops::{static_arange_literals, static_eye_literals, static_linspace_literals};
 pub use type_parse::parse_tensor_type;

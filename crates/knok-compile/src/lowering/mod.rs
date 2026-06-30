@@ -3,6 +3,7 @@ mod emit;
 mod linalg;
 mod lowerer;
 mod matmul;
+mod pool;
 mod reductions;
 mod shape;
 mod tensor_ops;

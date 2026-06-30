@@ -3,6 +3,7 @@ mod conv;
 mod linalg;
 mod matmul;
 mod permute;
+mod pool;
 mod rules;
 mod static_creation;
 
@@ -14,6 +15,7 @@ pub(crate) use linalg::{
 };
 pub(crate) use matmul::matmul_result_type;
 pub(crate) use permute::validate_permute;
+pub(crate) use pool::{avg_pool2d_result_type, max_pool2d_result_type};
 pub(crate) use rules::{infer_call_result, infer_call_results};
 pub use static_creation::{static_arange_literals, static_eye_literals, static_linspace_literals};
 pub(crate) use static_creation::{validate_static_creation_call, validate_static_creation_target};
