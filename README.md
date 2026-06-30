@@ -8,9 +8,9 @@
 `knok` lets you write static-shape tensor graphs in Rust, compile them during
 `cargo build`, and call the compiled graph as a typed Rust function.
 
-Graphs are authored in `build.rs`, lowered through MLIR, compiled with IREE, and
-embedded into your crate as generated wrappers. The target code only sees typed
-tensor inputs and outputs.
+Graphs are authored in `build.rs`, lowered through MLIR, compiled with IREE,
+and embedded into your crate as generated wrappers. Runtime code imports those
+wrappers with `knok::generated_graphs!` and calls typed Rust functions.
 
 ## Install
 
@@ -42,7 +42,7 @@ troubleshooting.
 
 ## Quickstart
 
-Define a graph in `build.rs`:
+Define and compile a graph in `build.rs`:
 
 ```rust
 use knok_build::prelude::*;
@@ -57,7 +57,8 @@ fn main() {
 }
 ```
 
-Import the generated module and call it from normal Rust code:
+Import the generated module and call it from normal Rust code. `call` is the
+one-shot convenience path:
 
 ```rust
 use knok::prelude::*;
@@ -73,7 +74,7 @@ Each generated module also exposes a typed `GRAPH` handle for code that wants
 the lower-level `knok::Graph<I, O>` value.
 
 For repeated inference, create an engine from the generated artifact once and
-reuse it:
+use `run`:
 
 ```rust
 use knok::Engine;
@@ -182,6 +183,12 @@ Generate coverage artifacts:
 
 ```sh
 scripts/coverage.sh
+```
+
+Run local release-mode runtime benchmarks:
+
+```sh
+scripts/benchmark.sh
 ```
 
 Contributor-oriented notes live in [CONTRIBUTING.md](CONTRIBUTING.md) and

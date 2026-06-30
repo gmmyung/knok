@@ -37,6 +37,8 @@ as cache reuse or a specific lowering form.
 Before a release, also run the dry-run publishing checklist in
 [release-readiness.md](release-readiness.md).
 
-`scripts/benchmark.sh` is not part of `release-check.sh`. It builds a separate
-release-mode benchmark crate and should be run when changing runtime dispatch,
-backend selection, tensor conversion, or generated wrapper code.
+`scripts/benchmark.sh` is not part of `release-check.sh`. It runs the separate
+release-mode benchmark crate under `benchmarks/runtime` and should be run when
+changing runtime dispatch, backend selection, tensor conversion, or generated
+wrapper code. It writes `target/benchmark-summary.csv` and
+`target/benchmark-summary.json` inside the benchmark crate.

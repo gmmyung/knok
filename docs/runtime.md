@@ -1,8 +1,14 @@
 # Runtime Workflow
 
-`knok-build` chooses a compile backend during `build.rs` and records the
-matching runtime driver in the generated artifact. Target code then executes
-the generated wrapper through `knok::Graph<I, O>` and `knok::Engine`.
+`knok-build` chooses a compile backend during `build.rs`, compiles the graph to
+a VMFB artifact, and records the matching runtime driver in the generated
+metadata. Target code imports that generated module with
+`knok::generated_graphs!` and executes it through `knok::Graph<I, O>` and
+`knok::Engine`.
+
+Build-time graph functions do not run on the target. They are traced by the
+build script, lowered through MLIR, and embedded as generated Rust wrappers plus
+bytecode.
 
 ## Generated Modules
 

@@ -34,6 +34,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   Metal/SPIR-V a macOS-only backend.
 - Added runtime workflow documentation and a standalone release-mode runtime
   benchmark harness.
+- Added lightweight runtime benchmarks for matmul, batched matmul, large
+  elementwise graphs, reductions, softmax, layout operations, MLP, and conv2d.
 
 ### Changed
 
@@ -52,6 +54,7 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   generated modules still expose `call` for one-shot execution.
 - Changed the runtime benchmark baseline from hand-written scalar loops to
   `ndarray`.
+- Changed `scripts/benchmark.sh` to emit CSV/JSON benchmark summaries.
 
 ### Fixed
 
