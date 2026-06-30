@@ -5,6 +5,7 @@ use std::{
 };
 
 use knok::{prelude::*, Engine};
+use ndarray::{Array2, Array3, Axis};
 
 knok::generated_graphs!(pub mod graphs);
 
@@ -45,6 +46,10 @@ fn bench_matmul_128(warmup: usize, iterations: usize) -> knok::Result<()> {
     let y_data = filled_data(128 * 128, 0.002, -0.5);
     let x = Tensor2::<f32, 128, 128>::from_vec(x_data.clone())?;
     let y = Tensor2::<f32, 128, 128>::from_vec(y_data.clone())?;
+    let ndarray_x =
+        Array2::from_shape_vec((128, 128), x_data.clone()).expect("valid lhs matrix shape");
+    let ndarray_y =
+        Array2::from_shape_vec((128, 128), y_data.clone()).expect("valid rhs matrix shape");
 
     for _ in 0..warmup {
         black_box(graphs::matmul_128::run(&engine, x.clone(), y.clone())?);
@@ -61,15 +66,18 @@ fn bench_matmul_128(warmup: usize, iterations: usize) -> knok::Result<()> {
         knok_checksum,
     );
 
-    let (rust_duration, rust_checksum) = measure(iterations, || {
-        let output = rust_matmul(&x_data, &y_data, 128, 128, 128);
-        Ok(checksum(&output))
+    for _ in 0..warmup {
+        black_box(ndarray_matmul_checksum(&ndarray_x, &ndarray_y));
+    }
+
+    let (ndarray_duration, ndarray_checksum) = measure(iterations, || {
+        Ok(ndarray_matmul_checksum(&ndarray_x, &ndarray_y))
     })?;
     report(
-        "rust matmul 128x128 @ 128x128",
+        "ndarray matmul 128x128 @ 128x128",
         iterations,
-        rust_duration,
-        rust_checksum,
+        ndarray_duration,
+        ndarray_checksum,
     );
 
     Ok(())
@@ -82,6 +90,10 @@ fn bench_batched_matmul_16x128(warmup: usize, iterations: usize) -> knok::Result
     let y_data = filled_data(len, 0.0007, -0.75);
     let x = Tensor3::<f32, 16, 128, 128>::from_vec(x_data.clone())?;
     let y = Tensor3::<f32, 16, 128, 128>::from_vec(y_data.clone())?;
+    let ndarray_x =
+        Array3::from_shape_vec((16, 128, 128), x_data.clone()).expect("valid lhs batch shape");
+    let ndarray_y =
+        Array3::from_shape_vec((16, 128, 128), y_data.clone()).expect("valid rhs batch shape");
 
     for _ in 0..warmup {
         black_box(graphs::batched_matmul_16x128::run(
@@ -102,15 +114,18 @@ fn bench_batched_matmul_16x128(warmup: usize, iterations: usize) -> knok::Result
         knok_checksum,
     );
 
-    let (rust_duration, rust_checksum) = measure(iterations, || {
-        let output = rust_batched_matmul(&x_data, &y_data, 16, 128, 128, 128);
-        Ok(checksum(&output))
+    for _ in 0..warmup {
+        black_box(ndarray_batched_matmul_checksum(&ndarray_x, &ndarray_y));
+    }
+
+    let (ndarray_duration, ndarray_checksum) = measure(iterations, || {
+        Ok(ndarray_batched_matmul_checksum(&ndarray_x, &ndarray_y))
     })?;
     report(
-        "rust batched matmul 16x128x128 @ 16x128x128",
+        "ndarray batched matmul 16x128x128 @ 16x128x128",
         iterations,
-        rust_duration,
-        rust_checksum,
+        ndarray_duration,
+        ndarray_checksum,
     );
 
     Ok(())
@@ -151,45 +166,16 @@ fn checksum(values: &[f32]) -> f32 {
     values.iter().copied().sum::<f32>()
 }
 
-fn rust_matmul(x: &[f32], y: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    let mut out = vec![0.0; m * n];
-    for row in 0..m {
-        for col in 0..n {
-            let mut sum = 0.0;
-            for inner in 0..k {
-                sum += x[row * k + inner] * y[inner * n + col];
-            }
-            out[row * n + col] = sum;
-        }
-    }
-    out
+fn ndarray_matmul_checksum(lhs: &Array2<f32>, rhs: &Array2<f32>) -> f32 {
+    let output = lhs.dot(rhs);
+    checksum(output.as_slice().expect("ndarray dot output is contiguous"))
 }
 
-fn rust_batched_matmul(
-    x: &[f32],
-    y: &[f32],
-    batch: usize,
-    m: usize,
-    k: usize,
-    n: usize,
-) -> Vec<f32> {
-    let mut out = vec![0.0; batch * m * n];
-    let lhs_stride = m * k;
-    let rhs_stride = k * n;
-    let out_stride = m * n;
-    for b in 0..batch {
-        let lhs = &x[b * lhs_stride..][..lhs_stride];
-        let rhs = &y[b * rhs_stride..][..rhs_stride];
-        let dst = &mut out[b * out_stride..][..out_stride];
-        for row in 0..m {
-            for col in 0..n {
-                let mut sum = 0.0;
-                for inner in 0..k {
-                    sum += lhs[row * k + inner] * rhs[inner * n + col];
-                }
-                dst[row * n + col] = sum;
-            }
-        }
+fn ndarray_batched_matmul_checksum(lhs: &Array3<f32>, rhs: &Array3<f32>) -> f32 {
+    let mut sum = 0.0;
+    for b in 0..lhs.len_of(Axis(0)) {
+        let output = lhs.index_axis(Axis(0), b).dot(&rhs.index_axis(Axis(0), b));
+        sum += checksum(output.as_slice().expect("ndarray dot output is contiguous"));
     }
-    out
+    sum
 }

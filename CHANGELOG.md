@@ -50,6 +50,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   surface; callers should not call raw runtime internals directly.
 - Simplified the low-level `Graph` API to `artifact`, `run`, and `run_once`;
   generated modules still expose `call` for one-shot execution.
+- Changed the runtime benchmark baseline from hand-written scalar loops to
+  `ndarray`.
 
 ### Fixed
 

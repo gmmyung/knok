@@ -28,13 +28,12 @@ The harness currently reports:
 | --- | --- | --- |
 | `knok tiny_relu` | `2x2 -> 2x2` | Lower bound for hosted graph call overhead. |
 | `knok matmul` | `128x128 @ 128x128 -> 128x128` | Single matrix multiply through IREE. |
-| `rust matmul` | `128x128 @ 128x128 -> 128x128` | Simple scalar Rust baseline for context. |
+| `ndarray matmul` | `128x128 @ 128x128 -> 128x128` | `ndarray::Array2::dot` baseline. |
 | `knok batched matmul` | `16x128x128 @ 16x128x128 -> 16x128x128` | Batched matrix multiply through IREE. |
-| `rust batched matmul` | `16x128x128 @ 16x128x128 -> 16x128x128` | Simple scalar Rust baseline for context. |
+| `ndarray batched matmul` | `16x128x128 @ 16x128x128 -> 16x128x128` | Batch loop over `ndarray::Array2::dot`. |
 
-The Rust baselines are intentionally plain loops, not BLAS replacements. They
-exist to catch obviously bad runtime overhead or shape mistakes; they are not a
-claim that scalar Rust is the performance target.
+The `ndarray` baselines reuse prebuilt arrays in the timed loop. The batched
+case loops over the batch axis and calls `Array2::dot` per batch.
 
 ## Engine Reuse
 
