@@ -7,7 +7,7 @@ use crate::runtime::raw;
 pub trait Sealed {}
 
 pub trait RawGraphInputs {
-    fn push_raw_inputs<'a>(&'a self, inputs: &mut Vec<raw::Input<'a>>);
+    fn with_raw_inputs<'a, R>(&'a self, run: impl FnOnce(&[raw::Input<'a>]) -> R) -> R;
 }
 
 pub trait RawGraphOutput: Sized {
