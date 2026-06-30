@@ -1,6 +1,6 @@
 use knok::{
-    runtime::raw, Backend, DType, Driver, Engine, Error, GraphArtifact, GraphArtifactVariant,
-    RuntimeConfig, TensorDesc, SUPPORTED_BACKENDS,
+    Backend, DType, Driver, Engine, Error, GraphArtifact, GraphArtifactVariant, RuntimeConfig,
+    TensorDesc, SUPPORTED_BACKENDS,
 };
 
 #[test]
@@ -111,9 +111,9 @@ fn raw_inputs_report_shape_and_dtype() {
     let floats = [1.0_f32, 2.0];
     let ints = [1_i64, 2];
 
-    let bool_input = raw::Input::Bool(&[2], &bools);
-    let float_input = raw::Input::F32(&[1, 2], &floats);
-    let int_input = raw::Input::I64(&[2], &ints);
+    let bool_input = knok::__private::Input::Bool(&[2], &bools);
+    let float_input = knok::__private::Input::F32(&[1, 2], &floats);
+    let int_input = knok::__private::Input::I64(&[2], &ints);
 
     assert_eq!(bool_input.shape(), &[2]);
     assert_eq!(bool_input.dtype(), DType::Bool);
