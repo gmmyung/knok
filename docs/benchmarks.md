@@ -2,7 +2,7 @@
 
 `knok` keeps runtime benchmarks outside the default workspace checks so normal
 CI and release validation stay focused on correctness. The benchmark harness is
-a lightweight standalone crate under `benchmarks/runtime`.
+a standalone Criterion crate under `benchmarks/runtime`.
 
 ## Command
 
@@ -12,21 +12,17 @@ Run the local benchmark harness from the repository root:
 nix develop --command scripts/benchmark.sh
 ```
 
-The script builds and runs `benchmarks/runtime` in release mode. It uses the
-pinned `iree-compile` from the Nix shell.
+The script runs `cargo bench --bench runtime` in `benchmarks/runtime`. It uses
+the pinned `iree-compile` from the Nix shell.
 
-Tune sample counts with environment variables:
+Pass Criterion options after `--`:
 
 ```sh
-KNOK_BENCH_WARMUP=5 \
-KNOK_BENCH_SAMPLES=50 \
-nix develop --command scripts/benchmark.sh
+nix develop --command scripts/benchmark.sh --sample-size 30 --warm-up-time 2
 ```
 
-The script prints mean and median timings and also writes:
-
-- `benchmarks/runtime/target/benchmark-summary.csv`
-- `benchmarks/runtime/target/benchmark-summary.json`
+Criterion writes reports and estimates under
+`benchmarks/runtime/target/criterion`.
 
 ## Cases
 

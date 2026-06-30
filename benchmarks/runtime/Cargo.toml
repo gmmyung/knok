@@ -11,4 +11,11 @@ ndarray = "0.16.1"
 [build-dependencies]
 knok-build = { path = "../../crates/knok-build" }
 
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "runtime"
+harness = false
+
 [workspace]
