@@ -326,7 +326,7 @@ checksum = "47f142fe24a9c9944451e8349de0a56af5f3e7226dc46f3ed4d4ecc0b85af75e"
 
 [[package]]
 name = "knok"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "eerie",
  "half",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "knok-build"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "half",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "knok-build-macros"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "knok-core",
  "proc-macro2",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "knok-compile"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "knok-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
