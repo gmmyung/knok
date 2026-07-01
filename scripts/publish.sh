@@ -71,6 +71,29 @@ sys.exit(1)
 PY
 }
 
+crate_exists() {
+  local crate="$1"
+  local version="$2"
+  python3 - "$crate" "$version" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+crate = sys.argv[1]
+version = sys.argv[2]
+url = f"https://crates.io/api/v1/crates/{crate}/{version}"
+
+try:
+    request = urllib.request.Request(url, headers={"User-Agent": "knok-release-script"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        sys.exit(0 if response.status == 200 else 1)
+except urllib.error.HTTPError as error:
+    sys.exit(1 if error.code == 404 else 2)
+except Exception:
+    sys.exit(2)
+PY
+}
+
 if [[ "$mode" == "--dry-run" ]]; then
   cargo publish -p knok-core --dry-run --allow-dirty
   cat <<'EOF'
@@ -83,6 +106,10 @@ fi
 
 for crate in "${crates[@]}"; do
   version="$(crate_version "$crate")"
+  if crate_exists "$crate" "$version"; then
+    echo "$crate $version is already available on crates.io; skipping"
+    continue
+  fi
   cargo publish -p "$crate"
   wait_for_crate "$crate" "$version"
 done
