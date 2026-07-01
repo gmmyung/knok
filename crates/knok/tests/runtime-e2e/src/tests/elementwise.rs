@@ -77,6 +77,7 @@ fn transcendental_and_activation_ops_run() {
     let sin = graphs::sin_f32::call(x.clone()).unwrap();
     let cos = graphs::cos_f32::call(x.clone()).unwrap();
     let tan = graphs::tan_f32::call(x.clone()).unwrap();
+    let tanh = graphs::tanh_f32::call(x.clone()).unwrap();
     let sigmoid = graphs::sigmoid_f32::call(x).unwrap();
     assert_close(
         sin.as_slice(),
@@ -89,6 +90,10 @@ fn transcendental_and_activation_ops_run() {
     assert_close(
         tan.as_slice(),
         &values.iter().map(|v| v.tan()).collect::<Vec<_>>(),
+    );
+    assert_close(
+        tanh.as_slice(),
+        &values.iter().map(|v| v.tanh()).collect::<Vec<_>>(),
     );
     assert_close(
         sigmoid.as_slice(),
