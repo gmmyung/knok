@@ -11,6 +11,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-01
+
 ### Added
 
 - Added an experimental `knok-build` build-time tracing frontend that records
