@@ -61,6 +61,11 @@ fn identity_f32() -> T2<f32, 3, 3> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn eye_f32() -> T2<f32, 3, 3> {
+    eye()
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn arange_to_i32() -> T1<i32, 4> {
     arange_to(4)
 }
@@ -183,6 +188,11 @@ fn cos_f32(x: T1<f32, 4>) -> T1<f32, 4> {
 #[knok_build::graph(backend = Backend::LlvmCpu)]
 fn tan_f32(x: T1<f32, 4>) -> T1<f32, 4> {
     tan(x)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn tanh_f32(x: T1<f32, 4>) -> T1<f32, 4> {
+    tanh(x)
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
@@ -326,6 +336,11 @@ fn argmax_axis1_f32(x: T2<f32, 2, 3>) -> T1<i64, 2> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn argmin_axis0_f32(x: T2<f32, 2, 3>) -> T1<i64, 3> {
+    argmin_axis(x, 0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn amin_all_f32(x: T2<f32, 2, 3>) -> T0<f32> {
     amin(x)
 }
@@ -346,6 +361,21 @@ fn amax_axis0_f32(x: T2<f32, 2, 3>) -> T1<f32, 3> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn min_axis0_f32(x: T2<f32, 2, 3>) -> T1<f32, 3> {
+    min_axis(x, 0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn max_axis1_f32(x: T2<f32, 2, 3>) -> T1<f32, 2> {
+    max_axis(x, 1)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn prod_axis0_f32(x: T2<f32, 2, 3>) -> T1<f32, 3> {
+    prod_axis(x, 0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn ptp_all_f32(x: T2<f32, 2, 3>) -> T0<f32> {
     ptp(x)
 }
@@ -353,6 +383,16 @@ fn ptp_all_f32(x: T2<f32, 2, 3>) -> T0<f32> {
 #[knok_build::graph(backend = Backend::LlvmCpu)]
 fn ptp_axis1_f32(x: T2<f32, 2, 3>) -> T1<f32, 2> {
     ptp_axis(x, 1)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn var_axis0_f32(x: T2<f32, 2, 3>) -> T1<f32, 3> {
+    var_axis(x, 0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn std_axis1_f32(x: T2<f32, 2, 3>) -> T1<f32, 2> {
+    std_axis(x, 1)
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
@@ -522,6 +562,11 @@ fn vecdot_axis1_f32(m: T2<f32, 2, 3>) -> T1<f32, 2> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn vecdot_f32(v: T1<f32, 3>) -> T0<f32> {
+    vecdot(v.clone(), v)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn outer_f32(v: T1<f32, 3>) -> T2<f32, 3, 3> {
     outer(v.clone(), v)
 }
@@ -561,6 +606,21 @@ fn grouped_conv2d_f32(x: T4<f32, 1, 3, 3, 2>, k: T4<f32, 2, 2, 1, 2>) -> T4<f32,
     conv2d_options(x, k, Conv2dOptions::new().groups(2))
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn padded_stride_dilated_conv2d_f32(
+    x: T4<f32, 1, 5, 5, 1>,
+    k: T4<f32, 2, 2, 1, 1>,
+) -> T4<f32, 1, 3, 3, 1> {
+    conv2d_options(
+        x,
+        k,
+        Conv2dOptions::new()
+            .padding(1, 1, 1, 1)
+            .stride(2, 2)
+            .dilation(2, 2),
+    )
+}
+
 fn main() {
     knok_build::compile_graphs!(
         affine_relu,
@@ -575,6 +635,7 @@ fn main() {
         arange_step_i32,
         linspace_f32,
         identity_f32,
+        eye_f32,
         arange_to_i32,
         arange_i32,
         zeros_like_f32,
@@ -600,6 +661,7 @@ fn main() {
         sin_f32,
         cos_f32,
         tan_f32,
+        tanh_f32,
         sigmoid_f32,
         minimum_f32,
         maximum_f32,
@@ -628,12 +690,18 @@ fn main() {
         sum_axis1_f32,
         mean_axis0_f32,
         argmax_axis1_f32,
+        argmin_axis0_f32,
         amin_all_f32,
         amax_all_f32,
         amin_axis1_f32,
         amax_axis0_f32,
+        min_axis0_f32,
+        max_axis1_f32,
+        prod_axis0_f32,
         ptp_all_f32,
         ptp_axis1_f32,
+        var_axis0_f32,
+        std_axis1_f32,
         all_bool,
         any_bool,
         all_axis1_bool,
@@ -667,6 +735,7 @@ fn main() {
         dot_f32,
         inner_f32,
         vecdot_axis1_f32,
+        vecdot_f32,
         outer_f32,
         matvec_f32,
         trace_f32,
@@ -674,7 +743,8 @@ fn main() {
         diagonal_f32,
         diagonal_axes_f32,
         conv2d_f32,
-        grouped_conv2d_f32
+        grouped_conv2d_f32,
+        padded_stride_dilated_conv2d_f32
     );
 
     knok_build::compile_mlir_models_with_options!(

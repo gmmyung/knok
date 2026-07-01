@@ -25,25 +25,40 @@ fn reduction_ops_run() {
     let sum_axis = graphs::sum_axis1_f32::call(x.clone()).unwrap();
     let mean_axis = graphs::mean_axis0_f32::call(x.clone()).unwrap();
     let argmax_axis = graphs::argmax_axis1_f32::call(x.clone()).unwrap();
+    let argmin_axis = graphs::argmin_axis0_f32::call(x.clone()).unwrap();
     assert_close(std.as_slice(), &[(35.0_f32 / 12.0).sqrt()]);
     assert_exact(argmin.as_slice(), &[0]);
     assert_exact(argmax.as_slice(), &[5]);
     assert_close(sum_axis.as_slice(), &[6.0, 15.0]);
     assert_close(mean_axis.as_slice(), &[2.5, 3.5, 4.5]);
     assert_exact(argmax_axis.as_slice(), &[2, 2]);
+    assert_exact(argmin_axis.as_slice(), &[0, 0, 0]);
 
     let amin = graphs::amin_all_f32::call(x.clone()).unwrap();
     let amax = graphs::amax_all_f32::call(x.clone()).unwrap();
     let amin_axis = graphs::amin_axis1_f32::call(x.clone()).unwrap();
     let amax_axis = graphs::amax_axis0_f32::call(x.clone()).unwrap();
+    let min_axis = graphs::min_axis0_f32::call(x.clone()).unwrap();
+    let max_axis = graphs::max_axis1_f32::call(x.clone()).unwrap();
+    let prod_axis = graphs::prod_axis0_f32::call(x.clone()).unwrap();
     let ptp = graphs::ptp_all_f32::call(x.clone()).unwrap();
-    let ptp_axis = graphs::ptp_axis1_f32::call(x).unwrap();
+    let ptp_axis = graphs::ptp_axis1_f32::call(x.clone()).unwrap();
+    let var_axis = graphs::var_axis0_f32::call(x.clone()).unwrap();
+    let std_axis = graphs::std_axis1_f32::call(x).unwrap();
     assert_close(amin.as_slice(), &[1.0]);
     assert_close(amax.as_slice(), &[6.0]);
     assert_close(amin_axis.as_slice(), &[1.0, 4.0]);
     assert_close(amax_axis.as_slice(), &[4.0, 5.0, 6.0]);
+    assert_close(min_axis.as_slice(), &[1.0, 2.0, 3.0]);
+    assert_close(max_axis.as_slice(), &[3.0, 6.0]);
+    assert_close(prod_axis.as_slice(), &[4.0, 10.0, 18.0]);
     assert_close(ptp.as_slice(), &[5.0]);
     assert_close(ptp_axis.as_slice(), &[2.0, 2.0]);
+    assert_close(var_axis.as_slice(), &[2.25, 2.25, 2.25]);
+    assert_close(
+        std_axis.as_slice(),
+        &[(2.0_f32 / 3.0).sqrt(), (2.0_f32 / 3.0).sqrt()],
+    );
 }
 
 #[test]

@@ -68,12 +68,14 @@ fn linalg_and_conv_ops_run() {
     let dot = graphs::dot_f32::call(v.clone()).unwrap();
     let inner = graphs::inner_f32::call(m.clone(), v.clone()).unwrap();
     let vecdot_axis = graphs::vecdot_axis1_f32::call(m.clone()).unwrap();
+    let vecdot = graphs::vecdot_f32::call(v.clone()).unwrap();
     let outer = graphs::outer_f32::call(v.clone()).unwrap();
     let matvec = graphs::matvec_f32::call(m.clone(), v).unwrap();
     let matmul = graphs::matmul_2x3_3x2::call(m.clone(), n.clone()).unwrap();
     assert_close(dot.as_slice(), &[14.0]);
     assert_close(inner.as_slice(), &[14.0, 32.0]);
     assert_close(vecdot_axis.as_slice(), &[14.0, 77.0]);
+    assert_close(vecdot.as_slice(), &[14.0]);
     assert_close(
         outer.as_slice(),
         &[1.0, 2.0, 3.0, 2.0, 4.0, 6.0, 3.0, 6.0, 9.0],
@@ -116,11 +118,24 @@ fn linalg_and_conv_ops_run() {
         [[7.0, 70.0], [8.0, 80.0], [9.0, 90.0]],
     ]]);
     let kg = Tensor4::from_array([[[[1.0, 1.0]], [[0.0, 0.0]]], [[[0.0, 0.0]], [[1.0, 1.0]]]]);
+    let xp = Tensor4::from_array([[
+        [[1.0], [2.0], [3.0], [4.0], [5.0]],
+        [[6.0], [7.0], [8.0], [9.0], [10.0]],
+        [[11.0], [12.0], [13.0], [14.0], [15.0]],
+        [[16.0], [17.0], [18.0], [19.0], [20.0]],
+        [[21.0], [22.0], [23.0], [24.0], [25.0]],
+    ]]);
+    let kp = Tensor4::from_array([[[[1.0]], [[2.0]]], [[[3.0]], [[4.0]]]]);
     let conv = graphs::conv2d_f32::call(x, k).unwrap();
     let grouped = graphs::grouped_conv2d_f32::call(xg, kg).unwrap();
+    let padded_stride_dilated = graphs::padded_stride_dilated_conv2d_f32::call(xp, kp).unwrap();
     assert_close(conv.as_slice(), &[6.0, 8.0, 12.0, 14.0]);
     assert_close(
         grouped.as_slice(),
         &[6.0, 60.0, 8.0, 80.0, 12.0, 120.0, 14.0, 140.0],
+    );
+    assert_close(
+        padded_stride_dilated.as_slice(),
+        &[28.0, 57.0, 27.0, 82.0, 152.0, 66.0, 34.0, 55.0, 19.0],
     );
 }

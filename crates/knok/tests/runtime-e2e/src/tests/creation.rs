@@ -6,10 +6,15 @@ use crate::{common::*, graphs};
 fn no_input_creation_graph_runs() {
     let range = graphs::arange_step_i32::call().unwrap();
     let linspace = graphs::linspace_f32::call().unwrap();
-    let eye = graphs::identity_f32::call().unwrap();
+    let identity = graphs::identity_f32::call().unwrap();
+    let eye = graphs::eye_f32::call().unwrap();
 
     assert_exact(range.as_slice(), &[0, 2, 4, 6]);
     assert_close(linspace.as_slice(), &[0.0, 0.25, 0.5, 0.75, 1.0]);
+    assert_close(
+        identity.as_slice(),
+        &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    );
     assert_close(
         eye.as_slice(),
         &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
