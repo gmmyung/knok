@@ -1,11 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use knok_core::{type_check, Expr, Graph, Input, Let, TensorType, TypedExpr, TypedGraph};
+use knok_core::{type_check, Expr, Graph, Input, TensorType, TypedExpr, TypedGraph};
 
 use crate::Result;
 
-use super::{expr::next_tuple_id, tensor::TraceTensor};
+use super::{expr::next_tuple_id, normalize::let_bind_nodes, tensor::TraceTensor};
 
 #[derive(Default)]
 pub struct TraceContext {
@@ -29,12 +28,8 @@ impl TraceContext {
         output: O,
     ) -> Result<TypedGraph> {
         let body = output.exprs();
-        let reserved_names = self
-            .inputs
-            .iter()
-            .map(|input| input.name.clone())
-            .collect::<BTreeSet<_>>();
-        let (lets, body) = let_bind_nodes(body, reserved_names);
+        let reserved_names = self.inputs.iter().map(|input| input.name.clone());
+        let (lets, body) = let_bind_nodes(body, reserved_names)?;
         let outputs = O::types();
         let graph = Graph {
             name: name.into(),
@@ -46,124 +41,6 @@ impl TraceContext {
         };
         type_check(graph, &[]).map_err(Into::into)
     }
-}
-
-fn let_bind_nodes(body: Vec<Expr>, mut reserved_names: BTreeSet<String>) -> (Vec<Let>, Vec<Expr>) {
-    let mut values = BTreeMap::new();
-    let mut visited = BTreeSet::new();
-    let mut order = Vec::new();
-    for expr in &body {
-        collect_nodes(expr, &mut visited, &mut values, &mut order);
-    }
-    let mut names = BTreeMap::new();
-    for node_id in &order {
-        let name = unique_node_name(*node_id, &mut reserved_names);
-        names.insert(*node_id, name);
-    }
-    let lets = order
-        .into_iter()
-        .map(|node_id| Let {
-            names: vec![names
-                .get(&node_id)
-                .expect("node traversal recorded an id without a generated name")
-                .clone()],
-            value: rewrite_node_refs(
-                values
-                    .get(&node_id)
-                    .expect("node traversal recorded an id without a value")
-                    .as_ref()
-                    .clone(),
-                &names,
-            ),
-        })
-        .collect();
-    let body = body
-        .into_iter()
-        .map(|expr| rewrite_node_refs(expr, &names))
-        .collect();
-    (lets, body)
-}
-
-fn collect_nodes(
-    expr: &Expr,
-    visited: &mut BTreeSet<u64>,
-    values: &mut BTreeMap<u64, Arc<Expr>>,
-    order: &mut Vec<u64>,
-) {
-    match expr {
-        Expr::Unary { value, .. } => collect_nodes(value, visited, values, order),
-        Expr::Binary { lhs, rhs, .. } => {
-            collect_nodes(lhs, visited, values, order);
-            collect_nodes(rhs, visited, values, order);
-        }
-        Expr::Node { node_id, value } => {
-            if visited.insert(*node_id) {
-                collect_nodes(value, visited, values, order);
-                values.insert(*node_id, value.clone());
-                order.push(*node_id);
-            }
-        }
-        Expr::TupleGet { value, .. } => collect_nodes(value, visited, values, order),
-        Expr::Call { args, .. } => {
-            for arg in args {
-                collect_nodes(arg, visited, values, order);
-            }
-        }
-        Expr::Var(_) | Expr::Const { .. } => {}
-    }
-}
-
-fn rewrite_node_refs(expr: Expr, names: &BTreeMap<u64, String>) -> Expr {
-    match expr {
-        Expr::Unary { op, value } => Expr::Unary {
-            op,
-            value: Box::new(rewrite_node_refs(*value, names)),
-        },
-        Expr::Binary { op, lhs, rhs } => Expr::Binary {
-            op,
-            lhs: Box::new(rewrite_node_refs(*lhs, names)),
-            rhs: Box::new(rewrite_node_refs(*rhs, names)),
-        },
-        Expr::Node { node_id, .. } => Expr::Var(
-            names
-                .get(&node_id)
-                .expect("node traversal missed a referenced node")
-                .clone(),
-        ),
-        Expr::TupleGet {
-            tuple_id,
-            value,
-            index,
-        } => Expr::TupleGet {
-            tuple_id,
-            value: Arc::new(rewrite_node_refs(value.as_ref().clone(), names)),
-            index,
-        },
-        Expr::Call { op, args } => Expr::Call {
-            op,
-            args: args
-                .into_iter()
-                .map(|arg| rewrite_node_refs(arg, names))
-                .collect(),
-        },
-        Expr::Var(_) | Expr::Const { .. } => expr,
-    }
-}
-
-fn unique_node_name(node_id: u64, reserved_names: &mut BTreeSet<String>) -> String {
-    let base = node_name(node_id);
-    let mut candidate = base.clone();
-    let mut suffix = 1;
-    while reserved_names.contains(&candidate) {
-        candidate = format!("{base}_{suffix}");
-        suffix += 1;
-    }
-    reserved_names.insert(candidate.clone());
-    candidate
-}
-
-fn node_name(node_id: u64) -> String {
-    format!("__knok_node_{node_id}")
 }
 
 pub trait TraceOutput {
@@ -294,9 +171,9 @@ mod tests {
             node_id: 7,
             value: std::sync::Arc::new(Expr::Var(input_name.clone())),
         }];
-        let reserved_names = BTreeSet::from([input_name.clone()]);
+        let reserved_names = [input_name.clone()];
 
-        let (lets, body) = let_bind_nodes(body, reserved_names);
+        let (lets, body) = let_bind_nodes(body, reserved_names).unwrap();
 
         assert_eq!(lets[0].names, vec!["__knok_node_7_1"]);
         assert_eq!(lets[0].value, Expr::Var(input_name));
