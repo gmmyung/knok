@@ -15,4 +15,5 @@ pub(crate) use linalg::{
 pub(crate) use matmul::matmul_result_type;
 pub(crate) use permute::validate_permute;
 pub(crate) use rules::{infer_call_result, infer_call_results};
-pub(crate) use static_creation::validate_static_creation_call;
+pub use static_creation::{static_arange_literals, static_eye_literals, static_linspace_literals};
+pub(crate) use static_creation::{validate_static_creation_call, validate_static_creation_target};

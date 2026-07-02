@@ -11,6 +11,11 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ## Unreleased
 
+### Changed
+
+- Rejected reused `Expr::Node` ids with different expression payloads during
+  `knok_core::type_check` instead of reusing cached node output types.
+
 ## 0.3.3 - 2026-07-02
 
 ### Fixed
