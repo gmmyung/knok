@@ -225,20 +225,17 @@ pub fn emit_registered_graphs_with_options(
     for registered in &graphs {
         let vmfb_name = graph_vmfb_name(&registered.graph.name);
         let vmfb_path = out_dir.join(&vmfb_name);
-        let compile_flags;
         if options.stub_artifacts {
             fs::write(&vmfb_path, [0u8; 16])?;
-            compile_flags = Vec::new();
         } else {
             let compiled = compile_registered_graph(&registered.graph, &graph_registry)?;
             fs::write(&vmfb_path, compiled.vmfb)?;
-            compile_flags = Vec::new();
         }
         generated.push_str(&codegen::graph_module(
             &registered.graph,
             registered.backend,
             &vmfb_name,
-            &compile_flags,
+            &[],
         )?);
         generated.push('\n');
     }
@@ -267,21 +264,14 @@ pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptio
         println!("cargo:rerun-if-changed={}", source_path.display());
         let vmfb_name = mlir_model_vmfb_name(&model.name);
         let vmfb_path = out_dir.join(&vmfb_name);
-        let compile_flags;
         if options.stub_artifacts {
             fs::write(&vmfb_path, [0u8; 16])?;
-            compile_flags = Vec::new();
         } else {
             let source = fs::read_to_string(&source_path)?;
             let vmfb = compile_mlir_source(model.backend.name(), &source)?;
             fs::write(&vmfb_path, vmfb)?;
-            compile_flags = Vec::new();
         }
-        generated.push_str(&codegen::mlir_model_module(
-            model,
-            &vmfb_name,
-            &compile_flags,
-        )?);
+        generated.push_str(&codegen::mlir_model_module(model, &vmfb_name, &[])?);
         generated.push('\n');
     }
 
