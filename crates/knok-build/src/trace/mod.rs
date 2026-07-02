@@ -4,6 +4,7 @@ mod creation;
 mod elementwise;
 mod expr;
 mod linalg;
+mod normalize;
 mod reductions;
 mod shape;
 mod tensor;
