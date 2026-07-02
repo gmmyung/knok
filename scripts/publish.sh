@@ -94,7 +94,48 @@ except Exception:
 PY
 }
 
+check_publish_metadata() {
+  python3 <<'PY'
+import pathlib
+import sys
+import tomllib
+
+root = pathlib.Path.cwd()
+workspace = tomllib.loads((root / "Cargo.toml").read_text())
+workspace_package = workspace["workspace"]["package"]
+paths = {
+    "knok-core": root / "crates/knok-core/Cargo.toml",
+    "knok-compile": root / "crates/knok-compile/Cargo.toml",
+    "knok-build-macros": root / "crates/knok-build-macros/Cargo.toml",
+    "knok-build": root / "crates/knok-build/Cargo.toml",
+    "knok": root / "crates/knok/Cargo.toml",
+}
+errors = []
+
+def package_field(package: dict, field: str):
+    value = package.get(field)
+    if isinstance(value, dict) and value.get("workspace") is True:
+        return workspace_package.get(field)
+    return value
+
+for crate, path in paths.items():
+    package = tomllib.loads(path.read_text())["package"]
+    for field in ["description", "license", "repository"]:
+        value = package_field(package, field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{path.relative_to(root)} package.{field} is missing or empty")
+
+if errors:
+    for error in errors:
+        print(f"error: {error}", file=sys.stderr)
+    sys.exit(1)
+
+print("publish metadata is present for all crates")
+PY
+}
+
 if [[ "$mode" == "--dry-run" ]]; then
+  check_publish_metadata
   cargo publish -p knok-core --dry-run --allow-dirty
   cat <<'EOF'
 Skipping dependent crate publish dry-runs: their new in-workspace dependency

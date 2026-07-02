@@ -28,13 +28,26 @@ crate_paths = {
     "knok": root / "crates/knok/Cargo.toml",
 }
 
+workspace = tomllib.loads((root / "Cargo.toml").read_text())
+workspace_package = workspace["workspace"]["package"]
+
+def package_field(package: dict, field: str):
+    value = package.get(field)
+    if isinstance(value, dict) and value.get("workspace") is True:
+        return workspace_package.get(field)
+    return value
+
 for crate, path in crate_paths.items():
     data = tomllib.loads(path.read_text())
-    actual = data["package"]["version"]
+    package = data["package"]
+    actual = package["version"]
     if actual != version:
         errors.append(f"{path.relative_to(root)} package.version is {actual}, expected {version}")
+    for field in ["description", "license", "repository"]:
+        value = package_field(package, field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{path.relative_to(root)} package.{field} is missing or empty")
 
-workspace = tomllib.loads((root / "Cargo.toml").read_text())
 deps = workspace["workspace"]["dependencies"]
 for crate in ["knok-core", "knok-build", "knok-build-macros", "knok-compile"]:
     dep = deps.get(crate)
