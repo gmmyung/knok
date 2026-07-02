@@ -231,6 +231,8 @@ fn cache_key(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use knok_core::{
         type_check, AxisSpec, CallOp, Conv2dOptions, ElementType, Expr, Graph, Input, Padding2d,
         TensorType,
@@ -648,12 +650,12 @@ mod tests {
                 body: vec![
                     Expr::TupleGet {
                         tuple_id: 1,
-                        value: Box::new(split.clone()),
+                        value: Arc::new(split.clone()),
                         index: 0,
                     },
                     Expr::TupleGet {
                         tuple_id: 1,
-                        value: Box::new(split),
+                        value: Arc::new(split),
                         index: 1,
                     },
                 ],
@@ -683,7 +685,7 @@ mod tests {
         };
         let matmul = Expr::Node {
             node_id: 1,
-            value: Box::new(Expr::Call {
+            value: Arc::new(Expr::Call {
                 op: CallOp::Matmul,
                 args: vec![Expr::Var("x".into()), Expr::Var("w".into())],
             }),
@@ -735,7 +737,7 @@ mod tests {
         };
         let matmul = |node_id| Expr::Node {
             node_id,
-            value: Box::new(Expr::Call {
+            value: Arc::new(Expr::Call {
                 op: CallOp::Matmul,
                 args: vec![Expr::Var("x".into()), Expr::Var("w".into())],
             }),
@@ -801,22 +803,22 @@ mod tests {
                 body: vec![
                     Expr::TupleGet {
                         tuple_id: 1,
-                        value: Box::new(split.clone()),
+                        value: Arc::new(split.clone()),
                         index: 0,
                     },
                     Expr::TupleGet {
                         tuple_id: 1,
-                        value: Box::new(split.clone()),
+                        value: Arc::new(split.clone()),
                         index: 1,
                     },
                     Expr::TupleGet {
                         tuple_id: 2,
-                        value: Box::new(split.clone()),
+                        value: Arc::new(split.clone()),
                         index: 0,
                     },
                     Expr::TupleGet {
                         tuple_id: 2,
-                        value: Box::new(split),
+                        value: Arc::new(split),
                         index: 1,
                     },
                 ],

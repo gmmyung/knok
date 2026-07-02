@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use proc_macro2::Span;
 
 use crate::ops::{
@@ -12,6 +14,7 @@ pub fn type_check(
     graph: Graph,
     graph_signatures: &[(String, GraphSignature)],
 ) -> syn::Result<TypedGraph> {
+    let mut checker = TypeChecker::new(graph_signatures, &graph.name);
     let mut env = graph
         .inputs
         .iter()
@@ -19,7 +22,7 @@ pub fn type_check(
         .collect::<Vec<_>>();
     let mut lets = Vec::new();
     for binding in graph.lets {
-        let value = type_let_value(&binding.value, &env, graph_signatures, &graph.name)?;
+        let value = checker.type_let_value(&binding.value, &env)?;
         if binding.names.len() != value.tys.len() {
             return Err(syn::Error::new(
                 Span::call_site(),
@@ -41,7 +44,7 @@ pub fn type_check(
     let body = graph
         .body
         .iter()
-        .map(|expr| type_expr(expr, &env, graph_signatures, &graph.name))
+        .map(|expr| checker.type_expr(expr, &env))
         .collect::<syn::Result<Vec<_>>>()?;
     let body_tys = body.iter().map(|expr| expr.ty.clone()).collect::<Vec<_>>();
     if body_tys != graph.outputs {
@@ -63,99 +66,200 @@ pub fn type_check(
     })
 }
 
-fn type_let_value(
-    expr: &Expr,
-    env: &[(String, TensorType)],
-    graph_signatures: &[(String, GraphSignature)],
-    current_graph: &str,
-) -> syn::Result<TypedValue> {
-    let tys = expr_output_types(expr, env, graph_signatures, current_graph)?;
-    Ok(TypedValue {
-        kind: expr.clone(),
-        tys,
-    })
+struct TypeChecker<'a> {
+    graph_signatures: &'a [(String, GraphSignature)],
+    current_graph: &'a str,
+    node_output_types: BTreeMap<u64, Vec<TensorType>>,
 }
 
-fn expr_output_types(
-    expr: &Expr,
-    env: &[(String, TensorType)],
-    graph_signatures: &[(String, GraphSignature)],
-    current_graph: &str,
-) -> syn::Result<Vec<TensorType>> {
-    Ok(match expr {
-        Expr::Call {
-            op: CallOp::Graph(name),
-            args,
-        } => graph_call_output_types(name, args, env, graph_signatures, current_graph)?,
-        Expr::Call { op, args } => {
-            call_output_types(op, args, env, graph_signatures, current_graph)?
+impl<'a> TypeChecker<'a> {
+    fn new(graph_signatures: &'a [(String, GraphSignature)], current_graph: &'a str) -> Self {
+        Self {
+            graph_signatures,
+            current_graph,
+            node_output_types: BTreeMap::new(),
         }
-        Expr::Node { value, .. } => expr_output_types(value, env, graph_signatures, current_graph)?,
-        _ => vec![type_expr(expr, env, graph_signatures, current_graph)?.ty],
-    })
-}
+    }
 
-fn call_output_types(
-    op: &CallOp,
-    args: &[Expr],
-    env: &[(String, TensorType)],
-    graph_signatures: &[(String, GraphSignature)],
-    current_graph: &str,
-) -> syn::Result<Vec<TensorType>> {
-    let arg_tys = args
-        .iter()
-        .map(|arg| type_expr(arg, env, graph_signatures, current_graph).map(|typed| typed.ty))
-        .collect::<syn::Result<Vec<_>>>()?;
-    infer_call_results(op, &arg_tys)
-}
+    fn type_let_value(
+        &mut self,
+        expr: &Expr,
+        env: &[(String, TensorType)],
+    ) -> syn::Result<TypedValue> {
+        let tys = self.expr_output_types(expr, env)?;
+        Ok(TypedValue {
+            kind: expr.clone(),
+            tys,
+        })
+    }
 
-fn type_expr(
-    expr: &Expr,
-    env: &[(String, TensorType)],
-    graph_signatures: &[(String, GraphSignature)],
-    current_graph: &str,
-) -> syn::Result<TypedExpr> {
-    let ty = match expr {
-        Expr::Var(name) => env
+    fn expr_output_types(
+        &mut self,
+        expr: &Expr,
+        env: &[(String, TensorType)],
+    ) -> syn::Result<Vec<TensorType>> {
+        Ok(match expr {
+            Expr::Call {
+                op: CallOp::Graph(name),
+                args,
+            } => self.graph_call_output_types(name, args, env)?,
+            Expr::Call { op, args } => self.call_output_types(op, args, env)?,
+            Expr::Node { node_id, value } => {
+                if let Some(tys) = self.node_output_types.get(node_id) {
+                    tys.clone()
+                } else {
+                    let tys = self.expr_output_types(value, env)?;
+                    self.node_output_types.insert(*node_id, tys.clone());
+                    tys
+                }
+            }
+            _ => vec![self.type_expr(expr, env)?.ty],
+        })
+    }
+
+    fn call_output_types(
+        &mut self,
+        op: &CallOp,
+        args: &[Expr],
+        env: &[(String, TensorType)],
+    ) -> syn::Result<Vec<TensorType>> {
+        validate_static_call_args(op, args)?;
+        let arg_tys = args
+            .iter()
+            .map(|arg| self.type_expr(arg, env).map(|typed| typed.ty))
+            .collect::<syn::Result<Vec<_>>>()?;
+        infer_call_results(op, &arg_tys)
+    }
+
+    fn type_expr(&mut self, expr: &Expr, env: &[(String, TensorType)]) -> syn::Result<TypedExpr> {
+        let ty = match expr {
+            Expr::Var(name) => env
+                .iter()
+                .rev()
+                .find_map(|(candidate, ty)| (candidate == name).then(|| ty.clone()))
+                .ok_or_else(|| {
+                    syn::Error::new(Span::call_site(), format!("unknown value `{name}`"))
+                })?,
+            Expr::Const { elem, .. } => TensorType {
+                elem: *elem,
+                shape: vec![],
+            },
+            Expr::Unary { value, .. } => {
+                let ty = self.type_expr(value, env)?.ty;
+                expect_numeric_element(ty.elem, "arithmetic operators")?;
+                ty
+            }
+            Expr::Binary { lhs, rhs, .. } => {
+                let lhs = self.type_expr(lhs, env)?.ty;
+                let rhs = self.type_expr(rhs, env)?.ty;
+                binary_result_type(&lhs, &rhs)?
+            }
+            Expr::Node { node_id, value } => {
+                if let Some(tys) = self.node_output_types.get(node_id) {
+                    single_output_type(tys, "node")?
+                } else {
+                    let ty = self.type_expr(value, env)?.ty;
+                    self.node_output_types.insert(*node_id, vec![ty.clone()]);
+                    ty
+                }
+            }
+            Expr::TupleGet { value, index, .. } => {
+                let outputs = self.expr_output_types(value, env)?;
+                outputs.get(*index).cloned().ok_or_else(|| {
+                    syn::Error::new(
+                        Span::call_site(),
+                        format!(
+                            "tuple projection index {index} out of bounds for {} values",
+                            outputs.len()
+                        ),
+                    )
+                })?
+            }
+            Expr::Call { op, args } => self.call_result_type(op, args, env)?,
+        };
+        Ok(TypedExpr {
+            kind: expr.clone(),
+            ty,
+        })
+    }
+
+    fn call_result_type(
+        &mut self,
+        op: &CallOp,
+        args: &[Expr],
+        env: &[(String, TensorType)],
+    ) -> syn::Result<TensorType> {
+        if let CallOp::Graph(name) = op {
+            let outputs = self.graph_call_output_types(name, args, env)?;
+            if outputs.len() != 1 {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "graph `{name}` returns {} values and cannot be used as a tensor expression yet",
+                        outputs.len()
+                    ),
+                ));
+            }
+            return Ok(outputs[0].clone());
+        }
+
+        validate_static_call_args(op, args)?;
+
+        let arg_tys = args
+            .iter()
+            .map(|arg| self.type_expr(arg, env).map(|typed| typed.ty))
+            .collect::<syn::Result<Vec<_>>>()?;
+        infer_call_result(op, &arg_tys)
+    }
+
+    fn graph_call_output_types(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        env: &[(String, TensorType)],
+    ) -> syn::Result<Vec<TensorType>> {
+        if name == self.current_graph {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!("recursive graph call `{name}` is not supported"),
+            ));
+        }
+        let signature = self
+            .graph_signatures
             .iter()
             .rev()
-            .find_map(|(candidate, ty)| (candidate == name).then(|| ty.clone()))
-            .ok_or_else(|| syn::Error::new(Span::call_site(), format!("unknown value `{name}`")))?,
-        Expr::Const { elem, .. } => TensorType {
-            elem: *elem,
-            shape: vec![],
-        },
-        Expr::Unary { value, .. } => {
-            let ty = type_expr(value, env, graph_signatures, current_graph)?.ty;
-            expect_numeric_element(ty.elem, "arithmetic operators")?;
-            ty
-        }
-        Expr::Binary { lhs, rhs, .. } => {
-            let lhs = type_expr(lhs, env, graph_signatures, current_graph)?.ty;
-            let rhs = type_expr(rhs, env, graph_signatures, current_graph)?.ty;
-            binary_result_type(&lhs, &rhs)?
-        }
-        Expr::Node { value, .. } => type_expr(value, env, graph_signatures, current_graph)?.ty,
-        Expr::TupleGet { value, index, .. } => {
-            let outputs = expr_output_types(value, env, graph_signatures, current_graph)?;
-            outputs.get(*index).cloned().ok_or_else(|| {
+            .find_map(|(candidate, signature)| (candidate == name).then_some(signature))
+            .ok_or_else(|| {
                 syn::Error::new(
                     Span::call_site(),
                     format!(
-                        "tuple projection index {index} out of bounds for {} values",
-                        outputs.len()
+                        "unknown graph call `{name}`; graph calls must refer to registered graph signatures"
                     ),
                 )
-            })?
+            })?;
+        if args.len() != signature.inputs.len() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                format!(
+                    "graph `{name}` expects {} arguments, got {}",
+                    signature.inputs.len(),
+                    args.len()
+                ),
+            ));
         }
-        Expr::Call { op, args } => {
-            call_result_type(op, args, env, graph_signatures, current_graph)?
+        for (index, (arg, expected)) in args.iter().zip(&signature.inputs).enumerate() {
+            let actual = self.type_expr(arg, env)?.ty;
+            if &actual != expected {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "graph `{name}` argument {index} type mismatch: expected {expected:?}, got {actual:?}"
+                    ),
+                ));
+            }
         }
-    };
-    Ok(TypedExpr {
-        kind: expr.clone(),
-        ty,
-    })
+        Ok(signature.outputs.clone())
+    }
 }
 
 fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorType> {
@@ -182,38 +286,27 @@ fn binary_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorT
         })
 }
 
-fn call_result_type(
-    op: &CallOp,
-    args: &[Expr],
-    env: &[(String, TensorType)],
-    graph_signatures: &[(String, GraphSignature)],
-    current_graph: &str,
-) -> syn::Result<TensorType> {
-    if let CallOp::Graph(name) = op {
-        let outputs = graph_call_output_types(name, args, env, graph_signatures, current_graph)?;
-        if outputs.len() != 1 {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                format!(
-                    "graph `{name}` returns {} values and cannot be used as a tensor expression yet",
-                    outputs.len()
-                ),
-            ));
-        }
-        return Ok(outputs[0].clone());
+fn single_output_type(tys: &[TensorType], context: &str) -> syn::Result<TensorType> {
+    if tys.len() != 1 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "{context} produces {} values and cannot be used as a tensor expression",
+                tys.len()
+            ),
+        ));
     }
+    Ok(tys[0].clone())
+}
 
+fn validate_static_call_args(op: &CallOp, args: &[Expr]) -> syn::Result<()> {
     match op {
-        CallOp::Arange(target) => {
-            static_arange_literals(target, args)
-                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
-            return Ok(target.clone());
-        }
-        CallOp::Linspace(target) => {
-            static_linspace_literals(target, args)
-                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
-            return Ok(target.clone());
-        }
+        CallOp::Arange(target) => static_arange_literals(target, args)
+            .map(|_| ())
+            .map_err(|message| syn::Error::new(Span::call_site(), message)),
+        CallOp::Linspace(target) => static_linspace_literals(target, args)
+            .map(|_| ())
+            .map_err(|message| syn::Error::new(Span::call_site(), message)),
         CallOp::Eye(target) => {
             if !args.is_empty() {
                 return Err(syn::Error::new(
@@ -222,66 +315,11 @@ fn call_result_type(
                 ));
             }
             static_eye_literals(target)
-                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
-            return Ok(target.clone());
+                .map(|_| ())
+                .map_err(|message| syn::Error::new(Span::call_site(), message))
         }
-        _ => {}
+        _ => Ok(()),
     }
-
-    let arg_tys = args
-        .iter()
-        .map(|arg| type_expr(arg, env, graph_signatures, current_graph).map(|typed| typed.ty))
-        .collect::<syn::Result<Vec<_>>>()?;
-    infer_call_result(op, &arg_tys)
-}
-
-fn graph_call_output_types(
-    name: &str,
-    args: &[Expr],
-    env: &[(String, TensorType)],
-    graph_signatures: &[(String, GraphSignature)],
-    current_graph: &str,
-) -> syn::Result<Vec<TensorType>> {
-    if name == current_graph {
-        return Err(syn::Error::new(
-            Span::call_site(),
-            format!("recursive graph call `{name}` is not supported"),
-        ));
-    }
-    let signature = graph_signatures
-        .iter()
-        .rev()
-        .find_map(|(candidate, signature)| (candidate == name).then_some(signature))
-        .ok_or_else(|| {
-            syn::Error::new(
-                Span::call_site(),
-                format!(
-                    "unknown graph call `{name}`; graph calls must refer to registered graph signatures"
-                ),
-            )
-        })?;
-    if args.len() != signature.inputs.len() {
-        return Err(syn::Error::new(
-            Span::call_site(),
-            format!(
-                "graph `{name}` expects {} arguments, got {}",
-                signature.inputs.len(),
-                args.len()
-            ),
-        ));
-    }
-    for (index, (arg, expected)) in args.iter().zip(&signature.inputs).enumerate() {
-        let actual = type_expr(arg, env, graph_signatures, current_graph)?.ty;
-        if &actual != expected {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                format!(
-                    "graph `{name}` argument {index} type mismatch: expected {expected:?}, got {actual:?}"
-                ),
-            ));
-        }
-    }
-    Ok(signature.outputs.clone())
 }
 
 fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {

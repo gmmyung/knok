@@ -11,6 +11,23 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ## Unreleased
 
+## 0.3.3 - 2026-07-02
+
+### Fixed
+
+- Validated static creation call arguments for hoisted graph let bindings so
+  check-only builds reject non-literal `arange` and `linspace` calls before
+  lowering.
+
+## 0.3.2 - 2026-07-02
+
+### Fixed
+
+- Flattened build-time traced node DAGs into graph let bindings to avoid
+  exponential expression cloning and memory blowups in larger demos.
+- Memoized repeated traced node type checking while preserving tuple projection
+  validation for manually constructed graphs.
+
 ## 0.3.1 - 2026-07-02
 
 ### Fixed

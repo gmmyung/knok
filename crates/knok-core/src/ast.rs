@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Graph {
     pub name: String,
@@ -38,11 +40,11 @@ pub enum Expr {
     },
     Node {
         node_id: u64,
-        value: Box<Expr>,
+        value: Arc<Expr>,
     },
     TupleGet {
         tuple_id: u64,
-        value: Box<Expr>,
+        value: Arc<Expr>,
         index: usize,
     },
     Call {
@@ -737,5 +739,26 @@ fn float_literal(value: f64) -> String {
         text
     } else {
         format!("{text}.0")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloned_nodes_share_expression_payloads() {
+        let expr = Expr::Node {
+            node_id: 1,
+            value: Arc::new(Expr::Var("x".into())),
+        };
+        let cloned = expr.clone();
+
+        match (&expr, &cloned) {
+            (Expr::Node { value, .. }, Expr::Node { value: cloned, .. }) => {
+                assert!(Arc::ptr_eq(value, cloned));
+            }
+            _ => unreachable!("test constructs node expressions"),
+        }
     }
 }
