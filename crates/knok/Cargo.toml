@@ -1,11 +1,12 @@
 [package]
 name = "knok"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Compile-time linalg graphs for Rust"
+readme = "README.md"
 
 [dependencies]
 eerie = { workspace = true, optional = true }

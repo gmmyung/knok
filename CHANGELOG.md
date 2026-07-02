@@ -11,6 +11,13 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ## Unreleased
 
+## 0.3.1 - 2026-07-02
+
+### Fixed
+
+- Added crate-local README files and explicit crate readme metadata for the
+  published workspace crates.
+
 ## 0.3.0 - 2026-07-01
 
 ### Added
