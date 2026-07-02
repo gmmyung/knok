@@ -38,6 +38,22 @@ jobs:
         run: |
           echo "manual publish requires the version input" >&2
           exit 2
+      - name: Ensure release tag is on main
+        if: ${{ github.ref_type == 'tag' }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "release tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not reachable from origin/main" >&2
+            echo "merge the release commit into main before pushing the tag" >&2
+            exit 2
+          fi
+      - name: Ensure manual publish runs from main
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.execute }}
+        run: |
+          if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+            echo "manual publish must run from main, got ${GITHUB_REF_NAME}" >&2
+            exit 2
+          fi
       - if: ${{ github.ref_type == 'tag' }}
         run: nix develop --command scripts/verify-release.sh "${GITHUB_REF_NAME}"
       - if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}

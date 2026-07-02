@@ -313,6 +313,29 @@ fn typechecks_linalg_creation_and_predicate_ops() {
 }
 
 #[test]
+fn rejects_non_static_creation_calls_in_let_bindings() {
+    let graph = Graph {
+        name: "bad_let_arange".into(),
+        backend: "llvm-cpu".into(),
+        inputs: vec![input("stop", ElementType::I32, &[])],
+        outputs: vec![tensor(ElementType::I32, &[4])],
+        lets: vec![Let {
+            names: vec!["values".into()],
+            value: Expr::Call {
+                op: CallOp::Arange(tensor(ElementType::I32, &[4])),
+                args: vec![var("stop")],
+            },
+        }],
+        body: vec![var("values")],
+    };
+
+    assert!(type_check(graph, &[])
+        .unwrap_err()
+        .to_string()
+        .contains("numeric literals"));
+}
+
+#[test]
 fn rejects_invalid_shape_and_axis_ops() {
     let reshape = graph(
         "bad_reshape",
