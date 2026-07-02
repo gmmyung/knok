@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use knok_core::{CallOp, Expr};
 
@@ -14,7 +15,7 @@ pub(crate) fn call_output<Output: TraceTensor>(op: CallOp, args: Vec<Expr>) -> O
 pub(crate) fn node_expr(value: Expr) -> Expr {
     Expr::Node {
         node_id: NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed),
-        value: Box::new(value),
+        value: Arc::new(value),
     }
 }
 
