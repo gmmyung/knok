@@ -4,6 +4,7 @@ mod linalg;
 mod matmul;
 mod permute;
 mod rules;
+mod static_creation;
 
 pub(crate) use common::{broadcast_shape_slices, expect_numeric_element};
 pub(crate) use conv::conv2d_result_type;
@@ -14,3 +15,4 @@ pub(crate) use linalg::{
 pub(crate) use matmul::matmul_result_type;
 pub(crate) use permute::validate_permute;
 pub(crate) use rules::{infer_call_result, infer_call_results};
+pub(crate) use static_creation::validate_static_creation_call;

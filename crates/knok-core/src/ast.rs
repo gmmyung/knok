@@ -567,19 +567,7 @@ pub fn static_linspace_literals(target: &TensorType, args: &[Expr]) -> Result<Ve
 }
 
 pub fn static_eye_literals(target: &TensorType) -> Result<Vec<String>, String> {
-    if target.rank() != 2 {
-        return Err(format!(
-            "eye target must be rank-2, got rank-{} shape {:?}",
-            target.rank(),
-            target.shape
-        ));
-    }
-    if target.shape[0] != target.shape[1] {
-        return Err(format!(
-            "eye target matrix must be square, got shape {:?}",
-            target.shape
-        ));
-    }
+    validate_static_eye_target(target)?;
     let rows = target.shape[0];
     let mut values = Vec::with_capacity(rows * rows);
     for row in 0..rows {
@@ -594,6 +582,15 @@ pub fn static_eye_literals(target: &TensorType) -> Result<Vec<String>, String> {
     Ok(values)
 }
 
+pub(crate) fn validate_static_creation_target(op: &CallOp) -> Result<(), String> {
+    match op {
+        CallOp::Arange(target) => validate_static_vector_target(target, "arange"),
+        CallOp::Linspace(target) => validate_static_vector_target(target, "linspace"),
+        CallOp::Eye(target) => validate_static_eye_target(target),
+        _ => Ok(()),
+    }
+}
+
 fn validate_static_vector_target(target: &TensorType, op_name: &str) -> Result<(), String> {
     if !target.elem.is_numeric() {
         return Err(format!("{op_name} target element type must be numeric"));
@@ -602,6 +599,23 @@ fn validate_static_vector_target(target: &TensorType, op_name: &str) -> Result<(
         return Err(format!(
             "{op_name} target must be rank-1, got rank-{} shape {:?}",
             target.rank(),
+            target.shape
+        ));
+    }
+    Ok(())
+}
+
+fn validate_static_eye_target(target: &TensorType) -> Result<(), String> {
+    if target.rank() != 2 {
+        return Err(format!(
+            "eye target must be rank-2, got rank-{} shape {:?}",
+            target.rank(),
+            target.shape
+        ));
+    }
+    if target.shape[0] != target.shape[1] {
+        return Err(format!(
+            "eye target matrix must be square, got shape {:?}",
             target.shape
         ));
     }
