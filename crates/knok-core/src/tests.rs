@@ -393,6 +393,40 @@ fn rejects_non_static_creation_calls_in_let_bindings() {
 }
 
 #[test]
+fn rejects_invalid_static_creation_targets() {
+    let arange = graph(
+        "bad_arange_target",
+        Vec::new(),
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Arange(tensor(ElementType::F32, &[])),
+            args: vec![Expr::Const {
+                value: "4.0".into(),
+                elem: ElementType::F32,
+            }],
+        },
+    );
+    assert!(type_check(arange, &[])
+        .unwrap_err()
+        .to_string()
+        .contains("arange target must be rank-1"));
+
+    let eye = graph(
+        "bad_eye_target",
+        Vec::new(),
+        vec![tensor(ElementType::F32, &[2, 3])],
+        Expr::Call {
+            op: CallOp::Eye(tensor(ElementType::F32, &[2, 3])),
+            args: Vec::new(),
+        },
+    );
+    assert!(type_check(eye, &[])
+        .unwrap_err()
+        .to_string()
+        .contains("eye target matrix must be square"));
+}
+
+#[test]
 fn rejects_invalid_shape_and_axis_ops() {
     let reshape = graph(
         "bad_reshape",

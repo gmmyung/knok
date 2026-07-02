@@ -9,7 +9,7 @@ use super::{
     conv2d_result_type, diagonal_result_type, dot_result_type, inner_result_type,
     matmul_result_type, outer_result_type, trace_result_type, validate_permute, vecdot_result_type,
 };
-use crate::{static_eye_literals, CallOp, ElementType, TensorType};
+use crate::{validate_static_creation_target, CallOp, ElementType, TensorType};
 
 pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
     let results = infer_call_results(op, args)?;
@@ -111,7 +111,7 @@ pub(crate) fn infer_call_results(op: &CallOp, args: &[TensorType]) -> syn::Resul
         }
         CallOp::Eye(target) => {
             expect_arity(op, args, 0)?;
-            static_eye_literals(target)
+            validate_static_creation_target(op)
                 .map_err(|message| syn::Error::new(Span::call_site(), message))?;
             Ok(target.clone())
         }
@@ -363,21 +363,13 @@ pub(crate) fn infer_call_results(op: &CallOp, args: &[TensorType]) -> syn::Resul
             outer_result_type(&args[0], &args[1])
         }
         CallOp::Arange(target) => {
-            if !target.elem.is_numeric() || target.rank() != 1 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "arange target must be a rank-1 numeric tensor",
-                ));
-            }
+            validate_static_creation_target(op)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
             Ok(target.clone())
         }
         CallOp::Linspace(target) => {
-            if !target.elem.is_numeric() || target.rank() != 1 {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "linspace target must be a rank-1 numeric tensor",
-                ));
-            }
+            validate_static_creation_target(op)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
             Ok(target.clone())
         }
         CallOp::Unsqueeze(target) => {

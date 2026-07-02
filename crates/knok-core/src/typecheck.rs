@@ -4,10 +4,11 @@ use proc_macro2::Span;
 
 use crate::ops::{
     broadcast_shape_slices, expect_numeric_element, infer_call_result, infer_call_results,
+    validate_static_creation_call,
 };
 use crate::{
-    static_arange_literals, static_eye_literals, static_linspace_literals, CallOp, Expr, Graph,
-    GraphSignature, Input, TensorType, TypedExpr, TypedGraph, TypedLet, TypedValue,
+    CallOp, Expr, Graph, GraphSignature, Input, TensorType, TypedExpr, TypedGraph, TypedLet,
+    TypedValue,
 };
 
 pub fn type_check(
@@ -101,7 +102,7 @@ impl<'a> TypeChecker<'a> {
         args: &[Expr],
         env: &TypeEnv,
     ) -> syn::Result<Vec<TensorType>> {
-        validate_static_call_args(op, args)?;
+        validate_static_creation_call(op, args)?;
         let arg_tys = self.type_arg_tys(args, env)?;
         infer_call_results(op, &arg_tys)
     }
@@ -169,7 +170,7 @@ impl<'a> TypeChecker<'a> {
             return Ok(outputs[0].clone());
         }
 
-        validate_static_call_args(op, args)?;
+        validate_static_creation_call(op, args)?;
 
         let arg_tys = self.type_arg_tys(args, env)?;
         infer_call_result(op, &arg_tys)
@@ -361,29 +362,6 @@ fn single_output_type(tys: &[TensorType], context: &str) -> syn::Result<TensorTy
         ));
     }
     Ok(tys[0].clone())
-}
-
-fn validate_static_call_args(op: &CallOp, args: &[Expr]) -> syn::Result<()> {
-    match op {
-        CallOp::Arange(target) => static_arange_literals(target, args)
-            .map(|_| ())
-            .map_err(|message| syn::Error::new(Span::call_site(), message)),
-        CallOp::Linspace(target) => static_linspace_literals(target, args)
-            .map(|_| ())
-            .map_err(|message| syn::Error::new(Span::call_site(), message)),
-        CallOp::Eye(target) => {
-            if !args.is_empty() {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    format!("Eye expects 0 arguments, got {}", args.len()),
-                ));
-            }
-            static_eye_literals(target)
-                .map(|_| ())
-                .map_err(|message| syn::Error::new(Span::call_site(), message))
-        }
-        _ => Ok(()),
-    }
 }
 
 fn broadcast_shape(lhs: &TensorType, rhs: &TensorType) -> Result<Vec<usize>, String> {
