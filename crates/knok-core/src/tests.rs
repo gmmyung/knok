@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     parse_tensor_type, type_check, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr,
     Graph, GraphSignature, Input, Let, TensorType,
@@ -100,6 +102,61 @@ fn typechecks_multi_output_let_binding() {
 
     let typed = type_check(graph, &[]).unwrap();
     assert_eq!(typed.outputs, vec![tensor(ElementType::F32, &[2])]);
+}
+
+#[test]
+fn typechecks_reused_node_payload() {
+    let value = Arc::new(Expr::Const {
+        value: "1.0".into(),
+        elem: ElementType::F32,
+    });
+    let node = Expr::Node { node_id: 1, value };
+    let graph = graph(
+        "reused_node",
+        Vec::new(),
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Binary {
+            op: BinaryOp::Add,
+            lhs: Box::new(node.clone()),
+            rhs: Box::new(node),
+        },
+    );
+
+    let typed = type_check(graph, &[]).unwrap();
+    assert_eq!(typed.outputs, vec![tensor(ElementType::F32, &[])]);
+}
+
+#[test]
+fn rejects_conflicting_node_payloads() {
+    let graph = Graph {
+        name: "conflicting_node".into(),
+        backend: "llvm-cpu".into(),
+        inputs: Vec::new(),
+        outputs: vec![tensor(ElementType::F32, &[]), tensor(ElementType::F32, &[])],
+        lets: Vec::new(),
+        body: vec![
+            Expr::Node {
+                node_id: 1,
+                value: Arc::new(Expr::Const {
+                    value: "1.0".into(),
+                    elem: ElementType::F32,
+                }),
+            },
+            Expr::Node {
+                node_id: 1,
+                value: Arc::new(Expr::Const {
+                    value: "2.0".into(),
+                    elem: ElementType::F32,
+                }),
+            },
+        ],
+    };
+
+    let error = type_check(graph, &[]).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("node id 1 is used for multiple expression payloads"));
 }
 
 #[test]
