@@ -7,9 +7,10 @@ use super::common::{
 };
 use super::{
     conv2d_result_type, diagonal_result_type, dot_result_type, inner_result_type,
-    matmul_result_type, outer_result_type, trace_result_type, validate_permute, vecdot_result_type,
+    matmul_result_type, outer_result_type, trace_result_type, validate_permute,
+    validate_static_creation_target, vecdot_result_type,
 };
-use crate::{validate_static_creation_target, CallOp, ElementType, TensorType};
+use crate::{CallOp, ElementType, TensorType};
 
 pub(crate) fn infer_call_result(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
     let results = infer_call_results(op, args)?;

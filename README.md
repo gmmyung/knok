@@ -18,10 +18,10 @@ Add `knok` to your target crate and `knok-build` to build dependencies:
 
 ```toml
 [dependencies]
-knok = "0.2"
+knok = "0.3"
 
 [build-dependencies]
-knok-build = "0.2"
+knok-build = "0.3"
 ```
 
 Build-time compilation needs `iree-compile` on `PATH`. You can also point to it
@@ -133,10 +133,10 @@ Enable feature-gated backends on both sides when you compile graphs and run them
 
 ```toml
 [dependencies]
-knok = { version = "0.2", features = ["vulkan"] }
+knok = { version = "0.3", features = ["vulkan"] }
 
 [build-dependencies]
-knok-build = { version = "0.2", features = ["vulkan"] }
+knok-build = { version = "0.3", features = ["vulkan"] }
 ```
 
 Use `cuda` instead of `vulkan` for CUDA. Metal is exposed only on macOS targets.
