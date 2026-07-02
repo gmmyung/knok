@@ -231,14 +231,17 @@ fn cache_key(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use knok_core::{
-        type_check, AxisSpec, CallOp, Conv2dOptions, ElementType, Expr, Graph, Input, Padding2d,
-        TensorType,
+        type_check, AxisSpec, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature,
+        Input, Padding2d, TensorType,
     };
 
-    use crate::{lowering::lower_to_mlir, mlir::canonicalize_and_verify};
+    use crate::{
+        lowering::{lower_to_mlir, lower_to_mlir_with_registry},
+        mlir::canonicalize_and_verify,
+    };
 
     use super::{cache_key, compile_mlir_source, read_cached_vmfb, unique_cache_temp_suffix};
 
@@ -327,6 +330,58 @@ mod tests {
         assert!(!mlir.contains(" = math.exp "), "{mlir}");
         assert!(!mlir.contains("arith.subf"), "{mlir}");
         canonicalize_and_verify(&mlir).unwrap();
+    }
+
+    #[test]
+    fn inline_graph_restores_shadowed_caller_values() {
+        let ty = tensor(ElementType::F32, &[2]);
+        let callee = type_check(
+            Graph {
+                name: "callee".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![input("x", ElementType::F32, &[2])],
+                outputs: vec![ty.clone()],
+                lets: Vec::new(),
+                body: vec![call(CallOp::Relu, vec![var("x")])],
+            },
+            &[],
+        )
+        .unwrap();
+        let caller = type_check(
+            Graph {
+                name: "caller".into(),
+                backend: "llvm-cpu".into(),
+                inputs: vec![
+                    input("x", ElementType::F32, &[2]),
+                    input("y", ElementType::F32, &[2]),
+                ],
+                outputs: vec![ty.clone()],
+                lets: Vec::new(),
+                body: vec![Expr::Binary {
+                    op: knok_core::BinaryOp::Add,
+                    lhs: Box::new(call(CallOp::Graph("callee".into()), vec![var("y")])),
+                    rhs: Box::new(var("x")),
+                }],
+            },
+            &[(
+                "callee".into(),
+                GraphSignature {
+                    inputs: vec![ty.clone()],
+                    outputs: vec![ty],
+                },
+            )],
+        )
+        .unwrap();
+        let graphs = BTreeMap::from([(callee.name.clone(), callee)]);
+
+        let mlir = lower_to_mlir_with_registry(&caller, &graphs).unwrap();
+        canonicalize_and_verify(&mlir).unwrap();
+        let add = mlir
+            .lines()
+            .find(|line| line.contains("arith.addf"))
+            .expect("inlined caller should lower one add op");
+
+        assert!(add.contains("%arg0"), "{mlir}");
     }
 
     #[test]

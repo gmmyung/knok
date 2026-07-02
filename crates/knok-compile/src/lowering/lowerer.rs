@@ -23,6 +23,10 @@ pub(super) use super::value::{RawValue, Value, ValueKind};
 
 use crate::mlir::canonicalize_and_verify;
 
+type ScopeId = u64;
+type NodeId = u64;
+type TupleId = u64;
+
 pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
     lower_to_mlir_with_registry(graph, &BTreeMap::new())
 }
@@ -48,11 +52,20 @@ pub(super) struct Lowerer<'a, 'c> {
     pub(super) graph: &'a TypedGraph,
     pub(super) graphs: &'a BTreeMap<String, TypedGraph>,
     pub(super) call_stack: Vec<String>,
-    pub(super) tuple_scope_stack: Vec<u64>,
-    pub(super) next_tuple_scope: u64,
+    pub(super) tuple_scope_stack: Vec<ScopeId>,
+    pub(super) next_tuple_scope: ScopeId,
     pub(super) values: BTreeMap<String, Value>,
-    pub(super) node_values: BTreeMap<(u64, u64), Value>,
-    pub(super) tuple_values: BTreeMap<(u64, u64), Vec<Value>>,
+    pub(super) node_values: BTreeMap<(ScopeId, NodeId), Value>,
+    pub(super) tuple_values: BTreeMap<(ScopeId, TupleId), Vec<Value>>,
+}
+
+fn tuple_value_at(values: &[Value], index: usize) -> anyhow::Result<Value> {
+    values.get(index).cloned().ok_or_else(|| {
+        anyhow::anyhow!(
+            "tuple projection index {index} out of bounds for {} values",
+            values.len()
+        )
+    })
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {
@@ -619,46 +632,47 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         }
     }
 
-    fn current_tuple_scope(&self) -> u64 {
+    fn current_tuple_scope(&self) -> ScopeId {
         *self
             .tuple_scope_stack
             .last()
             .expect("lowerer always has an active tuple scope")
     }
 
-    fn lower_node(&mut self, node_id: u64, value: &Expr) -> anyhow::Result<Value> {
-        let key = (self.current_tuple_scope(), node_id);
-        if !self.node_values.contains_key(&key) {
-            let value = self.lower_expr(value)?;
-            self.node_values.insert(key, value);
+    fn lower_node(&mut self, node_id: NodeId, value: &Expr) -> anyhow::Result<Value> {
+        let key = self.scoped_node_key(node_id);
+        if let Some(value) = self.node_values.get(&key) {
+            return Ok(value.clone());
         }
-        self.node_values
-            .get(&key)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("node value was not cached"))
+
+        let value = self.lower_expr(value)?;
+        self.node_values.insert(key, value.clone());
+        Ok(value)
     }
 
     fn lower_tuple_get(
         &mut self,
-        tuple_id: u64,
+        tuple_id: TupleId,
         value: &Expr,
         index: usize,
     ) -> anyhow::Result<Value> {
-        let key = (self.current_tuple_scope(), tuple_id);
-        if !self.tuple_values.contains_key(&key) {
-            let values = self.lower_let_values(value)?;
-            self.tuple_values.insert(key, values);
+        let key = self.scoped_tuple_key(tuple_id);
+        if let Some(values) = self.tuple_values.get(&key) {
+            return tuple_value_at(values, index);
         }
-        let values = self
-            .tuple_values
-            .get(&key)
-            .expect("tuple values were inserted above");
-        values.get(index).cloned().ok_or_else(|| {
-            anyhow::anyhow!(
-                "tuple projection index {index} out of bounds for {} values",
-                values.len()
-            )
-        })
+
+        let values = self.lower_let_values(value)?;
+        let projected = tuple_value_at(&values, index)?;
+        self.tuple_values.insert(key, values);
+        Ok(projected)
+    }
+
+    fn scoped_node_key(&self, node_id: NodeId) -> (ScopeId, NodeId) {
+        (self.current_tuple_scope(), node_id)
+    }
+
+    fn scoped_tuple_key(&self, tuple_id: TupleId) -> (ScopeId, TupleId) {
+        (self.current_tuple_scope(), tuple_id)
     }
 
     fn bind_values(
@@ -687,6 +701,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         if self.call_stack.iter().any(|candidate| candidate == name) {
             anyhow::bail!("recursive graph call `{name}` is not supported");
         }
+        // Avoid holding an immutable registry borrow while this lowerer mutates its scopes.
         let graph = self
             .graphs
             .get(name)
@@ -700,10 +715,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             );
         }
 
-        self.call_stack.push(name.to_string());
-        let tuple_scope = self.next_tuple_scope;
-        self.next_tuple_scope += 1;
-        self.tuple_scope_stack.push(tuple_scope);
+        let tuple_scope = self.push_inline_scope(name);
         let mut overwritten = Vec::new();
         for (input, value) in graph.inputs.iter().zip(args) {
             overwritten.push((
@@ -720,6 +732,35 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             self.lower_body_outputs(&graph.body, &graph.outputs)
         })();
 
+        self.restore_values(overwritten);
+        self.pop_inline_scope(tuple_scope);
+        result
+    }
+
+    fn push_inline_scope(&mut self, name: &str) -> ScopeId {
+        self.call_stack.push(name.to_string());
+        let tuple_scope = self.next_tuple_scope;
+        self.next_tuple_scope += 1;
+        self.tuple_scope_stack.push(tuple_scope);
+        tuple_scope
+    }
+
+    fn pop_inline_scope(&mut self, tuple_scope: ScopeId) {
+        self.node_values
+            .retain(|(scope, _), _| *scope != tuple_scope);
+        self.tuple_values
+            .retain(|(scope, _), _| *scope != tuple_scope);
+        let popped_scope = self
+            .tuple_scope_stack
+            .pop()
+            .expect("inline graph scope was pushed before lowering");
+        debug_assert_eq!(popped_scope, tuple_scope);
+        self.call_stack
+            .pop()
+            .expect("inline graph call stack entry was pushed before lowering");
+    }
+
+    fn restore_values(&mut self, overwritten: Vec<(String, Option<Value>)>) {
         for (name, old_value) in overwritten.into_iter().rev() {
             if let Some(old_value) = old_value {
                 self.values.insert(name, old_value);
@@ -727,13 +768,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.values.remove(&name);
             }
         }
-        self.node_values
-            .retain(|(scope, _), _| *scope != tuple_scope);
-        self.tuple_values
-            .retain(|(scope, _), _| *scope != tuple_scope);
-        self.tuple_scope_stack.pop();
-        self.call_stack.pop();
-        result
     }
 
     pub(super) fn append_op(
