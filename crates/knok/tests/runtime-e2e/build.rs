@@ -684,6 +684,69 @@ fn detached_square_loss(x: T1<f32, 3>) -> T0<f32> {
     sum(square(detach(x)))
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn extended_elementwise_loss(x: T1<f32, 3>, y: T1<f32, 3>) -> T0<f32> {
+    sum(abs(x.clone())
+        + reciprocal(x.clone())
+        + sin(x.clone())
+        + cos(x.clone())
+        + tan(x.clone())
+        + log1p(x.clone())
+        + log2(x.clone())
+        + log10(x.clone())
+        + exp2(x.clone())
+        + expm1(x.clone())
+        + pow(x, y))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn selection_loss(x: T1<f32, 3>, y: T1<f32, 3>) -> T0<f32> {
+    let positive = greater(x.clone(), 0.0);
+    let selected: T1<f32, 3> = r#where(
+        positive,
+        maximum(x.clone(), y.clone()),
+        minimum(x.clone(), y),
+    );
+    sum(selected + clip(x, -1.0, 2.0))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn reduction_extrema_loss(x: T2<f32, 2, 3>) -> T0<f32> {
+    let prod: T1<f32, 2> = prod_axis(x.clone(), 1);
+    let max: T1<f32, 2> = max_axis(x.clone(), 1);
+    let min: T1<f32, 2> = min_axis(x, 1);
+    sum(prod + max + min)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn layout_index_loss(x: T2<f32, 2, 3>, y: T2<f32, 2, 3>) -> T0<f32> {
+    let swapped: T2<f32, 3, 2> = swapaxes(x.clone(), 0, 1);
+    let moved: T2<f32, 3, 2> = moveaxis(x.clone(), 0, 1);
+    let flipped = flip(x.clone());
+    let rolled = roll(x.clone(), 1, 1);
+    let padded: T2<f32, 4, 5> = pad(x.clone(), [1, 1]);
+    let sliced: T2<f32, 2, 3> = slice(padded, [1, 1]);
+    let joined: T2<f32, 4, 3> = concat(x, y, 0);
+    let left: T2<f32, 2, 3> = slice(joined.clone(), [0, 0]);
+    let right: T2<f32, 2, 3> = slice(joined, [2, 0]);
+    let stacked: T3<f32, 2, 2, 3> = stack(left, right, 0);
+    let first: T2<f32, 2, 3> = take(stacked.clone(), 0, 0);
+    let second: T2<f32, 2, 3> = take(stacked, 0, 1);
+    let swapped_sum: T0<f32> = sum(swapped);
+    let moved_sum: T0<f32> = sum(moved);
+    let flipped_sum: T0<f32> = sum(flipped);
+    let rolled_sum: T0<f32> = sum(rolled);
+    let sliced_sum: T0<f32> = sum(sliced);
+    let first_sum: T0<f32> = sum(first);
+    let second_sum: T0<f32> = sum(second);
+    swapped_sum + moved_sum + flipped_sum + rolled_sum + sliced_sum + first_sum + second_sum
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn full_like_loss(fill: T0<f32>, x: T1<f32, 3>) -> T0<f32> {
+    sum(full_like(x, fill))
+}
+
 fn main() {
     knok_build::compile_graphs!(
         affine_relu,
@@ -823,7 +886,12 @@ fn main() {
         broadcast_matmul_sum_loss,
         shape_loss,
         relu_mean_loss,
-        detached_square_loss
+        detached_square_loss,
+        extended_elementwise_loss,
+        selection_loss,
+        reduction_extrema_loss,
+        layout_index_loss,
+        full_like_loss
     );
 
     knok_build::compile_mlir_models_with_options!(

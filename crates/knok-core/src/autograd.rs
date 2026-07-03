@@ -313,12 +313,74 @@ impl<'a> ValueAndGradBuilder<'a> {
     ) -> syn::Result<()> {
         match op {
             CallOp::Detach => Ok(()),
+            CallOp::Abs => {
+                let zero = zeros_like(args[0].clone());
+                let positive = call(CallOp::Greater, vec![args[0].clone(), zero.clone()]);
+                let negative = call(CallOp::Less, vec![args[0].clone(), zero.clone()]);
+                let one = ones_like(args[0].clone());
+                let local = call(
+                    CallOp::Where,
+                    vec![
+                        positive,
+                        one.clone(),
+                        call(CallOp::Where, vec![negative, neg(one), zero]),
+                    ],
+                );
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
+            }
             CallOp::Exp => self.add_grad_to_expr(
                 &args[0],
                 binary(BinaryOp::Mul, grad, Expr::Var(node.name.clone())),
             ),
+            CallOp::Exp2 => {
+                let y = Expr::Var(node.name.clone());
+                let local = binary(BinaryOp::Mul, scalar("0.6931471805599453", node.ty.elem), y);
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
+            }
+            CallOp::ExpM1 => {
+                let y = Expr::Var(node.name.clone());
+                let local = binary(BinaryOp::Add, y, scalar("1.0", node.ty.elem));
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
+            }
             CallOp::Log => {
                 self.add_grad_to_expr(&args[0], binary(BinaryOp::Div, grad, args[0].clone()))
+            }
+            CallOp::Log1P => {
+                let denom = binary(BinaryOp::Add, args[0].clone(), scalar("1.0", node.ty.elem));
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Div, grad, denom))
+            }
+            CallOp::Log2 => {
+                let denom = binary(
+                    BinaryOp::Mul,
+                    args[0].clone(),
+                    scalar("0.6931471805599453", node.ty.elem),
+                );
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Div, grad, denom))
+            }
+            CallOp::Log10 => {
+                let denom = binary(
+                    BinaryOp::Mul,
+                    args[0].clone(),
+                    scalar("2.302585092994046", node.ty.elem),
+                );
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Div, grad, denom))
+            }
+            CallOp::Sin => {
+                let local = call(CallOp::Cos, vec![args[0].clone()]);
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
+            }
+            CallOp::Cos => {
+                let local = neg(call(CallOp::Sin, vec![args[0].clone()]));
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
+            }
+            CallOp::Tan => {
+                let y = Expr::Var(node.name.clone());
+                let local = binary(
+                    BinaryOp::Add,
+                    ones_like(y.clone()),
+                    call(CallOp::Square, vec![y]),
+                );
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
             }
             CallOp::Tanh => {
                 let y = Expr::Var(node.name.clone());
@@ -349,15 +411,33 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let local = binary(BinaryOp::Mul, two, args[0].clone());
                 self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
             }
+            CallOp::Reciprocal => {
+                let y = Expr::Var(node.name.clone());
+                let local = neg(call(CallOp::Square, vec![y]));
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
+            }
             CallOp::Sqrt => {
                 let y = Expr::Var(node.name.clone());
                 let two_y = binary(BinaryOp::Mul, scalar("2.0", node.ty.elem), y);
                 self.add_grad_to_expr(&args[0], binary(BinaryOp::Div, grad, two_y))
             }
+            CallOp::Pow => self.reverse_pow(args, Expr::Var(node.name.clone()), &node.ty, grad),
+            CallOp::Minimum => self.reverse_minimum_maximum(args, &node.ty, grad, false),
+            CallOp::Maximum => self.reverse_minimum_maximum(args, &node.ty, grad, true),
+            CallOp::Clip => self.reverse_clip(args, &node.ty, grad),
+            CallOp::Where => self.reverse_where(args, &node.ty, grad),
             CallOp::Sum(axis) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 let input_grad = self.expand_reduction_grad(grad, &node.ty, &input_ty, *axis)?;
                 self.add_grad_to_expr(&args[0], input_grad)
+            }
+            CallOp::Prod(axis) => {
+                let input_ty = self.expr_ty(&args[0])?;
+                let output = Expr::Var(node.name.clone());
+                let output = self.expand_reduction_grad(output, &node.ty, &input_ty, *axis)?;
+                let grad = self.expand_reduction_grad(grad, &node.ty, &input_ty, *axis)?;
+                let local = binary(BinaryOp::Div, output, args[0].clone());
+                self.add_grad_to_expr(&args[0], binary(BinaryOp::Mul, grad, local))
             }
             CallOp::Mean(axis) => {
                 let input_ty = self.expr_ty(&args[0])?;
@@ -370,8 +450,20 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let input_grad = self.expand_reduction_grad(scaled, &node.ty, &input_ty, *axis)?;
                 self.add_grad_to_expr(&args[0], input_grad)
             }
+            CallOp::Max(axis) | CallOp::Min(axis) => {
+                let input_ty = self.expr_ty(&args[0])?;
+                let output = Expr::Var(node.name.clone());
+                let selected = self.expand_reduction_grad(output, &node.ty, &input_ty, *axis)?;
+                let grad = self.expand_reduction_grad(grad, &node.ty, &input_ty, *axis)?;
+                let mask = call(CallOp::Equal, vec![args[0].clone(), selected]);
+                self.add_grad_to_expr(&args[0], mask_grad(mask, grad))
+            }
             CallOp::Matmul => self.reverse_matmul(args, &node.ty, grad),
             CallOp::Reshape(_) => {
+                let input_ty = self.expr_ty(&args[0])?;
+                self.add_grad_to_expr(&args[0], call(CallOp::Reshape(input_ty), vec![grad]))
+            }
+            CallOp::Squeeze(_) | CallOp::Unsqueeze(_) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 self.add_grad_to_expr(&args[0], call(CallOp::Reshape(input_ty), vec![grad]))
             }
@@ -380,11 +472,101 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let input_grad = self.unbroadcast(grad, &node.ty, &input_ty)?;
                 self.add_grad_to_expr(&args[0], input_grad)
             }
+            CallOp::Pad { lows, .. } => {
+                let input_ty = self.expr_ty(&args[0])?;
+                self.add_grad_to_expr(
+                    &args[0],
+                    call(
+                        CallOp::Slice {
+                            target: input_ty,
+                            starts: lows.clone(),
+                        },
+                        vec![grad],
+                    ),
+                )
+            }
+            CallOp::Slice { starts, .. } => {
+                let input_ty = self.expr_ty(&args[0])?;
+                self.add_grad_to_expr(
+                    &args[0],
+                    call(
+                        CallOp::Pad {
+                            target: input_ty,
+                            lows: starts.clone(),
+                        },
+                        vec![grad],
+                    ),
+                )
+            }
+            CallOp::Concat(axis) => self.reverse_concat(args, *axis, grad),
+            CallOp::Stack(axis) => {
+                self.add_grad_to_expr(
+                    &args[0],
+                    call(
+                        CallOp::Take {
+                            axis: *axis,
+                            index: 0,
+                        },
+                        vec![grad.clone()],
+                    ),
+                )?;
+                self.add_grad_to_expr(
+                    &args[1],
+                    call(
+                        CallOp::Take {
+                            axis: *axis,
+                            index: 1,
+                        },
+                        vec![grad],
+                    ),
+                )
+            }
+            CallOp::Take { axis, index } => {
+                let input_ty = self.expr_ty(&args[0])?;
+                let mut expanded_ty = input_ty.clone();
+                expanded_ty.shape[*axis] = 1;
+                let mut lows = vec![0; input_ty.rank()];
+                lows[*axis] = *index;
+                let expanded = call(CallOp::Reshape(expanded_ty), vec![grad]);
+                self.add_grad_to_expr(
+                    &args[0],
+                    call(
+                        CallOp::Pad {
+                            target: input_ty,
+                            lows,
+                        },
+                        vec![expanded],
+                    ),
+                )
+            }
             CallOp::Transpose(axes) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 let inverse = inverse_permutation(default_axes(&input_ty, axes));
                 self.add_grad_to_expr(&args[0], call(CallOp::Transpose(inverse), vec![grad]))
             }
+            CallOp::SwapAxes { axis0, axis1 } => self.add_grad_to_expr(
+                &args[0],
+                call(
+                    CallOp::SwapAxes {
+                        axis0: *axis0,
+                        axis1: *axis1,
+                    },
+                    vec![grad],
+                ),
+            ),
+            CallOp::MoveAxis {
+                source,
+                destination,
+            } => self.add_grad_to_expr(
+                &args[0],
+                call(
+                    CallOp::MoveAxis {
+                        source: *destination,
+                        destination: *source,
+                    },
+                    vec![grad],
+                ),
+            ),
             CallOp::PermuteDims(axes) => {
                 let inverse = inverse_permutation(axes.clone());
                 self.add_grad_to_expr(&args[0], call(CallOp::PermuteDims(inverse), vec![grad]))
@@ -393,7 +575,53 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let inverse = inverse_permutation(axes.clone());
                 self.add_grad_to_expr(&args[0], call(CallOp::PermuteDims(inverse), vec![grad]))
             }
-            CallOp::Arange(_) | CallOp::Linspace(_) | CallOp::Eye(_) => Ok(()),
+            CallOp::Flip(axes) => {
+                self.add_grad_to_expr(&args[0], call(CallOp::Flip(axes.clone()), vec![grad]))
+            }
+            CallOp::Roll { axis, shift } => {
+                let input_ty = self.expr_ty(&args[0])?;
+                let dim = input_ty.shape[*axis];
+                let reverse_shift = if dim == 0 {
+                    0
+                } else {
+                    (dim - (shift % dim)) % dim
+                };
+                self.add_grad_to_expr(
+                    &args[0],
+                    call(
+                        CallOp::Roll {
+                            axis: *axis,
+                            shift: reverse_shift,
+                        },
+                        vec![grad],
+                    ),
+                )
+            }
+            CallOp::FullLike => {
+                let fill_ty = self.expr_ty(&args[1])?;
+                let fill_grad = self.unbroadcast(grad, &node.ty, &fill_ty)?;
+                self.add_grad_to_expr(&args[1], fill_grad)
+            }
+            CallOp::Ceil
+            | CallOp::Floor
+            | CallOp::Rint
+            | CallOp::Round
+            | CallOp::IsNan
+            | CallOp::Greater
+            | CallOp::GreaterEqual
+            | CallOp::Less
+            | CallOp::LessEqual
+            | CallOp::Equal
+            | CallOp::NotEqual
+            | CallOp::LogicalAnd
+            | CallOp::LogicalOr
+            | CallOp::LogicalXor
+            | CallOp::LogicalNot
+            | CallOp::Arange(_)
+            | CallOp::Linspace(_)
+            | CallOp::Eye(_)
+            | CallOp::OnesLike
+            | CallOp::ZerosLike => Ok(()),
             _ => Err(error(format!(
                 "autograd MVP does not support differentiating `{}`",
                 op.name()
@@ -428,6 +656,139 @@ impl<'a> ValueAndGradBuilder<'a> {
         let rhs_grad_ty = matmul_type(&lhs_t_ty, &spec.grad_matrix_ty)?;
         let (rhs_grad, rhs_grad_ty) = spec.demote_rhs_grad(rhs_grad, rhs_grad_ty)?;
         let rhs_grad = self.unbroadcast(rhs_grad, &rhs_grad_ty, &rhs_ty)?;
+        self.add_grad_to_expr(&args[1], rhs_grad)
+    }
+
+    fn reverse_pow(
+        &mut self,
+        args: &[Expr],
+        output: Expr,
+        output_ty: &TensorType,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let lhs_ty = self.expr_ty(&args[0])?;
+        let rhs_ty = self.expr_ty(&args[1])?;
+        let lhs_local = binary(
+            BinaryOp::Mul,
+            args[1].clone(),
+            call(
+                CallOp::Pow,
+                vec![
+                    args[0].clone(),
+                    binary(
+                        BinaryOp::Sub,
+                        args[1].clone(),
+                        scalar("1.0", output_ty.elem),
+                    ),
+                ],
+            ),
+        );
+        let lhs_grad = binary(BinaryOp::Mul, grad.clone(), lhs_local);
+        let lhs_grad = self.unbroadcast(lhs_grad, output_ty, &lhs_ty)?;
+        self.add_grad_to_expr(&args[0], lhs_grad)?;
+
+        let rhs_local = binary(
+            BinaryOp::Mul,
+            output,
+            call(CallOp::Log, vec![args[0].clone()]),
+        );
+        let rhs_grad = binary(BinaryOp::Mul, grad, rhs_local);
+        let rhs_grad = self.unbroadcast(rhs_grad, output_ty, &rhs_ty)?;
+        self.add_grad_to_expr(&args[1], rhs_grad)
+    }
+
+    fn reverse_minimum_maximum(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        grad: Expr,
+        maximum: bool,
+    ) -> syn::Result<()> {
+        let lhs_ty = self.expr_ty(&args[0])?;
+        let rhs_ty = self.expr_ty(&args[1])?;
+        let (lhs_op, rhs_op) = if maximum {
+            (CallOp::GreaterEqual, CallOp::Greater)
+        } else {
+            (CallOp::LessEqual, CallOp::Less)
+        };
+        let lhs_mask = call(lhs_op, vec![args[0].clone(), args[1].clone()]);
+        let rhs_mask = call(rhs_op, vec![args[1].clone(), args[0].clone()]);
+        let lhs_grad = self.unbroadcast(mask_grad(lhs_mask, grad.clone()), output_ty, &lhs_ty)?;
+        let rhs_grad = self.unbroadcast(mask_grad(rhs_mask, grad), output_ty, &rhs_ty)?;
+        self.add_grad_to_expr(&args[0], lhs_grad)?;
+        self.add_grad_to_expr(&args[1], rhs_grad)
+    }
+
+    fn reverse_clip(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let value_ty = self.expr_ty(&args[0])?;
+        let min_ty = self.expr_ty(&args[1])?;
+        let max_ty = self.expr_ty(&args[2])?;
+        let above_min = call(CallOp::GreaterEqual, vec![args[0].clone(), args[1].clone()]);
+        let below_max = call(CallOp::LessEqual, vec![args[0].clone(), args[2].clone()]);
+        let value_mask = call(CallOp::LogicalAnd, vec![above_min, below_max]);
+        let min_mask = call(CallOp::Less, vec![args[0].clone(), args[1].clone()]);
+        let max_mask = call(CallOp::Greater, vec![args[0].clone(), args[2].clone()]);
+
+        let value_grad =
+            self.unbroadcast(mask_grad(value_mask, grad.clone()), output_ty, &value_ty)?;
+        let min_grad = self.unbroadcast(mask_grad(min_mask, grad.clone()), output_ty, &min_ty)?;
+        let max_grad = self.unbroadcast(mask_grad(max_mask, grad), output_ty, &max_ty)?;
+        self.add_grad_to_expr(&args[0], value_grad)?;
+        self.add_grad_to_expr(&args[1], min_grad)?;
+        self.add_grad_to_expr(&args[2], max_grad)
+    }
+
+    fn reverse_where(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let true_ty = self.expr_ty(&args[1])?;
+        let false_ty = self.expr_ty(&args[2])?;
+        let true_grad = self.unbroadcast(
+            mask_grad(args[0].clone(), grad.clone()),
+            output_ty,
+            &true_ty,
+        )?;
+        let false_grad = self.unbroadcast(
+            call(
+                CallOp::Where,
+                vec![args[0].clone(), zeros_like(grad.clone()), grad],
+            ),
+            output_ty,
+            &false_ty,
+        )?;
+        self.add_grad_to_expr(&args[1], true_grad)?;
+        self.add_grad_to_expr(&args[2], false_grad)
+    }
+
+    fn reverse_concat(&mut self, args: &[Expr], axis: usize, grad: Expr) -> syn::Result<()> {
+        let lhs_ty = self.expr_ty(&args[0])?;
+        let rhs_ty = self.expr_ty(&args[1])?;
+        let lhs_starts = vec![0; lhs_ty.rank()];
+        let mut rhs_starts = vec![0; rhs_ty.rank()];
+        rhs_starts[axis] = lhs_ty.shape[axis];
+        let lhs_grad = call(
+            CallOp::Slice {
+                target: lhs_ty,
+                starts: lhs_starts,
+            },
+            vec![grad.clone()],
+        );
+        let rhs_grad = call(
+            CallOp::Slice {
+                target: rhs_ty,
+                starts: rhs_starts,
+            },
+            vec![grad],
+        );
+        self.add_grad_to_expr(&args[0], lhs_grad)?;
         self.add_grad_to_expr(&args[1], rhs_grad)
     }
 
@@ -810,6 +1171,13 @@ fn zeros_like(value: Expr) -> Expr {
 
 fn ones_like(value: Expr) -> Expr {
     call(CallOp::OnesLike, vec![value])
+}
+
+fn mask_grad(condition: Expr, grad: Expr) -> Expr {
+    call(
+        CallOp::Where,
+        vec![condition, grad.clone(), zeros_like(grad)],
+    )
 }
 
 fn error(message: impl Into<String>) -> syn::Error {
