@@ -3,6 +3,7 @@ use knok_core::{CallOp, Padding2d, Pool2dOptions as CorePool2dOptions};
 use super::{expr::call_output, tensor::TraceTensor};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Static options for traced 2D pooling.
 pub struct Pool2dOptions {
     kernel: [usize; 2],
     padding: [usize; 4],
@@ -11,6 +12,7 @@ pub struct Pool2dOptions {
 }
 
 impl Pool2dOptions {
+    /// Creates options with the given kernel and matching default stride.
     pub const fn new(kernel_height: usize, kernel_width: usize) -> Self {
         Self {
             kernel: [kernel_height, kernel_width],
@@ -20,16 +22,19 @@ impl Pool2dOptions {
         }
     }
 
+    /// Sets explicit top, bottom, left, and right padding.
     pub const fn padding(mut self, top: usize, bottom: usize, left: usize, right: usize) -> Self {
         self.padding = [top, bottom, left, right];
         self
     }
 
+    /// Sets height and width stride.
     pub const fn stride(mut self, height: usize, width: usize) -> Self {
         self.stride = [height, width];
         self
     }
 
+    /// Sets height and width dilation.
     pub const fn dilation(mut self, height: usize, width: usize) -> Self {
         self.dilation = [height, width];
         self
@@ -56,10 +61,12 @@ impl Default for Pool2dOptions {
     }
 }
 
+/// Records 2D max pooling with default options.
 pub fn max_pool2d<Output: TraceTensor>(input: impl TraceTensor) -> Output {
     max_pool2d_options(input, Pool2dOptions::default())
 }
 
+/// Records 2D max pooling with explicit static options.
 pub fn max_pool2d_options<Output: TraceTensor>(
     input: impl TraceTensor,
     options: Pool2dOptions,
@@ -70,10 +77,12 @@ pub fn max_pool2d_options<Output: TraceTensor>(
     )
 }
 
+/// Records 2D average pooling with default options.
 pub fn avg_pool2d<Output: TraceTensor>(input: impl TraceTensor) -> Output {
     avg_pool2d_options(input, Pool2dOptions::default())
 }
 
+/// Records 2D average pooling with explicit static options.
 pub fn avg_pool2d_options<Output: TraceTensor>(
     input: impl TraceTensor,
     options: Pool2dOptions,

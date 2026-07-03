@@ -6,6 +6,7 @@ use super::{
     tensor::TraceTensor,
 };
 
+/// Records a reshape to the requested output tensor type.
 pub fn reshape<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(
         CallOp::Reshape(Output::tensor_type()),
@@ -13,6 +14,7 @@ pub fn reshape<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     )
 }
 
+/// Records a broadcast to the requested output tensor type.
 pub fn broadcast<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(
         CallOp::Broadcast(Output::tensor_type()),
@@ -20,6 +22,7 @@ pub fn broadcast<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     )
 }
 
+/// Records a squeeze to the requested output tensor type.
 pub fn squeeze<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(
         CallOp::Squeeze(Output::tensor_type()),
@@ -27,6 +30,7 @@ pub fn squeeze<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     )
 }
 
+/// Records an unsqueeze to the requested output tensor type.
 pub fn unsqueeze<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(
         CallOp::Unsqueeze(Output::tensor_type()),
@@ -34,6 +38,7 @@ pub fn unsqueeze<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     )
 }
 
+/// Records a static slice from `starts` to the requested output tensor type.
 pub fn slice<Output: TraceTensor, const N: usize>(
     value: impl TraceTensor,
     starts: [usize; N],
@@ -61,6 +66,7 @@ fn trace_pad<Output: TraceTensor>(value: impl TraceTensor, lows: &[usize]) -> Ou
     )
 }
 
+/// Records low-side padding to the requested output tensor type.
 pub fn pad<Output: TraceTensor, const N: usize>(
     value: impl TraceTensor,
     lows: [usize; N],
@@ -68,6 +74,7 @@ pub fn pad<Output: TraceTensor, const N: usize>(
     trace_pad(value, &lows)
 }
 
+/// Records a gather along `axis` to the requested output tensor type.
 pub fn gather<Output: TraceTensor>(
     value: impl TraceTensor,
     indices: impl TraceTensor,
@@ -90,6 +97,7 @@ fn trace_gather<Output: TraceTensor>(
     )
 }
 
+/// Records a static take of one `index` along `axis`.
 pub fn take<Output: TraceTensor>(value: impl TraceTensor, axis: usize, index: usize) -> Output {
     trace_take(value, axis, index)
 }
@@ -98,6 +106,7 @@ fn trace_take<Output: TraceTensor>(value: impl TraceTensor, axis: usize, index: 
     call_output(CallOp::Take { axis, index }, vec![value.into_expr()])
 }
 
+/// Records a take-along-axis using per-element indices.
 pub fn take_along_axis<Output: TraceTensor>(
     value: impl TraceTensor,
     indices: impl TraceTensor,
@@ -117,6 +126,7 @@ fn trace_take_along_axis<Output: TraceTensor>(
     )
 }
 
+/// Records concatenation of two tensors along `axis`.
 pub fn concat<Output: TraceTensor>(
     lhs: impl TraceTensor,
     rhs: impl TraceTensor,
@@ -133,6 +143,7 @@ fn trace_concat<Output: TraceTensor>(
     call_output(CallOp::Concat(axis), vec![lhs.into_expr(), rhs.into_expr()])
 }
 
+/// Records stacking of two tensors along `axis`.
 pub fn stack<Output: TraceTensor>(
     lhs: impl TraceTensor,
     rhs: impl TraceTensor,
@@ -149,6 +160,7 @@ fn trace_stack<Output: TraceTensor>(
     call_output(CallOp::Stack(axis), vec![lhs.into_expr(), rhs.into_expr()])
 }
 
+/// Records a split into statically sized sections along `axis`.
 pub fn split<Output: TraceVars, const N: usize>(
     value: impl TraceTensor,
     axis: usize,
@@ -179,6 +191,7 @@ fn trace_split<Output: TraceVars>(
     Output::from_tuple_expr(tuple_id(), value)
 }
 
+/// Records tiling by static per-axis multiples.
 pub fn tile<Output: TraceTensor, const N: usize>(
     value: impl TraceTensor,
     multiples: [usize; N],
@@ -190,6 +203,7 @@ fn trace_tile<Output: TraceTensor>(value: impl TraceTensor, multiples: &[usize])
     call_output(CallOp::Tile(multiples.to_vec()), vec![value.into_expr()])
 }
 
+/// Records repeating each element `count` times along `axis`.
 pub fn repeat<Output: TraceTensor>(value: impl TraceTensor, axis: usize, count: usize) -> Output {
     trace_repeat(value, axis, count)
 }
@@ -198,6 +212,7 @@ fn trace_repeat<Output: TraceTensor>(value: impl TraceTensor, axis: usize, count
     call_output(CallOp::Repeat { axis, count }, vec![value.into_expr()])
 }
 
+/// Records reversal along every axis.
 pub fn flip<T: TraceTensor>(value: T) -> T {
     trace_flip(value)
 }
@@ -206,6 +221,7 @@ fn trace_flip<T: TraceTensor>(value: T) -> T {
     unary(CallOp::Flip(Vec::new()), value)
 }
 
+/// Records reversal along selected axes.
 pub fn flip_axes<T: TraceTensor, const N: usize>(value: T, axes: [usize; N]) -> T {
     trace_flip_axes(value, &axes)
 }
@@ -214,6 +230,7 @@ fn trace_flip_axes<T: TraceTensor>(value: T, axes: &[usize]) -> T {
     unary(CallOp::Flip(axes.to_vec()), value)
 }
 
+/// Records a static roll along one axis.
 pub fn roll<T: TraceTensor>(value: T, axis: usize, shift: usize) -> T {
     trace_roll(value, axis, shift)
 }
@@ -222,6 +239,7 @@ fn trace_roll<T: TraceTensor>(value: T, axis: usize, shift: usize) -> T {
     unary(CallOp::Roll { axis, shift }, value)
 }
 
+/// Records a default transpose to the requested output tensor type.
 pub fn transpose<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_transpose(value)
 }
@@ -230,6 +248,7 @@ fn trace_transpose<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(CallOp::Transpose(Vec::new()), vec![value.into_expr()])
 }
 
+/// Records a transpose with explicit axes.
 pub fn transpose_axes<Output: TraceTensor, const N: usize>(
     value: impl TraceTensor,
     axes: [usize; N],
@@ -241,6 +260,7 @@ fn trace_transpose_axes<Output: TraceTensor>(value: impl TraceTensor, axes: &[us
     call_output(CallOp::Transpose(axes.to_vec()), vec![value.into_expr()])
 }
 
+/// Records a permutation with explicit axes and output type.
 pub fn permute<Output: TraceTensor, const N: usize>(
     value: impl TraceTensor,
     axes: [usize; N],
@@ -258,6 +278,7 @@ fn trace_permute<Output: TraceTensor>(value: impl TraceTensor, axes: &[usize]) -
     )
 }
 
+/// Records a dimension permutation with output type inferred by type checking.
 pub fn permute_dims<Output: TraceTensor, const N: usize>(
     value: impl TraceTensor,
     axes: [usize; N],
@@ -269,6 +290,7 @@ fn trace_permute_dims<Output: TraceTensor>(value: impl TraceTensor, axes: &[usiz
     call_output(CallOp::PermuteDims(axes.to_vec()), vec![value.into_expr()])
 }
 
+/// Records swapping two axes.
 pub fn swapaxes<Output: TraceTensor>(
     value: impl TraceTensor,
     axis0: usize,
@@ -285,6 +307,7 @@ fn trace_swapaxes<Output: TraceTensor>(
     call_output(CallOp::SwapAxes { axis0, axis1 }, vec![value.into_expr()])
 }
 
+/// Records moving one source axis to a destination position.
 pub fn moveaxis<Output: TraceTensor>(
     value: impl TraceTensor,
     source: usize,

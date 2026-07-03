@@ -27,6 +27,7 @@ type ScopeId = u64;
 type NodeId = u64;
 type TupleId = u64;
 
+/// Lowers a typed graph to an MLIR module without resolving graph calls.
 pub fn lower_to_mlir(graph: &TypedGraph) -> anyhow::Result<String> {
     lower_to_mlir_with_registry(graph, &BTreeMap::new())
 }

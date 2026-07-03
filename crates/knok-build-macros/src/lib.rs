@@ -33,7 +33,7 @@ pub fn grad_graphs(input: TokenStream) -> TokenStream {
     expand_grad_graphs(paths, quote!(::knok_build::BuildOptions::default())).into()
 }
 
-/// Compiles registered graph functions with an explicit [`knok_build::BuildOptions`] expression.
+/// Compiles registered graph functions with an explicit `knok_build::BuildOptions` expression.
 #[proc_macro]
 pub fn compile_graphs_with_options(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as CompileGraphsWithOptions);
@@ -41,7 +41,7 @@ pub fn compile_graphs_with_options(input: TokenStream) -> TokenStream {
     expand_compile_graphs(parsed.graphs, quote!(#options)).into()
 }
 
-/// Compiles value-and-gradient graph wrappers with an explicit [`knok_build::BuildOptions`] expression.
+/// Compiles value-and-gradient graph wrappers with an explicit `knok_build::BuildOptions` expression.
 #[proc_macro]
 pub fn grad_graphs_with_options(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as CompileGraphsWithOptions);
@@ -57,7 +57,7 @@ pub fn compile_mlir_models(input: TokenStream) -> TokenStream {
     expand_compile_mlir_models(models, quote!(::knok_build::BuildOptions::default())).into()
 }
 
-/// Compiles external MLIR files with an explicit [`knok_build::BuildOptions`] expression.
+/// Compiles external MLIR files with an explicit `knok_build::BuildOptions` expression.
 #[proc_macro]
 pub fn compile_mlir_models_with_options(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as CompileMlirModelsWithOptions);

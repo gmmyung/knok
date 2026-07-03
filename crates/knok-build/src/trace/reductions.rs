@@ -5,66 +5,82 @@ use super::{
     tensor::TraceTensor,
 };
 
+/// Records a sum reduction over all axes.
 pub fn sum<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_sum_all(value)
 }
 
+/// Records a product reduction over all axes.
 pub fn prod<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_prod_all(value)
 }
 
+/// Records a mean reduction over all axes.
 pub fn mean<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_mean_all(value)
 }
 
+/// Records a maximum reduction over all axes.
 pub fn max<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_max_all(value)
 }
 
+/// Records a maximum reduction over all axes.
 pub fn amax<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_max_all(value)
 }
 
+/// Records a minimum reduction over all axes.
 pub fn min<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_min_all(value)
 }
 
+/// Records a minimum reduction over all axes.
 pub fn amin<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_min_all(value)
 }
 
+/// Records an argmax reduction over all axes.
 pub fn argmax<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_argmax_all(value)
 }
 
+/// Records an argmin reduction over all axes.
 pub fn argmin<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_argmin_all(value)
 }
 
+/// Records a variance reduction over all axes.
 pub fn var<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_var_all(value)
 }
 
+/// Records a standard deviation reduction over all axes.
 pub fn std<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_std_all(value)
 }
 
+/// Records a peak-to-peak reduction over all axes.
 pub fn ptp<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_ptp_all(value)
 }
 
+/// Records a softmax operation over all axes.
 pub fn softmax<T: TraceTensor>(value: T) -> T {
     unary(CallOp::Softmax(AxisSpec::All), value)
 }
 
+/// Records a boolean all reduction over all axes.
 pub fn all<Output: TraceTensor<Elem = bool>>(value: impl TraceTensor<Elem = bool>) -> Output {
     trace_all_all(value)
 }
 
+/// Records a boolean any reduction over all axes.
 pub fn any<Output: TraceTensor<Elem = bool>>(value: impl TraceTensor<Elem = bool>) -> Output {
     trace_any_all(value)
 }
 
+/// Records a boolean all reduction over one axis.
 pub fn all_axis<Output: TraceTensor<Elem = bool>>(
     value: impl TraceTensor<Elem = bool>,
     axis: usize,
@@ -72,6 +88,7 @@ pub fn all_axis<Output: TraceTensor<Elem = bool>>(
     trace_all_axis(value, axis)
 }
 
+/// Records a boolean any reduction over one axis.
 pub fn any_axis<Output: TraceTensor<Elem = bool>>(
     value: impl TraceTensor<Elem = bool>,
     axis: usize,
@@ -79,50 +96,62 @@ pub fn any_axis<Output: TraceTensor<Elem = bool>>(
     trace_any_axis(value, axis)
 }
 
+/// Records an argmax reduction over one axis.
 pub fn argmax_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_argmax_axis(value, axis)
 }
 
+/// Records an argmin reduction over one axis.
 pub fn argmin_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_argmin_axis(value, axis)
 }
 
+/// Records a maximum reduction over one axis.
 pub fn max_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_max_axis(value, axis)
 }
 
+/// Records a maximum reduction over one axis.
 pub fn amax_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_max_axis(value, axis)
 }
 
+/// Records a mean reduction over one axis.
 pub fn mean_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_mean_axis(value, axis)
 }
 
+/// Records a minimum reduction over one axis.
 pub fn min_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_min_axis(value, axis)
 }
 
+/// Records a minimum reduction over one axis.
 pub fn amin_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_min_axis(value, axis)
 }
 
+/// Records a product reduction over one axis.
 pub fn prod_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_prod_axis(value, axis)
 }
 
+/// Records a peak-to-peak reduction over one axis.
 pub fn ptp_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_ptp_axis(value, axis)
 }
 
+/// Records a standard deviation reduction over one axis.
 pub fn std_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_std_axis(value, axis)
 }
 
+/// Records a sum reduction over one axis.
 pub fn sum_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_sum_axis(value, axis)
 }
 
+/// Records a variance reduction over one axis.
 pub fn var_axis<Output: TraceTensor>(value: impl TraceTensor, axis: usize) -> Output {
     trace_var_axis(value, axis)
 }
@@ -172,6 +201,7 @@ fn trace_softmax_axis<T: TraceTensor>(value: T, axis: usize) -> T {
     unary(CallOp::Softmax(AxisSpec::One(axis)), value)
 }
 
+/// Records a softmax operation over one axis.
 pub fn softmax_axis<T: TraceTensor>(value: T, axis: usize) -> T {
     trace_softmax_axis(value, axis)
 }
