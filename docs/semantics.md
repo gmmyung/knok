@@ -42,6 +42,23 @@ Graph functions can return tuples. Generated wrappers preserve tuple order and
 dtype. Raw single-output helpers reject multi-output artifacts; generated typed
 wrappers should be preferred.
 
+## Gradient Graphs
+
+`knok-build` can generate an experimental value-and-gradient graph from a
+single-output graph whose output is a rank-0 floating-point loss. The generated
+graph is named `{graph_name}_value_and_grad` and returns the original loss
+followed by gradients for every floating-point input, in input order.
+
+Gradient generation is a build-time static graph transform, not a runtime tape.
+The MVP differentiates elementwise arithmetic, `exp`, `log`, `tanh`, `relu`,
+`sigmoid`, `square`, `sqrt`, `sum`, `mean`, rank-2 `matmul`, `reshape`,
+`broadcast`, `transpose`, `permute`, and `permute_dims`. Unsupported
+differentiated operations are build-time errors.
+
+Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
+propagation through that value. Unsupported single-output operations are allowed
+behind `detach` as long as the detached value is not differentiated through.
+
 ## Pooling
 
 `max_pool2d` and `avg_pool2d` use NHWC rank-4 input layout. Options are static:
@@ -52,7 +69,7 @@ padded elements are included in the average denominator.
 ## Operation Surface
 
 - Elementwise arithmetic: `+`, `-`, `*`, `/`, unary `-`, `abs`, `minimum`,
-  `maximum`, `clip`, `pow`, `square`, `reciprocal`, `relu`.
+  `maximum`, `clip`, `pow`, `square`, `reciprocal`, `relu`, `detach`.
 - Comparisons and predicates: `greater`, `greater_equal`, `less`,
   `less_equal`, `equal`, `not_equal`, logical ops, `isnan`, `r#where`.
 - Reductions: `sum`, `prod`, `mean`, extrema, arg extrema, `var`, `std`, `ptp`,

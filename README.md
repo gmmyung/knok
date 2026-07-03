@@ -111,6 +111,8 @@ Existing `.mlir` files can also be compiled from `build.rs` with
   transforms, slicing/padding, matmul, convolution, pooling, and related tensor
   operations.
 - Build-time graph construction with `knok-build`.
+- Experimental build-time value-and-gradient graph generation for scalar
+  floating-point losses, including explicit `detach` stop-gradient.
 - Hosted execution through IREE with the `knok` runtime API.
 - External MLIR model import for users who already have MLIR.
 
@@ -159,7 +161,7 @@ With `default-features = false`, generated wrapper types can still typecheck in
 ## Learn More
 
 - [Static graph syntax](docs/static-graph-syntax.md): author graphs in
-  `build.rs`, including external MLIR imports.
+  `build.rs`, including gradient wrappers and external MLIR imports.
 - [Tensor semantics](docs/semantics.md): rank, broadcasting, axis handling, and
   operation behavior.
 - [Dtypes](docs/dtypes.md): supported element types and explicit casting policy.

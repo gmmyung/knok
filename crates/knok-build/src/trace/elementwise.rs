@@ -13,6 +13,10 @@ pub fn ceil<T: TraceTensor>(value: T) -> T {
     unary(CallOp::Ceil, value)
 }
 
+pub fn detach<T: TraceTensor>(value: T) -> T {
+    unary(CallOp::Detach, value)
+}
+
 pub fn exp<T: TraceTensor>(value: T) -> T {
     unary(CallOp::Exp, value)
 }

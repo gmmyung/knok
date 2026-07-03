@@ -234,6 +234,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let value = self.lower_expr(&args[0])?;
                 self.emit_unary("math.ceil", value)
             }
+            CallOp::Detach => self.lower_expr(&args[0]),
             CallOp::Concat(axis) => {
                 let lhs = self.lower_expr(&args[0])?;
                 let rhs = self.lower_expr(&args[1])?;

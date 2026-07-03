@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    parse_tensor_type, type_check, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr,
-    Graph, GraphSignature, Input, Let, Pool2dOptions, TensorType,
+    parse_tensor_type, type_check, value_and_grad_graph, AxisSpec, BinaryOp, CallOp, Conv2dOptions,
+    ElementType, Expr, Graph, GraphSignature, Input, Let, Pool2dOptions, TensorType,
 };
 
 fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {
@@ -492,4 +492,117 @@ fn rejects_invalid_shape_and_axis_ops() {
         .unwrap_err()
         .to_string()
         .contains("softmax expects a tensor input"));
+}
+
+#[test]
+fn builds_value_and_grad_graph_for_scalar_loss() {
+    let graph = graph(
+        "sum_square",
+        vec![input("x", ElementType::F32, &[2, 3])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::Square,
+                args: vec![var("x")],
+            }],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let grad = value_and_grad_graph(&typed).unwrap();
+
+    assert_eq!(grad.name, "sum_square_value_and_grad");
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2, 3])
+        ]
+    );
+}
+
+#[test]
+fn value_and_grad_unbroadcasts_input_gradients() {
+    let graph = graph(
+        "bias_loss",
+        vec![
+            input("x", ElementType::F32, &[2, 3]),
+            input("bias", ElementType::F32, &[3]),
+        ],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(var("x")),
+                rhs: Box::new(var("bias")),
+            }],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let grad = value_and_grad_graph(&typed).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2, 3]),
+            tensor(ElementType::F32, &[3]),
+        ]
+    );
+}
+
+#[test]
+fn value_and_grad_allows_detached_unsupported_ops() {
+    let graph = graph(
+        "detached_pool_loss",
+        vec![input("x", ElementType::F32, &[1, 4, 4, 1])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::Detach,
+                args: vec![Expr::Call {
+                    op: CallOp::MaxPool2d(Pool2dOptions::default()),
+                    args: vec![var("x")],
+                }],
+            }],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let grad = value_and_grad_graph(&typed).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[1, 4, 4, 1]),
+        ]
+    );
+}
+
+#[test]
+fn value_and_grad_rejects_unsupported_differentiated_ops() {
+    let graph = graph(
+        "pool_loss",
+        vec![input("x", ElementType::F32, &[1, 4, 4, 1])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::MaxPool2d(Pool2dOptions::default()),
+                args: vec![var("x")],
+            }],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let error = value_and_grad_graph(&typed).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("autograd MVP does not support differentiating `max_pool2d`"));
 }

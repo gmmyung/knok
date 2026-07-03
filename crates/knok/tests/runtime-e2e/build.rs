@@ -631,6 +631,39 @@ fn avg_pool2d_padded_f32(x: T4<f32, 1, 3, 3, 1>) -> T4<f32, 1, 2, 2, 1> {
     avg_pool2d_options(x, Pool2dOptions::new(2, 2).padding(1, 0, 1, 0).stride(2, 2))
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn sum_square_loss(x: T1<f32, 3>) -> T0<f32> {
+    sum(square(x))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn bias_sum_loss(x: T2<f32, 2, 3>, bias: T1<f32, 3>) -> T0<f32> {
+    sum(x + bias)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn matmul_sum_loss(lhs: T2<f32, 2, 3>, rhs: T2<f32, 3, 2>) -> T0<f32> {
+    sum(matmul(lhs, rhs))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn shape_loss(x: T2<f32, 2, 3>) -> T0<f32> {
+    let flat: T1<f32, 6> = reshape(x);
+    let matrix: T2<f32, 3, 2> = reshape(flat);
+    let transposed: T2<f32, 2, 3> = transpose(matrix);
+    sum(transposed)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn relu_mean_loss(x: T2<f32, 2, 2>, w: T2<f32, 2, 2>, b: T1<f32, 2>) -> T0<f32> {
+    mean(relu(matmul(x, w) + b))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn detached_square_loss(x: T1<f32, 3>) -> T0<f32> {
+    sum(square(detach(x)))
+}
+
 fn main() {
     knok_build::compile_graphs!(
         affine_relu,
@@ -757,6 +790,16 @@ fn main() {
         padded_stride_dilated_conv2d_f32,
         max_pool2d_f32,
         avg_pool2d_padded_f32
+    );
+
+    knok_build::grad_graphs_with_options!(
+        BuildOptions::default().output_file("knok_autograd_graphs.rs");
+        sum_square_loss,
+        bias_sum_loss,
+        matmul_sum_loss,
+        shape_loss,
+        relu_mean_loss,
+        detached_square_loss
     );
 
     knok_build::compile_mlir_models_with_options!(
