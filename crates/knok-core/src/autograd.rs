@@ -144,11 +144,7 @@ impl<'a> ValueAndGradBuilder<'a> {
         let mut outputs = vec![self.graph.outputs[0].clone()];
         let mut body = vec![Expr::Var(value_name)];
         for input in self.differentiable_inputs.clone() {
-            let grad = self
-                .grads
-                .remove(&input.name)
-                .unwrap_or_else(|| zeros_like(Expr::Var(input.name.clone())));
-            let grad = self.bind_auto(grad, input.ty.clone())?;
+            let grad = self.gradient_output_for_input(&input)?;
             outputs.push(input.ty);
             body.push(grad);
         }
@@ -514,8 +510,10 @@ impl<'a> ValueAndGradBuilder<'a> {
         args: &[Expr],
         grad: Expr,
     ) -> syn::Result<()> {
+        if call_stops_gradient(op, &node.ty) {
+            return Ok(());
+        }
         match op {
-            CallOp::Detach => Ok(()),
             CallOp::Abs => {
                 let zero = zeros_like(args[0].clone());
                 let positive = call(CallOp::Greater, vec![args[0].clone(), zero.clone()]);
@@ -676,13 +674,8 @@ impl<'a> ValueAndGradBuilder<'a> {
             CallOp::Outer => self.reverse_outer(args, &node.ty, grad),
             CallOp::Trace(axes) => self.reverse_trace(args, &node.ty, *axes, grad),
             CallOp::Diagonal(axes) => self.reverse_diagonal(args, *axes, grad),
-            CallOp::Reshape(_) => {
-                let input_ty = self.expr_ty(&args[0])?;
-                self.add_grad_to_expr(&args[0], call(CallOp::Reshape(input_ty), vec![grad]))
-            }
-            CallOp::Squeeze(_) | CallOp::Unsqueeze(_) => {
-                let input_ty = self.expr_ty(&args[0])?;
-                self.add_grad_to_expr(&args[0], call(CallOp::Reshape(input_ty), vec![grad]))
+            CallOp::Reshape(_) | CallOp::Squeeze(_) | CallOp::Unsqueeze(_) => {
+                self.add_reshape_grad_to_arg(&args[0], grad)
             }
             CallOp::Broadcast(_) => {
                 let input_ty = self.expr_ty(&args[0])?;
@@ -830,31 +823,6 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let fill_grad = self.unbroadcast(grad, &node.ty, &fill_ty)?;
                 self.add_grad_to_expr(&args[1], fill_grad)
             }
-            CallOp::Ceil
-            | CallOp::Floor
-            | CallOp::Rint
-            | CallOp::Round
-            | CallOp::All(_)
-            | CallOp::Any(_)
-            | CallOp::Argmax(_)
-            | CallOp::Argmin(_)
-            | CallOp::IsNan
-            | CallOp::Greater
-            | CallOp::GreaterEqual
-            | CallOp::Less
-            | CallOp::LessEqual
-            | CallOp::Equal
-            | CallOp::NotEqual
-            | CallOp::LogicalAnd
-            | CallOp::LogicalOr
-            | CallOp::LogicalXor
-            | CallOp::LogicalNot
-            | CallOp::Arange(_)
-            | CallOp::Linspace(_)
-            | CallOp::Eye(_)
-            | CallOp::OnesLike
-            | CallOp::ZerosLike => Ok(()),
-            _ if !node.ty.elem.is_float() => Ok(()),
             _ => Err(error(format!(
                 "autograd MVP does not support differentiating floating-point `{}`",
                 op.name()
@@ -1640,6 +1608,11 @@ impl<'a> ValueAndGradBuilder<'a> {
         Ok(expr)
     }
 
+    fn add_reshape_grad_to_arg(&mut self, arg: &Expr, grad: Expr) -> syn::Result<()> {
+        let input_ty = self.expr_ty(arg)?;
+        self.add_grad_to_expr(arg, call(CallOp::Reshape(input_ty), vec![grad]))
+    }
+
     fn add_grad_to_expr(&mut self, expr: &Expr, grad: Expr) -> syn::Result<()> {
         match expr {
             Expr::Var(name) => self.add_grad(name, grad),
@@ -1664,6 +1637,14 @@ impl<'a> ValueAndGradBuilder<'a> {
         };
         self.grads.insert(name.into(), grad);
         Ok(())
+    }
+
+    fn gradient_output_for_input(&mut self, input: &Input) -> syn::Result<Expr> {
+        let grad = self
+            .grads
+            .remove(&input.name)
+            .unwrap_or_else(|| zeros_like(Expr::Var(input.name.clone())));
+        self.bind_auto(grad, input.ty.clone())
     }
 
     fn expr_ty(&self, expr: &Expr) -> syn::Result<TensorType> {
@@ -1744,6 +1725,38 @@ fn elementwise_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorTyp
         elem: lhs.elem,
         shape,
     })
+}
+
+fn call_stops_gradient(op: &CallOp, output_ty: &TensorType) -> bool {
+    !output_ty.elem.is_float()
+        || matches!(
+            op,
+            CallOp::Detach
+                | CallOp::Ceil
+                | CallOp::Floor
+                | CallOp::Rint
+                | CallOp::Round
+                | CallOp::All(_)
+                | CallOp::Any(_)
+                | CallOp::Argmax(_)
+                | CallOp::Argmin(_)
+                | CallOp::IsNan
+                | CallOp::Greater
+                | CallOp::GreaterEqual
+                | CallOp::Less
+                | CallOp::LessEqual
+                | CallOp::Equal
+                | CallOp::NotEqual
+                | CallOp::LogicalAnd
+                | CallOp::LogicalOr
+                | CallOp::LogicalXor
+                | CallOp::LogicalNot
+                | CallOp::Arange(_)
+                | CallOp::Linspace(_)
+                | CallOp::Eye(_)
+                | CallOp::OnesLike
+                | CallOp::ZerosLike
+        )
 }
 
 fn single_call_type(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
