@@ -51,13 +51,21 @@ pub(crate) fn supported_backend_names() -> &'static [&'static str] {
 }
 
 pub(crate) fn backend_flags(backend: &str, extra_flags: &[String]) -> Vec<String> {
-    backend_flags_with_opt_level(backend, extra_flags, env::var("OPT_LEVEL").ok().as_deref())
+    let cargo_opt_level = env::var("OPT_LEVEL").ok();
+    let cargo_target = env::var("TARGET").ok();
+    backend_flags_with_cargo_env(
+        backend,
+        extra_flags,
+        cargo_opt_level.as_deref(),
+        cargo_target.as_deref(),
+    )
 }
 
-fn backend_flags_with_opt_level(
+fn backend_flags_with_cargo_env(
     backend: &str,
     extra_flags: &[String],
     cargo_opt_level: Option<&str>,
+    cargo_target: Option<&str>,
 ) -> Vec<String> {
     let capability = IreeBackend::from_target_backend(backend)
         .unwrap_or_else(|| panic!("unsupported IREE backend `{backend}`"));
@@ -78,11 +86,13 @@ fn backend_flags_with_opt_level(
                 flags.push(format!("--iree-opt-level={opt_level}"));
             }
         }
-        if !extra_flags
-            .iter()
-            .any(|flag| flag.starts_with("--iree-llvmcpu-target-cpu="))
-        {
-            flags.push("--iree-llvmcpu-target-cpu=generic".to_string());
+        if let Some(target_triple) = cargo_target {
+            if !extra_flags
+                .iter()
+                .any(|flag| flag.starts_with("--iree-llvmcpu-target-triple="))
+            {
+                flags.push(format!("--iree-llvmcpu-target-triple={target_triple}"));
+            }
         }
     }
     flags.extend(extra_flags.iter().cloned());
@@ -106,22 +116,25 @@ mod tests {
 
     #[test]
     fn llvm_cpu_flags_include_generic_cpu_by_default() {
-        let flags = backend_flags("llvm-cpu", &[]);
+        let flags = backend_flags_with_cargo_env("llvm-cpu", &[], None, None);
 
         assert_eq!(flags[0], "--iree-hal-target-backends=llvm-cpu");
         assert!(flags.contains(&"--iree-input-demote-f64-to-f32=false".to_string()));
-        assert!(flags.contains(&"--iree-llvmcpu-target-cpu=generic".to_string()));
+        assert!(!flags
+            .iter()
+            .any(|flag| flag.starts_with("--iree-llvmcpu-target-cpu=")));
     }
 
     #[test]
-    fn llvm_cpu_flags_do_not_override_explicit_cpu() {
-        let flags = backend_flags(
+    fn llvm_cpu_flags_accept_explicit_cpu() {
+        let flags = backend_flags_with_cargo_env(
             "llvm-cpu",
             &["--iree-llvmcpu-target-cpu=apple-m1".to_string()],
+            None,
+            None,
         );
 
         assert!(flags.contains(&"--iree-llvmcpu-target-cpu=apple-m1".to_string()));
-        assert!(!flags.contains(&"--iree-llvmcpu-target-cpu=generic".to_string()));
     }
 
     #[test]
@@ -134,7 +147,7 @@ mod tests {
             ("s", "O2"),
             ("z", "O2"),
         ] {
-            let flags = backend_flags_with_opt_level("llvm-cpu", &[], Some(cargo));
+            let flags = backend_flags_with_cargo_env("llvm-cpu", &[], Some(cargo), None);
 
             assert!(
                 flags.contains(&format!("--iree-opt-level={iree}")),
@@ -145,10 +158,11 @@ mod tests {
 
     #[test]
     fn llvm_cpu_opt_level_can_be_overridden() {
-        let flags = backend_flags_with_opt_level(
+        let flags = backend_flags_with_cargo_env(
             "llvm-cpu",
             &["--iree-opt-level=O1".to_string()],
             Some("3"),
+            None,
         );
 
         assert_eq!(
@@ -161,10 +175,47 @@ mod tests {
         assert!(flags.contains(&"--iree-opt-level=O1".to_string()));
     }
 
+    #[test]
+    fn llvm_cpu_target_triple_follows_cargo_target() {
+        for target in [
+            "aarch64-apple-darwin",
+            "arm64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "riscv64gc-unknown-linux-gnu",
+            "riscv32imac-unknown-none-elf",
+        ] {
+            let flags = backend_flags_with_cargo_env("llvm-cpu", &[], None, Some(target));
+
+            assert!(
+                flags.contains(&format!("--iree-llvmcpu-target-triple={target}")),
+                "{target:?} should be passed through as the target triple: {flags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn llvm_cpu_target_triple_can_be_overridden() {
+        let flags = backend_flags_with_cargo_env(
+            "llvm-cpu",
+            &["--iree-llvmcpu-target-triple=custom-triple".to_string()],
+            None,
+            Some("aarch64-apple-darwin"),
+        );
+
+        assert_eq!(
+            flags
+                .iter()
+                .filter(|flag| flag.starts_with("--iree-llvmcpu-target-triple="))
+                .count(),
+            1
+        );
+        assert!(flags.contains(&"--iree-llvmcpu-target-triple=custom-triple".to_string()));
+    }
+
     #[cfg(any(target_os = "macos", doc))]
     #[test]
     fn non_cpu_backends_do_not_inherit_cargo_opt_level() {
-        let flags = backend_flags_with_opt_level("metal-spirv", &[], Some("3"));
+        let flags = backend_flags_with_cargo_env("metal-spirv", &[], Some("3"), None);
 
         assert!(!flags
             .iter()
@@ -173,8 +224,20 @@ mod tests {
 
     #[cfg(any(target_os = "macos", doc))]
     #[test]
+    fn non_cpu_backends_do_not_inherit_cargo_target_triple() {
+        let flags =
+            backend_flags_with_cargo_env("metal-spirv", &[], None, Some("aarch64-apple-darwin"));
+
+        assert!(!flags
+            .iter()
+            .any(|flag| flag.starts_with("--iree-llvmcpu-target-triple=")));
+    }
+
+    #[cfg(any(target_os = "macos", doc))]
+    #[test]
     fn metal_flags_disable_metallib_output() {
-        let flags = backend_flags("metal-spirv", &["--custom".to_string()]);
+        let flags =
+            backend_flags_with_cargo_env("metal-spirv", &["--custom".to_string()], None, None);
 
         assert!(flags.contains(&"--iree-hal-target-backends=metal-spirv".to_string()));
         assert!(flags.contains(&"--iree-metal-compile-to-metallib=false".to_string()));
