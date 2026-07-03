@@ -48,12 +48,12 @@ The harness currently reports:
 | `knok MLP` | `64x128 -> 64x64` | `matmul + bias + relu + matmul`. |
 | `ndarray MLP` | `64x128 -> 64x64` | Matching ndarray matmul pipeline. |
 | `knok conv2d` | `8x32x32x3, 3x3x3x16 -> 8x30x30x16` | NHWC/HWCF convolution through IREE. |
+| `knok max_pool2d` | `16x64x64x16 -> 16x32x32x16` | NHWC max pooling through IREE. |
+| `ndarray max_pool2d` | `16x64x64x16 -> 16x32x32x16` | Matching ndarray loop baseline. |
 
 The `ndarray` baselines reuse prebuilt arrays in the timed loop. `knok` cases
 reuse an `Engine` and clone input tensors per iteration because `run` consumes
 typed tensor inputs.
-
-Pooling is not benchmarked yet because there is no public pooling graph op.
 
 ## Engine Reuse
 

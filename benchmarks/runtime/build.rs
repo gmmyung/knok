@@ -61,6 +61,11 @@ fn conv2d_nhwc_8x32x32x3(
     conv2d(x, k)
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn max_pool2d_nhwc_16x64x64x16(x: T4<f32, 16, 64, 64, 16>) -> T4<f32, 16, 32, 32, 16> {
+    max_pool2d(x)
+}
+
 fn main() {
     knok_build::compile_graphs!(
         tiny_relu,
@@ -72,6 +77,7 @@ fn main() {
         transpose_512x256,
         broadcast_row_512,
         mlp_64x128x256x64,
-        conv2d_nhwc_8x32x32x3
+        conv2d_nhwc_8x32x32x3,
+        max_pool2d_nhwc_16x64x64x16
     );
 }

@@ -107,7 +107,9 @@ pub enum CallOp {
     LogicalXor,
     Inner,
     Matmul,
+    MaxPool2d(Pool2dOptions),
     Max(AxisSpec),
+    AvgPool2d(Pool2dOptions),
     Mean(AxisSpec),
     Min(AxisSpec),
     Minimum,
@@ -227,7 +229,9 @@ impl CallOp {
             Self::LogicalXor => "logical_xor",
             Self::Inner => "inner",
             Self::Matmul => "matmul",
+            Self::MaxPool2d(_) => "max_pool2d",
             Self::Max(_) => "max",
+            Self::AvgPool2d(_) => "avg_pool2d",
             Self::Mean(_) => "mean",
             Self::Min(_) => "min",
             Self::Minimum => "minimum",
@@ -311,6 +315,14 @@ pub struct Conv2dOptions {
     pub groups: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pool2dOptions {
+    pub kernel: [usize; 2],
+    pub padding: Padding2d,
+    pub stride: [usize; 2],
+    pub dilation: [usize; 2],
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Padding2d {
     pub top: usize,
@@ -326,6 +338,17 @@ impl Default for Conv2dOptions {
             stride: [1, 1],
             dilation: [1, 1],
             groups: 1,
+        }
+    }
+}
+
+impl Default for Pool2dOptions {
+    fn default() -> Self {
+        Self {
+            kernel: [2, 2],
+            padding: Padding2d::default(),
+            stride: [2, 2],
+            dilation: [1, 1],
         }
     }
 }

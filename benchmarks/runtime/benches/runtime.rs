@@ -2,7 +2,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use knok::{prelude::*, Engine};
-use ndarray::{Array1, Array2, Array3, Axis};
+use ndarray::{Array1, Array2, Array3, Array4, Axis};
 
 knok::generated_graphs!(mod graphs);
 
@@ -16,6 +16,7 @@ fn runtime_benches(c: &mut Criterion) {
     bench_layout(c);
     bench_mlp(c);
     bench_conv2d(c);
+    bench_pooling(c);
 }
 
 fn bench_overhead(c: &mut Criterion) {
@@ -260,6 +261,27 @@ fn bench_conv2d(c: &mut Criterion) {
     });
 }
 
+fn bench_pooling(c: &mut Criterion) {
+    let engine = Engine::for_artifact(graphs::max_pool2d_nhwc_16x64x64x16::artifact()).unwrap();
+    let len = 16 * 64 * 64 * 16;
+    let data = filled_data(len, 0.001, -0.5);
+    let input = Tensor4::<f32, 16, 64, 64, 16>::from_vec(data.clone()).unwrap();
+    let ndarray_input = Array4::from_shape_vec((16, 64, 64, 16), data).unwrap();
+
+    c.bench_function("knok/max_pool2d_nhwc_16x64x64x16", |b| {
+        b.iter(|| {
+            let output =
+                graphs::max_pool2d_nhwc_16x64x64x16::run(&engine, black_box(input.clone()))
+                    .unwrap();
+            black_box(checksum(output.as_slice()))
+        })
+    });
+
+    c.bench_function("ndarray/max_pool2d_nhwc_16x64x64x16", |b| {
+        b.iter(|| black_box(ndarray_max_pool2d_nhwc_checksum(&ndarray_input)))
+    });
+}
+
 fn filled_data(len: usize, scale: f32, offset: f32) -> Vec<f32> {
     (0..len)
         .map(|index| (index % 257) as f32 * scale + offset)
@@ -272,6 +294,27 @@ fn checksum(values: &[f32]) -> f32 {
 
 fn checksum_iter<'a>(values: impl IntoIterator<Item = &'a f32>) -> f32 {
     values.into_iter().copied().sum::<f32>()
+}
+
+fn ndarray_max_pool2d_nhwc_checksum(input: &Array4<f32>) -> f32 {
+    let (batch, height, width, channels) = input.dim();
+    let mut sum = 0.0;
+    for n in 0..batch {
+        for h in 0..(height / 2) {
+            for w in 0..(width / 2) {
+                for c in 0..channels {
+                    let h0 = h * 2;
+                    let w0 = w * 2;
+                    let value = input[[n, h0, w0, c]]
+                        .max(input[[n, h0 + 1, w0, c]])
+                        .max(input[[n, h0, w0 + 1, c]])
+                        .max(input[[n, h0 + 1, w0 + 1, c]]);
+                    sum += value;
+                }
+            }
+        }
+    }
+    sum
 }
 
 fn ndarray_softmax_axis1_checksum(input: &Array2<f32>) -> f32 {

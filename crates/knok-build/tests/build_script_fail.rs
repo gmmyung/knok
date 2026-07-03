@@ -75,6 +75,47 @@ fn main() {
 "#,
             expected: &["knok build failed", "axis 3 is out of bounds"],
         },
+        Fixture {
+            name: "avg_pool_integer",
+            build_rs: r#"
+use knok_build::prelude::*;
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn forward(x: Tensor4<i32, 1, 4, 4, 1>) -> Tensor4<i32, 1, 2, 2, 1> {
+    avg_pool2d(x)
+}
+
+fn main() {
+    knok_build::compile_graphs_with_options!(
+        BuildOptions::stub_artifacts_for_check();
+        forward
+    );
+}
+"#,
+            expected: &[
+                "knok build failed",
+                "avg_pool2d expects a floating-point element type",
+            ],
+        },
+        Fixture {
+            name: "pool_zero_kernel",
+            build_rs: r#"
+use knok_build::prelude::*;
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn forward(x: Tensor4<f32, 1, 4, 4, 1>) -> Tensor4<f32, 1, 2, 2, 1> {
+    max_pool2d_options(x, Pool2dOptions::new(0, 2))
+}
+
+fn main() {
+    knok_build::compile_graphs_with_options!(
+        BuildOptions::stub_artifacts_for_check();
+        forward
+    );
+}
+"#,
+            expected: &["knok build failed", "kernel dimensions must be non-zero"],
+        },
     ];
 
     let temp = TempDir::new().expect("create temp fixture root");
