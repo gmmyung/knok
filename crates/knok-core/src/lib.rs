@@ -5,6 +5,7 @@
 //! helpers in `knok-build`.
 
 mod ast;
+mod autograd;
 mod ops;
 mod type_parse;
 mod typecheck;
@@ -17,6 +18,7 @@ pub use ast::{
     Let, Padding2d, Pool2dOptions, StaticScalar, TensorType, TypedExpr, TypedGraph, TypedLet,
     TypedValue, UnaryOp,
 };
+pub use autograd::{value_and_grad_graph, value_and_grad_graph_with_registry};
 pub use ops::{static_arange_literals, static_eye_literals, static_linspace_literals};
 pub use type_parse::parse_tensor_type;
 pub use typecheck::type_check;

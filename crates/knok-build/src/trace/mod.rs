@@ -14,10 +14,10 @@ pub use context::{typed_expr, TraceContext, TraceOutput, TraceVars};
 pub use conv::{conv2d, conv2d_options, Conv2dOptions};
 pub use creation::{arange, arange_step, arange_to, eye, identity, linspace};
 pub use elementwise::{
-    abs, ceil, clip, cos, equal, exp, exp2, expm1, floor, full_like, greater, greater_equal, isnan,
-    less, less_equal, log, log10, log1p, log2, logical_and, logical_not, logical_or, logical_xor,
-    maximum, minimum, not_equal, ones_like, pow, r#where, reciprocal, relu, rint, round, sigmoid,
-    sin, sqrt, square, tan, tanh, zeros_like,
+    abs, ceil, clip, cos, detach, equal, exp, exp2, expm1, floor, full_like, greater,
+    greater_equal, isnan, less, less_equal, log, log10, log1p, log2, logical_and, logical_not,
+    logical_or, logical_xor, maximum, minimum, not_equal, ones_like, pow, r#where, reciprocal,
+    relu, rint, round, sigmoid, sin, sqrt, square, tan, tanh, zeros_like,
 };
 pub use linalg::{
     diagonal, diagonal_axes, dot, inner, matmul, outer, trace, trace_axes, vecdot, vecdot_axis,

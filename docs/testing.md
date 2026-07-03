@@ -34,6 +34,22 @@ Runtime E2E tests should assert actual tensor outputs, not only generated MLIR
 text. MLIR string assertions are reserved for internal lowering invariants such
 as cache reuse or a specific lowering form.
 
+## Adding Tests
+
+- Add parser, type-checker, op shape rule, and AST behavior tests under
+  `crates/knok-core/src/tests/typecheck.rs`.
+- Add static autograd graph-transform tests under
+  `crates/knok-core/src/tests/autograd.rs`. These tests should cover generated
+  output signatures, unsupported differentiated cases, graph-call inlining, and
+  graph-size regressions before runtime execution is involved.
+- Add runtime E2E graph fixtures under
+  `crates/knok/tests/runtime-e2e/build_graphs/`, grouped by op family. Register
+  new forward fixtures in `compile_graphs!` and value-and-gradient fixtures in
+  `grad_graphs_with_options!` from `crates/knok/tests/runtime-e2e/build.rs`.
+- Add generated-wrapper runtime assertions under
+  `crates/knok/tests/runtime-e2e/src/tests/`. Autograd runtime assertions are
+  split by op family under `src/tests/autograd/`.
+
 Before a release, also run the dry-run publishing checklist in
 [release-readiness.md](release-readiness.md).
 

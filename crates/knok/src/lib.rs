@@ -30,6 +30,7 @@ pub mod backend;
 /// Typed generated graph handles and runtime boundary traits.
 pub mod graph;
 mod private;
+/// Hosted runtime configuration and engine types.
 pub mod runtime;
 /// Fixed-rank tensor containers used by generated graph wrappers.
 pub mod tensor;

@@ -2,6 +2,10 @@ use proc_macro2::Span;
 
 use crate::{CallOp, ElementType, Expr, StaticScalar, TensorType};
 
+/// Expands a static `arange` call into row-major literal strings.
+///
+/// The target must be a rank-1 numeric tensor and the arguments must be static
+/// scalar constants accepted by `arange`.
 pub fn static_arange_literals(target: &TensorType, args: &[Expr]) -> Result<Vec<String>, String> {
     validate_static_vector_target(target, "arange")?;
     let params = parse_numeric_params("arange", args, 1..=3)?;
@@ -58,6 +62,10 @@ pub fn static_arange_literals(target: &TensorType, args: &[Expr]) -> Result<Vec<
     }
 }
 
+/// Expands a static `linspace` call into row-major literal strings.
+///
+/// The target must be a rank-1 numeric tensor and the arguments must be static
+/// scalar constants accepted by `linspace`.
 pub fn static_linspace_literals(target: &TensorType, args: &[Expr]) -> Result<Vec<String>, String> {
     validate_static_vector_target(target, "linspace")?;
     let params = parse_numeric_params("linspace", args, 2..=2)?;
@@ -90,6 +98,9 @@ pub fn static_linspace_literals(target: &TensorType, args: &[Expr]) -> Result<Ve
     }
 }
 
+/// Expands a static identity matrix for `eye` or `identity`.
+///
+/// The target must be a square rank-2 numeric tensor.
 pub fn static_eye_literals(target: &TensorType) -> Result<Vec<String>, String> {
     validate_static_eye_target(target)?;
     let rows = target.shape[0];

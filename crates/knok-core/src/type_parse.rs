@@ -3,6 +3,7 @@ use syn::{spanned::Spanned, GenericArgument, Lit, Type, TypePath};
 
 use crate::{ElementType, TensorType};
 
+/// Parses a Rust `TensorN<T, ...>` or `TN<T, ...>` type into graph tensor metadata.
 pub fn parse_tensor_type(ty: &Type) -> syn::Result<TensorType> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return Err(syn::Error::new(

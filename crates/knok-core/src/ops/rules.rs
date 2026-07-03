@@ -61,6 +61,10 @@ pub(crate) fn infer_call_results(op: &CallOp, args: &[TensorType]) -> syn::Resul
             output.elem = ElementType::I64;
             Ok(output)
         }
+        CallOp::Detach => {
+            expect_arity(op, args, 1)?;
+            Ok(args[0].clone())
+        }
         CallOp::Ceil
         | CallOp::Cos
         | CallOp::Exp

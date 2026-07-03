@@ -235,6 +235,7 @@ impl<T, const D0: usize> Tensor1<T, D0> {
         }
     }
 
+    /// Creates a tensor filled with one value.
     pub fn filled(value: T) -> Self
     where
         T: Clone,
@@ -244,36 +245,44 @@ impl<T, const D0: usize> Tensor1<T, D0> {
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns an element by index.
     pub fn get(&self, index: usize) -> Option<&T> {
         self.storage.data.get(index)
     }
 
+    /// Returns a mutable element by index.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         self.storage.data.get_mut(index)
     }
 }
 
 impl<T, const D0: usize, const D1: usize> Tensor2<T, D0, D1> {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[D0, D1];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[D0, D1])?,
         })
     }
 
+    /// Creates a tensor from a nested row-major array.
     pub fn from_array(data: [[T; D1]; D0]) -> Self {
         Self {
             storage: TensorData {
@@ -282,6 +291,7 @@ impl<T, const D0: usize, const D1: usize> Tensor2<T, D0, D1> {
         }
     }
 
+    /// Creates a tensor filled with one value.
     pub fn filled(value: T) -> Self
     where
         T: Clone,
@@ -291,36 +301,44 @@ impl<T, const D0: usize, const D1: usize> Tensor2<T, D0, D1> {
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns an element by row and column.
     pub fn get(&self, row: usize, col: usize) -> Option<&T> {
         (row < D0 && col < D1).then(|| &self.storage.data[row * D1 + col])
     }
 
+    /// Returns a mutable element by row and column.
     pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut T> {
         (row < D0 && col < D1).then(|| &mut self.storage.data[row * D1 + col])
     }
 }
 
 impl<T, const D0: usize, const D1: usize, const D2: usize> Tensor3<T, D0, D1, D2> {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[D0, D1, D2];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[D0, D1, D2])?,
         })
     }
 
+    /// Creates a tensor from a nested row-major array.
     pub fn from_array(data: [[[T; D2]; D1]; D0]) -> Self {
         Self {
             storage: TensorData {
@@ -333,6 +351,7 @@ impl<T, const D0: usize, const D1: usize, const D2: usize> Tensor3<T, D0, D1, D2
         }
     }
 
+    /// Creates a tensor filled with one value.
     pub fn filled(value: T) -> Self
     where
         T: Clone,
@@ -342,22 +361,27 @@ impl<T, const D0: usize, const D1: usize, const D2: usize> Tensor3<T, D0, D1, D2
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns an element by static-dimension indices.
     pub fn get(&self, d0: usize, d1: usize, d2: usize) -> Option<&T> {
         (d0 < D0 && d1 < D1 && d2 < D2).then(|| &self.storage.data[(d0 * D1 + d1) * D2 + d2])
     }
 
+    /// Returns a mutable element by static-dimension indices.
     pub fn get_mut(&mut self, d0: usize, d1: usize, d2: usize) -> Option<&mut T> {
         (d0 < D0 && d1 < D1 && d2 < D2).then(|| &mut self.storage.data[(d0 * D1 + d1) * D2 + d2])
     }
@@ -366,14 +390,17 @@ impl<T, const D0: usize, const D1: usize, const D2: usize> Tensor3<T, D0, D1, D2
 impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
     Tensor4<T, D0, D1, D2, D3>
 {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[D0, D1, D2, D3];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[D0, D1, D2, D3])?,
         })
     }
 
+    /// Creates a tensor from a nested row-major array.
     pub fn from_array(data: [[[[T; D3]; D2]; D1]; D0]) -> Self {
         Self {
             storage: TensorData {
@@ -387,6 +414,7 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
         }
     }
 
+    /// Creates a tensor filled with one value.
     pub fn filled(value: T) -> Self
     where
         T: Clone,
@@ -396,23 +424,28 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns an element by static-dimension indices.
     pub fn get(&self, d0: usize, d1: usize, d2: usize, d3: usize) -> Option<&T> {
         (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3)
             .then(|| &self.storage.data[((d0 * D1 + d1) * D2 + d2) * D3 + d3])
     }
 
+    /// Returns a mutable element by static-dimension indices.
     pub fn get_mut(&mut self, d0: usize, d1: usize, d2: usize, d3: usize) -> Option<&mut T> {
         (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3)
             .then(|| &mut self.storage.data[((d0 * D1 + d1) * D2 + d2) * D3 + d3])
@@ -422,14 +455,17 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize>
 impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize, const D4: usize>
     Tensor5<T, D0, D1, D2, D3, D4>
 {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[D0, D1, D2, D3, D4];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[D0, D1, D2, D3, D4])?,
         })
     }
 
+    /// Creates a tensor from a nested row-major array.
     pub fn from_array(data: [[[[[T; D4]; D3]; D2]; D1]; D0]) -> Self {
         Self {
             storage: TensorData {
@@ -444,6 +480,7 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize, cons
         }
     }
 
+    /// Creates a tensor filled with one value.
     pub fn filled(value: T) -> Self
     where
         T: Clone,
@@ -453,23 +490,28 @@ impl<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize, cons
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns an element by static-dimension indices.
     pub fn get(&self, d0: usize, d1: usize, d2: usize, d3: usize, d4: usize) -> Option<&T> {
         (d0 < D0 && d1 < D1 && d2 < D2 && d3 < D3 && d4 < D4)
             .then(|| &self.storage.data[(((d0 * D1 + d1) * D2 + d2) * D3 + d3) * D4 + d4])
     }
 
+    /// Returns a mutable element by static-dimension indices.
     pub fn get_mut(
         &mut self,
         d0: usize,
@@ -493,14 +535,17 @@ impl<
         const D5: usize,
     > Tensor6<T, D0, D1, D2, D3, D4, D5>
 {
+    /// Static tensor shape.
     pub const SHAPE: &'static [usize] = &[D0, D1, D2, D3, D4, D5];
 
+    /// Creates a tensor from row-major data and validates the element count.
     pub fn from_vec(data: Vec<T>) -> crate::Result<Self> {
         Ok(Self {
             storage: TensorData::from_vec(data, &[D0, D1, D2, D3, D4, D5])?,
         })
     }
 
+    /// Creates a tensor from a nested row-major array.
     #[allow(clippy::type_complexity)]
     pub fn from_array(data: [[[[[[T; D5]; D4]; D3]; D2]; D1]; D0]) -> Self {
         Self {
@@ -517,6 +562,7 @@ impl<
         }
     }
 
+    /// Creates a tensor filled with one value.
     pub fn filled(value: T) -> Self
     where
         T: Clone,
@@ -526,18 +572,22 @@ impl<
         }
     }
 
+    /// Returns row-major tensor storage.
     pub fn as_slice(&self) -> &[T] {
         self.storage.as_slice()
     }
 
+    /// Returns mutable row-major tensor storage.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.storage.data
     }
 
+    /// Consumes the tensor and returns row-major storage.
     pub fn into_vec(self) -> Vec<T> {
         self.storage.into_vec()
     }
 
+    /// Returns an element by static-dimension indices.
     pub fn get(
         &self,
         d0: usize,
@@ -552,6 +602,7 @@ impl<
         })
     }
 
+    /// Returns a mutable element by static-dimension indices.
     pub fn get_mut(
         &mut self,
         d0: usize,
@@ -597,10 +648,12 @@ macro_rules! impl_fixed_tensor_common {
         }
 
         impl<T: TensorElement> $name<T> {
+            /// Creates a tensor filled with the element type's zero value.
             pub fn zeros() -> Self {
                 Self::filled(T::ZERO)
             }
 
+            /// Creates a tensor filled with the element type's one value.
             pub fn ones() -> Self {
                 Self::filled(T::ONE)
             }
@@ -653,10 +706,12 @@ macro_rules! impl_fixed_tensor_common {
         }
 
         impl<T: TensorElement, $(const $dim: usize),*> $name<T, $($dim),*> {
+            /// Creates a tensor filled with the element type's zero value.
             pub fn zeros() -> Self {
                 Self::filled(T::ZERO)
             }
 
+            /// Creates a tensor filled with the element type's one value.
             pub fn ones() -> Self {
                 Self::filled(T::ONE)
             }

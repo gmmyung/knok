@@ -26,12 +26,27 @@ pub fn compile_graphs(input: TokenStream) -> TokenStream {
     expand_compile_graphs(paths, quote!(::knok_build::BuildOptions::default())).into()
 }
 
-/// Compiles registered graph functions with an explicit [`knok_build::BuildOptions`] expression.
+/// Compiles value-and-gradient graph wrappers for registered scalar loss functions.
+#[proc_macro]
+pub fn grad_graphs(input: TokenStream) -> TokenStream {
+    let paths = parse_macro_input!(input with Punctuated::<Path, Token![,]>::parse_terminated);
+    expand_grad_graphs(paths, quote!(::knok_build::BuildOptions::default())).into()
+}
+
+/// Compiles registered graph functions with an explicit `knok_build::BuildOptions` expression.
 #[proc_macro]
 pub fn compile_graphs_with_options(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as CompileGraphsWithOptions);
     let options = parsed.options;
     expand_compile_graphs(parsed.graphs, quote!(#options)).into()
+}
+
+/// Compiles value-and-gradient graph wrappers with an explicit `knok_build::BuildOptions` expression.
+#[proc_macro]
+pub fn grad_graphs_with_options(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as CompileGraphsWithOptions);
+    let options = parsed.options;
+    expand_grad_graphs(parsed.graphs, quote!(#options)).into()
 }
 
 /// Compiles external MLIR files with default build options.
@@ -42,7 +57,7 @@ pub fn compile_mlir_models(input: TokenStream) -> TokenStream {
     expand_compile_mlir_models(models, quote!(::knok_build::BuildOptions::default())).into()
 }
 
-/// Compiles external MLIR files with an explicit [`knok_build::BuildOptions`] expression.
+/// Compiles external MLIR files with an explicit `knok_build::BuildOptions` expression.
 #[proc_macro]
 pub fn compile_mlir_models_with_options(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as CompileMlirModelsWithOptions);
@@ -249,6 +264,29 @@ fn expand_compile_graphs(
     paths: Punctuated<Path, Token![,]>,
     options: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
+    expand_registered_graph_emit(
+        paths,
+        options,
+        quote!(::knok_build::emit_registered_graphs_with_options),
+    )
+}
+
+fn expand_grad_graphs(
+    paths: Punctuated<Path, Token![,]>,
+    options: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    expand_registered_graph_emit(
+        paths,
+        options,
+        quote!(::knok_build::emit_registered_grad_graphs_with_options),
+    )
+}
+
+fn expand_registered_graph_emit(
+    paths: Punctuated<Path, Token![,]>,
+    options: proc_macro2::TokenStream,
+    emit: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     let calls = paths.iter().map(|path| {
         let mut register_path = path.clone();
         let last = register_path
@@ -264,7 +302,7 @@ fn expand_compile_graphs(
             let result: ::knok_build::Result<()> = (|| {
                 let mut registry = ::knok_build::GraphRegistry::new();
                 #(#calls)*
-                ::knok_build::emit_registered_graphs_with_options(registry, #options)
+                #emit(registry, #options)
             })();
             if let Err(error) = result {
                 panic!("knok build failed: {error}");

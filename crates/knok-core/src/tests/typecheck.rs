@@ -1,38 +1,4 @@
-use std::sync::Arc;
-
-use crate::{
-    parse_tensor_type, type_check, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr,
-    Graph, GraphSignature, Input, Let, Pool2dOptions, TensorType,
-};
-
-fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {
-    TensorType {
-        elem,
-        shape: shape.to_vec(),
-    }
-}
-
-fn input(name: &str, elem: ElementType, shape: &[usize]) -> Input {
-    Input {
-        name: name.into(),
-        ty: tensor(elem, shape),
-    }
-}
-
-fn var(name: &str) -> Expr {
-    Expr::Var(name.into())
-}
-
-fn graph(name: &str, inputs: Vec<Input>, outputs: Vec<TensorType>, body: Expr) -> Graph {
-    Graph {
-        name: name.into(),
-        backend: "llvm-cpu".into(),
-        inputs,
-        outputs,
-        lets: Vec::new(),
-        body: vec![body],
-    }
-}
+use super::*;
 
 #[test]
 fn typechecks_elementwise_broadcast_graph() {

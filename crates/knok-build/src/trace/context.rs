@@ -7,11 +7,13 @@ use crate::Result;
 use super::{expr::next_tuple_id, normalize::let_bind_nodes, tensor::TraceTensor};
 
 #[derive(Default)]
+/// Build-time tracing context used to create graph inputs.
 pub struct TraceContext {
     inputs: Vec<Input>,
 }
 
 impl TraceContext {
+    /// Registers one named graph input and returns its traced tensor handle.
     pub fn input<T: TraceTensor>(&mut self, name: &str) -> T {
         let ty = T::tensor_type();
         self.inputs.push(Input {
@@ -43,13 +45,19 @@ impl TraceContext {
     }
 }
 
+/// Return value that can be emitted from a traced graph function.
 pub trait TraceOutput {
+    /// Converts the output value into graph body expressions.
     fn exprs(self) -> Vec<Expr>;
+    /// Returns output tensor types in body order.
     fn types() -> Vec<TensorType>;
 }
 
+/// Value that can be reconstructed from a tuple-producing graph expression.
 pub trait TraceVars: TraceOutput {
+    /// Number of tensor values represented by this type.
     fn var_count() -> usize;
+    /// Builds this value from tuple projections of one expression.
     fn from_tuple_expr(tuple_id: u64, value: Expr) -> Self;
 }
 
@@ -117,6 +125,7 @@ impl_tuple_output!(A: 0, B: 1, C: 2, D: 3);
 impl_tuple_output!(A: 0, B: 1, C: 2, D: 3, E: 4);
 impl_tuple_output!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
 
+/// Converts a traced tensor handle into a typed expression snapshot.
 pub fn typed_expr<T: TraceTensor>(value: T) -> TypedExpr {
     TypedExpr {
         kind: value.expr().clone(),

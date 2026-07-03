@@ -34,6 +34,29 @@ Cloning a traced tensor handle preserves the `node_id` and reuses the lowered
 SSA value; calling the same Rust op expression a second time creates a new
 `node_id` and remains a separate graph operation.
 
+## Autograd Layout
+
+Static autograd lives in `knok-core` because it rewrites typed graph IR before
+lowering. Keep semantic validation and gradient graph construction there rather
+than in `knok-build` or `knok-compile`.
+
+- `crates/knok-core/src/autograd/mod.rs`: public value-and-gradient entry
+  points, graph flattening, same-registry graph-call inlining, builder state,
+  gradient accumulation, and shared expression/type helpers.
+- `crates/knok-core/src/autograd/reverse.rs`: reverse-mode gradient rules for
+  differentiable ops. Add new op-specific adjoints here unless they require
+  changes to flattening, graph-call inlining, or builder state.
+- `crates/knok-core/src/tests/autograd.rs`: graph-transform tests for static
+  autograd, including unsupported cases and graph-call scope behavior.
+- `crates/knok-core/src/tests/typecheck.rs`: AST, parser, type-checking, and op
+  shape rule tests.
+
+Runtime autograd coverage is intentionally separate from transform tests.
+`crates/knok/tests/runtime-e2e/build_graphs/` contains build-script graph
+fixtures grouped by op family, while
+`crates/knok/tests/runtime-e2e/src/tests/autograd/` contains runtime assertions
+for generated value-and-gradient wrappers.
+
 ## Runtime Flow
 
 The hosted path uses `Engine` for repeated inference. Generated

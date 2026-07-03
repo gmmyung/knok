@@ -11,6 +11,15 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ## Unreleased
 
+### Added
+
+- Added experimental build-time value-and-gradient graph generation through
+  `knok-build` `grad_graphs!` macros, including scalar-loss autograd coverage
+  for arithmetic, math/reduction/layout operations, linalg contractions,
+  pooling and convolution, selection ops, shape/indexing ops, same-registry
+  graph calls, documented edge-case gradient policies, no-grad index/predicate
+  values, and explicit `detach` stop-gradient.
+
 ### Changed
 
 - Rejected reused `Expr::Node` ids with different expression payloads during

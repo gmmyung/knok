@@ -17,6 +17,7 @@ use crate::{
 
 static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Result of lowering a typed graph and compiling it with IREE.
 pub struct CompiledGraph {
     /// MLIR emitted from the typed graph before IREE compilation.
     pub mlir: String,

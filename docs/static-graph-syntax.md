@@ -110,6 +110,45 @@ let y = graphs::forward::run(&engine, x)?;
 That keeps runtime driver selection aligned with the backend used by
 `knok-build`.
 
+## Gradient Graphs
+
+`grad_graphs!` traces graph functions and emits value-and-gradient wrappers
+instead of the original forward wrappers. Each input graph must return a single
+rank-0 floating-point loss. The generated wrapper module is named
+`{graph_name}_value_and_grad` and returns `(loss, grad_input0, ...)` for every
+floating-point input.
+
+```rust
+use knok_build::prelude::*;
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn loss(x: T1<f32, 4>) -> T0<f32> {
+    mean(square(x))
+}
+
+fn main() {
+    knok_build::grad_graphs_with_options!(
+        BuildOptions::default().output_file("knok_grad_graphs.rs");
+        loss
+    );
+}
+```
+
+Target crates import the custom output file like any other generated wrapper
+file:
+
+```rust
+knok::generated_graphs!(pub mod grad_graphs, "knok_grad_graphs.rs");
+
+let (loss, dx) = grad_graphs::loss_value_and_grad::call(x)?;
+```
+
+Use `grad_graphs!(loss)` when the build script only writes gradient wrappers to
+the default `knok_graphs.rs` output. When emitting both forward and gradient
+wrappers, keep them in separate output files. If a differentiated graph calls
+another graph registered in the same `grad_graphs!` invocation, the callee is
+inlined before the gradient graph is generated.
+
 ## External MLIR Models
 
 Custom `.mlir` files can be compiled in `build.rs` and exposed with the same

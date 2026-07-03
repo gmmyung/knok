@@ -5,6 +5,7 @@ use super::{
     tensor::{TraceOperand, TraceTensor},
 };
 
+/// Records a static `arange(0, stop, 1)` with shape and dtype from `Output`.
 pub fn arange_to<Output>(stop: impl TraceOperand<Output::Elem>) -> Output
 where
     Output: TraceTensor,
@@ -22,6 +23,7 @@ where
     )
 }
 
+/// Records a static `arange(start, stop, 1)` with shape and dtype from `Output`.
 pub fn arange<Output>(
     start: impl TraceOperand<Output::Elem>,
     stop: impl TraceOperand<Output::Elem>,
@@ -45,6 +47,7 @@ where
     )
 }
 
+/// Records a static `arange(start, stop, step)` with shape and dtype from `Output`.
 pub fn arange_step<Output>(
     start: impl TraceOperand<Output::Elem>,
     stop: impl TraceOperand<Output::Elem>,
@@ -74,6 +77,7 @@ where
     )
 }
 
+/// Records a static `linspace(start, stop)` with shape and dtype from `Output`.
 pub fn linspace<Output>(
     start: impl TraceOperand<Output::Elem>,
     stop: impl TraceOperand<Output::Elem>,
@@ -87,10 +91,12 @@ where
     )
 }
 
+/// Records a static identity matrix with shape and dtype from `Output`.
 pub fn eye<Output: TraceTensor>() -> Output {
     call_output(CallOp::Eye(Output::tensor_type()), Vec::new())
 }
 
+/// Alias for [`eye`].
 pub fn identity<Output: TraceTensor>() -> Output {
     eye()
 }

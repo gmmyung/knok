@@ -11,6 +11,7 @@ use crate::{
     TypedValue,
 };
 
+/// Type-checks an untyped graph against optional same-registry graph signatures.
 pub fn type_check(
     graph: Graph,
     graph_signatures: &[(String, GraphSignature)],

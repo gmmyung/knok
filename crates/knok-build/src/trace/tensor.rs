@@ -7,7 +7,9 @@ use knok_core::{BinaryOp, ElementType, Expr, TensorType, UnaryOp};
 
 use super::expr::node_expr;
 
+/// Element type that can appear in a build-time traced tensor.
 pub trait TraceElement: Copy + 'static {
+    /// Graph IR element type represented by this Rust scalar type.
     const ELEMENT: ElementType;
 }
 
@@ -39,7 +41,9 @@ impl TraceElement for i64 {
     const ELEMENT: ElementType = ElementType::I64;
 }
 
+/// Scalar value that can be embedded as a graph literal during tracing.
 pub trait ScalarLiteral: TraceElement {
+    /// Converts the scalar into a graph constant expression.
     fn const_expr(self) -> Expr;
 }
 
@@ -88,20 +92,30 @@ impl ScalarLiteral for i64 {
     }
 }
 
+/// Build-time tensor handle used while tracing graph functions.
 pub trait TraceTensor: Clone {
+    /// Scalar element type of the tensor.
     type Elem: TraceElement;
 
+    /// Returns the static tensor type represented by this handle type.
     fn tensor_type() -> TensorType;
+    /// Wraps a graph expression in this tensor handle type.
     fn from_expr(expr: Expr) -> Self;
+    /// Consumes the handle and returns the traced graph expression.
     fn into_expr(self) -> Expr;
+    /// Borrows the traced graph expression.
     fn expr(&self) -> &Expr;
 }
 
+/// Traced tensor that has a shape-compatible boolean mask type.
 pub trait BoolTensor: TraceTensor {
+    /// Boolean tensor type with the same rank and shape.
     type Bool: TraceTensor<Elem = bool>;
 }
 
+/// Value accepted as an operand to a traced tensor operation.
 pub trait TraceOperand<E: TraceElement> {
+    /// Converts the operand into a graph expression.
     fn into_operand_expr(self) -> Expr;
 }
 
@@ -128,6 +142,7 @@ impl_scalar_operand!(bool, f32, f64, i32, i64);
 macro_rules! define_tensor {
     ($name:ident, []) => {
         #[derive(Clone, Debug)]
+        /// Rank-0 traced tensor handle used inside `build.rs` graph functions.
         pub struct $name<T: TraceElement> {
             expr: Expr,
             _marker: PhantomData<T>,
@@ -159,6 +174,7 @@ macro_rules! define_tensor {
     };
     ($name:ident, [$($dim:ident),+]) => {
         #[derive(Clone, Debug)]
+        /// Fixed-rank traced tensor handle used inside `build.rs` graph functions.
         pub struct $name<T: TraceElement, $(const $dim: usize),+> {
             expr: Expr,
             _marker: PhantomData<T>,
@@ -198,12 +214,18 @@ define_tensor!(T4, [D0, D1, D2, D3]);
 define_tensor!(T5, [D0, D1, D2, D3, D4]);
 define_tensor!(T6, [D0, D1, D2, D3, D4, D5]);
 
+/// Alias for a rank-0 traced tensor handle.
 pub type Tensor0<T> = T0<T>;
+/// Alias for a rank-1 traced tensor handle.
 pub type Tensor1<T, const D0: usize> = T1<T, D0>;
+/// Alias for a rank-2 traced tensor handle.
 pub type Tensor2<T, const D0: usize, const D1: usize> = T2<T, D0, D1>;
+/// Alias for a rank-3 traced tensor handle.
 pub type Tensor3<T, const D0: usize, const D1: usize, const D2: usize> = T3<T, D0, D1, D2>;
+/// Alias for a rank-4 traced tensor handle.
 pub type Tensor4<T, const D0: usize, const D1: usize, const D2: usize, const D3: usize> =
     T4<T, D0, D1, D2, D3>;
+/// Alias for a rank-5 traced tensor handle.
 pub type Tensor5<
     T,
     const D0: usize,
@@ -212,6 +234,7 @@ pub type Tensor5<
     const D3: usize,
     const D4: usize,
 > = T5<T, D0, D1, D2, D3, D4>;
+/// Alias for a rank-6 traced tensor handle.
 pub type Tensor6<
     T,
     const D0: usize,

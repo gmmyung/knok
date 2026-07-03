@@ -2,8 +2,8 @@
 //!
 //! This crate is used from `build.rs`, not from the final target crate. A build
 //! script defines graph functions with [`graph`], executes them with traced
-//! tensor values through [`compile_graphs`], and writes generated wrappers plus
-//! VMFB artifacts into `OUT_DIR`.
+//! tensor values through [`compile_graphs`] or [`grad_graphs`], and writes
+//! generated wrappers plus VMFB artifacts into `OUT_DIR`.
 //!
 //! ```ignore
 //! use knok_build::prelude::*;
@@ -18,6 +18,11 @@
 //! }
 //! ```
 //!
+//! Experimental value-and-gradient wrappers can be emitted for scalar-loss
+//! graphs with [`grad_graphs`]. The generated module is named
+//! `{graph_name}_value_and_grad` and returns the loss followed by gradients for
+//! the graph's floating-point inputs.
+//!
 //! Target crates import the generated wrappers with
 //! `knok::generated_graphs!(pub mod graphs);`.
 
@@ -31,11 +36,11 @@ use std::{
 };
 
 use knok_compile::{compile_graph_with_registry, compile_mlir_source};
-use knok_core::{Input, TensorType, TypedGraph};
+use knok_core::{value_and_grad_graph_with_registry, Input, TensorType, TypedGraph};
 
 pub use knok_build_macros::{
     compile_graphs, compile_graphs_with_options, compile_mlir_models,
-    compile_mlir_models_with_options, graph,
+    compile_mlir_models_with_options, grad_graphs, grad_graphs_with_options, graph,
 };
 pub use trace::*;
 
@@ -86,7 +91,7 @@ impl Backend {
     }
 }
 
-/// Options controlling generated wrapper output from `compile_graphs!`.
+/// Options controlling generated wrapper output from build-script graph macros.
 #[derive(Clone, Debug)]
 pub struct BuildOptions {
     output_file: String,
@@ -244,6 +249,53 @@ pub fn emit_registered_graphs_with_options(
     Ok(())
 }
 
+/// Emits value-and-gradient wrappers and VMFB artifacts for all graphs in `registry`.
+pub fn emit_registered_grad_graphs(registry: GraphRegistry) -> Result<()> {
+    emit_registered_grad_graphs_with_options(registry, BuildOptions::default())
+}
+
+/// Emits value-and-gradient wrappers and VMFB artifacts with explicit build options.
+pub fn emit_registered_grad_graphs_with_options(
+    registry: GraphRegistry,
+    options: BuildOptions,
+) -> Result<()> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    fs::create_dir_all(&out_dir)?;
+    if env::var_os("KNOK_CACHE_DIR").is_none() {
+        env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
+    }
+    println!("cargo:rerun-if-changed=build.rs");
+
+    let mut generated = String::new();
+    let graphs = registry.graphs;
+    let graph_registry = graphs
+        .iter()
+        .map(|registered| (registered.graph.name.clone(), registered.graph.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    for registered in &graphs {
+        let graph = value_and_grad_graph_with_registry(&registered.graph, &graph_registry)?;
+        let vmfb_name = graph_vmfb_name(&graph.name);
+        let vmfb_path = out_dir.join(&vmfb_name);
+        if options.stub_artifacts {
+            fs::write(&vmfb_path, [0u8; 16])?;
+        } else {
+            let compiled = compile_registered_graph(&graph, &graph_registry)?;
+            fs::write(&vmfb_path, compiled.vmfb)?;
+        }
+        generated.push_str(&codegen::graph_module(
+            &graph,
+            registered.backend,
+            &vmfb_name,
+            &[],
+        )?);
+        generated.push('\n');
+    }
+
+    fs::write(out_dir.join(options.output_file), generated)?;
+    Ok(())
+}
+
 /// Emits wrappers and VMFB artifacts for external MLIR models.
 pub fn emit_mlir_models(models: Vec<MlirModel>) -> Result<()> {
     emit_mlir_models_with_options(models, BuildOptions::default())
@@ -342,18 +394,19 @@ pub mod prelude {
         abs, all, all_axis, amax, amax_axis, amin, amin_axis, any, any_axis, arange, arange_step,
         arange_to, argmax, argmax_axis, argmin, argmin_axis, avg_pool2d, avg_pool2d_options,
         broadcast, ceil, clip, compile_graphs, compile_graphs_with_options, compile_mlir_models,
-        compile_mlir_models_with_options, concat, conv2d, conv2d_options, cos, diagonal,
+        compile_mlir_models_with_options, concat, conv2d, conv2d_options, cos, detach, diagonal,
         diagonal_axes, dot, equal, exp, exp2, expm1, eye, flip, flip_axes, floor, full_like,
-        gather, graph, greater, greater_equal, identity, inner, isnan, less, less_equal, linspace,
-        log, log10, log1p, log2, logical_and, logical_not, logical_or, logical_xor, matmul, max,
-        max_axis, max_pool2d, max_pool2d_options, maximum, mean, mean_axis, min, min_axis, minimum,
-        moveaxis, not_equal, ones_like, outer, pad, permute, permute_dims, pow, prod, prod_axis,
-        ptp, ptp_axis, r#where, reciprocal, relu, repeat, reshape, rint, roll, round, sigmoid, sin,
-        slice, softmax, softmax_axis, split, sqrt, square, squeeze, stack, std, std_axis, sum,
-        sum_axis, swapaxes, take, take_along_axis, tan, tanh, tile, trace, trace_axes, transpose,
-        transpose_axes, unsqueeze, var, var_axis, vecdot, vecdot_axis, zeros_like, Backend,
-        BuildOptions, Conv2dOptions, MlirModel, Pool2dOptions, Tensor0, Tensor1, Tensor2, Tensor3,
-        Tensor4, Tensor5, Tensor6, T0, T1, T2, T3, T4, T5, T6,
+        gather, grad_graphs, grad_graphs_with_options, graph, greater, greater_equal, identity,
+        inner, isnan, less, less_equal, linspace, log, log10, log1p, log2, logical_and,
+        logical_not, logical_or, logical_xor, matmul, max, max_axis, max_pool2d,
+        max_pool2d_options, maximum, mean, mean_axis, min, min_axis, minimum, moveaxis, not_equal,
+        ones_like, outer, pad, permute, permute_dims, pow, prod, prod_axis, ptp, ptp_axis, r#where,
+        reciprocal, relu, repeat, reshape, rint, roll, round, sigmoid, sin, slice, softmax,
+        softmax_axis, split, sqrt, square, squeeze, stack, std, std_axis, sum, sum_axis, swapaxes,
+        take, take_along_axis, tan, tanh, tile, trace, trace_axes, transpose, transpose_axes,
+        unsqueeze, var, var_axis, vecdot, vecdot_axis, zeros_like, Backend, BuildOptions,
+        Conv2dOptions, MlirModel, Pool2dOptions, Tensor0, Tensor1, Tensor2, Tensor3, Tensor4,
+        Tensor5, Tensor6, T0, T1, T2, T3, T4, T5, T6,
     };
     pub use half::{bf16, f16};
 }

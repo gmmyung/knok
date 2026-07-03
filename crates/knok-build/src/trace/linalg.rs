@@ -5,9 +5,12 @@ use super::{
     tensor::{TraceElement, TraceTensor, T0, T1, T2, T3, T4, T5, T6},
 };
 
+/// Type-level matrix multiplication relation for traced tensors.
 pub trait Matmul<Rhs>: TraceTensor {
+    /// Traced tensor type produced by multiplying `Self` and `Rhs`.
     type Output: TraceTensor;
 
+    /// Records a matrix multiplication operation.
     fn matmul(self, rhs: Rhs) -> Self::Output;
 }
 
@@ -175,6 +178,7 @@ impl<
     }
 }
 
+/// Records a matrix multiplication operation.
 pub fn matmul<L, R>(lhs: L, rhs: R) -> L::Output
 where
     L: Matmul<R>,
@@ -182,18 +186,22 @@ where
     lhs.matmul(rhs)
 }
 
+/// Records a dot-product operation.
 pub fn dot<Output: TraceTensor>(lhs: impl TraceTensor, rhs: impl TraceTensor) -> Output {
     call_output(CallOp::Dot, vec![lhs.into_expr(), rhs.into_expr()])
 }
 
+/// Records an inner-product operation.
 pub fn inner<Output: TraceTensor>(lhs: impl TraceTensor, rhs: impl TraceTensor) -> Output {
     call_output(CallOp::Inner, vec![lhs.into_expr(), rhs.into_expr()])
 }
 
+/// Records an outer-product operation.
 pub fn outer<Output: TraceTensor>(lhs: impl TraceTensor, rhs: impl TraceTensor) -> Output {
     call_output(CallOp::Outer, vec![lhs.into_expr(), rhs.into_expr()])
 }
 
+/// Records a vector dot product over the default axis.
 pub fn vecdot<Output: TraceTensor>(lhs: impl TraceTensor, rhs: impl TraceTensor) -> Output {
     trace_vecdot(lhs, rhs)
 }
@@ -202,6 +210,7 @@ fn trace_vecdot<Output: TraceTensor>(lhs: impl TraceTensor, rhs: impl TraceTenso
     call_output(CallOp::Vecdot(None), vec![lhs.into_expr(), rhs.into_expr()])
 }
 
+/// Records a vector dot product over one axis.
 pub fn vecdot_axis<Output: TraceTensor>(
     lhs: impl TraceTensor,
     rhs: impl TraceTensor,
@@ -221,6 +230,7 @@ fn trace_vecdot_axis<Output: TraceTensor>(
     )
 }
 
+/// Records a matrix trace over the default axes.
 pub fn trace<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_trace(value)
 }
@@ -229,6 +239,7 @@ fn trace_trace<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(CallOp::Trace(None), vec![value.into_expr()])
 }
 
+/// Records a matrix trace over explicit axes.
 pub fn trace_axes<Output: TraceTensor>(
     value: impl TraceTensor,
     axis0: usize,
@@ -245,6 +256,7 @@ fn trace_trace_axes<Output: TraceTensor>(
     call_output(CallOp::Trace(Some([axis0, axis1])), vec![value.into_expr()])
 }
 
+/// Records extraction of the diagonal over the default axes.
 pub fn diagonal<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     trace_diagonal(value)
 }
@@ -253,6 +265,7 @@ fn trace_diagonal<Output: TraceTensor>(value: impl TraceTensor) -> Output {
     call_output(CallOp::Diagonal(None), vec![value.into_expr()])
 }
 
+/// Records extraction of the diagonal over explicit axes.
 pub fn diagonal_axes<Output: TraceTensor>(
     value: impl TraceTensor,
     axis0: usize,
