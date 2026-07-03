@@ -53,11 +53,13 @@ Gradient generation is a build-time static graph transform, not a runtime tape.
 The MVP differentiates elementwise arithmetic and math (`abs`, `exp`, `exp2`,
 `expm1`, `log`, `log1p`, `log2`, `log10`, `sin`, `cos`, `tan`, `tanh`, `relu`,
 `sigmoid`, `square`, `sqrt`, `reciprocal`, `pow`), selection ops (`where`,
-`minimum`, `maximum`, `clip`), reductions (`sum`, `mean`, `prod`, `min`, `max`),
-vector/matrix/batched `matmul`, and shape/indexing ops (`reshape`, `broadcast`,
-`squeeze`, `unsqueeze`, `transpose`, `permute`, `permute_dims`, `swapaxes`,
-`moveaxis`, `flip`, `roll`, `pad`, `slice`, `concat`, `stack`, `take`).
-Unsupported differentiated operations are build-time errors.
+`minimum`, `maximum`, `clip`), reductions (`sum`, `mean`, `prod`, `min`, `max`,
+`ptp`, `var`, `std`, `softmax`), linalg ops (`matmul`, `dot`, `vecdot`,
+`inner`, `outer`, `trace`, `diagonal`), and shape/indexing ops (`reshape`,
+`broadcast`, `squeeze`, `unsqueeze`, `transpose`, `permute`, `permute_dims`,
+`swapaxes`, `moveaxis`, `flip`, `roll`, `pad`, `slice`, `concat`, `stack`,
+`take`, `tile`, `repeat`). Unsupported differentiated operations are
+build-time errors.
 
 Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
 propagation through that value. Unsupported single-output operations are allowed

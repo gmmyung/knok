@@ -747,6 +747,60 @@ fn full_like_loss(fill: T0<f32>, x: T1<f32, 3>) -> T0<f32> {
     sum(full_like(x, fill))
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn softmax_square_loss(x: T2<f32, 2, 3>) -> T0<f32> {
+    sum(square(softmax_axis(x, 1)))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn variance_std_ptp_loss(x: T2<f32, 2, 3>) -> T0<f32> {
+    let var: T1<f32, 2> = var_axis(x.clone(), 1);
+    let std: T1<f32, 2> = std_axis(x.clone(), 1);
+    let ptp: T1<f32, 2> = ptp_axis(x, 1);
+    sum(var + std + ptp)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn linalg_ext_loss(v: T1<f32, 3>, w: T1<f32, 3>, m: T2<f32, 2, 3>, n: T2<f32, 2, 3>) -> T0<f32> {
+    let dot_loss: T0<f32> = dot(v.clone(), w.clone());
+    let vecdot_values: T1<f32, 2> = vecdot_axis(m.clone(), n.clone(), 1);
+    let inner_values: T2<f32, 2, 2> = inner(m, n);
+    let outer_values: T2<f32, 3, 3> = outer(v, w);
+    let vecdot_loss: T0<f32> = sum(vecdot_values);
+    let inner_loss: T0<f32> = sum(inner_values);
+    let outer_loss: T0<f32> = sum(outer_values);
+    dot_loss + vecdot_loss + inner_loss + outer_loss
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn trace_diagonal_loss(x: T2<f32, 3, 3>) -> T0<f32> {
+    let trace_loss: T0<f32> = trace(x.clone());
+    let diagonal_values: T1<f32, 3> = diagonal(x);
+    let diagonal_loss: T0<f32> = sum(diagonal_values);
+    trace_loss + diagonal_loss
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn tile_repeat_loss(x: T2<f32, 2, 2>) -> T0<f32> {
+    let tiled: T2<f32, 4, 6> = tile(x.clone(), [2, 3]);
+    let repeated: T2<f32, 2, 4> = repeat(x, 1, 2);
+    let tiled_loss: T0<f32> = sum(tiled);
+    let repeated_loss: T0<f32> = sum(repeated);
+    tiled_loss + repeated_loss
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn tile_only_loss(x: T2<f32, 2, 2>) -> T0<f32> {
+    let tiled: T2<f32, 4, 6> = tile(x, [2, 3]);
+    sum(tiled)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn repeat_only_loss(x: T2<f32, 2, 2>) -> T0<f32> {
+    let repeated: T2<f32, 2, 4> = repeat(x, 1, 2);
+    sum(repeated)
+}
+
 fn main() {
     knok_build::compile_graphs!(
         affine_relu,
@@ -891,7 +945,14 @@ fn main() {
         selection_loss,
         reduction_extrema_loss,
         layout_index_loss,
-        full_like_loss
+        full_like_loss,
+        softmax_square_loss,
+        variance_std_ptp_loss,
+        linalg_ext_loss,
+        trace_diagonal_loss,
+        tile_repeat_loss,
+        tile_only_loss,
+        repeat_only_loss
     );
 
     knok_build::compile_mlir_models_with_options!(

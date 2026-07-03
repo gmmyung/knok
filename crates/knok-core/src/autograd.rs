@@ -458,7 +458,21 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let mask = call(CallOp::Equal, vec![args[0].clone(), selected]);
                 self.add_grad_to_expr(&args[0], mask_grad(mask, grad))
             }
+            CallOp::Var(axis) => self.reverse_var(args, &node.ty, *axis, grad),
+            CallOp::Std(axis) => {
+                self.reverse_std(args, Expr::Var(node.name.clone()), &node.ty, *axis, grad)
+            }
+            CallOp::Ptp(axis) => self.reverse_ptp(args, &node.ty, *axis, grad),
+            CallOp::Softmax(axis) => {
+                self.reverse_softmax(args, Expr::Var(node.name.clone()), *axis, grad)
+            }
             CallOp::Matmul => self.reverse_matmul(args, &node.ty, grad),
+            CallOp::Dot => self.reverse_dot(args, grad),
+            CallOp::Vecdot(axis) => self.reverse_vecdot(args, &node.ty, *axis, grad),
+            CallOp::Inner => self.reverse_inner(args, &node.ty, grad),
+            CallOp::Outer => self.reverse_outer(args, &node.ty, grad),
+            CallOp::Trace(axes) => self.reverse_trace(args, &node.ty, *axes, grad),
+            CallOp::Diagonal(axes) => self.reverse_diagonal(args, *axes, grad),
             CallOp::Reshape(_) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 self.add_grad_to_expr(&args[0], call(CallOp::Reshape(input_ty), vec![grad]))
@@ -539,6 +553,8 @@ impl<'a> ValueAndGradBuilder<'a> {
                     ),
                 )
             }
+            CallOp::Tile(multiples) => self.reverse_tile(args, &node.ty, multiples, grad),
+            CallOp::Repeat { axis, count } => self.reverse_repeat(args, *axis, *count, grad),
             CallOp::Transpose(axes) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 let inverse = inverse_permutation(default_axes(&input_ty, axes));
@@ -792,6 +808,314 @@ impl<'a> ValueAndGradBuilder<'a> {
         self.add_grad_to_expr(&args[1], rhs_grad)
     }
 
+    fn reverse_softmax(
+        &mut self,
+        args: &[Expr],
+        output: Expr,
+        axis: AxisSpec,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let reduced_ty = single_call_type(&CallOp::Sum(axis), core::slice::from_ref(&input_ty))?;
+        let weighted = binary(BinaryOp::Mul, grad.clone(), output.clone());
+        let summed = call(CallOp::Sum(axis), vec![weighted]);
+        let summed = self.expand_reduction_grad(summed, &reduced_ty, &input_ty, axis)?;
+        let input_grad = binary(BinaryOp::Mul, output, binary(BinaryOp::Sub, grad, summed));
+        self.add_grad_to_expr(&args[0], input_grad)
+    }
+
+    fn reverse_var(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        axis: AxisSpec,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        if input_ty.rank() == 0 && matches!(axis, AxisSpec::All) {
+            return Ok(());
+        }
+        let mean = call(CallOp::Mean(axis), vec![args[0].clone()]);
+        let mean = self.expand_reduction_grad(mean, output_ty, &input_ty, axis)?;
+        let centered = binary(BinaryOp::Sub, args[0].clone(), mean);
+        let grad = self.expand_reduction_grad(grad, output_ty, &input_ty, axis)?;
+        let local = binary(
+            BinaryOp::Div,
+            binary(BinaryOp::Mul, scalar("2.0", input_ty.elem), centered),
+            scalar(
+                &format!("{}.0", reduction_count(&input_ty, axis)),
+                input_ty.elem,
+            ),
+        );
+        let input_grad = binary(BinaryOp::Mul, grad, local);
+        self.add_grad_to_expr(&args[0], input_grad)
+    }
+
+    fn reverse_std(
+        &mut self,
+        args: &[Expr],
+        output: Expr,
+        output_ty: &TensorType,
+        axis: AxisSpec,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        if input_ty.rank() == 0 && matches!(axis, AxisSpec::All) {
+            return Ok(());
+        }
+        let mean = call(CallOp::Mean(axis), vec![args[0].clone()]);
+        let mean = self.expand_reduction_grad(mean, output_ty, &input_ty, axis)?;
+        let centered = binary(BinaryOp::Sub, args[0].clone(), mean);
+        let grad = self.expand_reduction_grad(grad, output_ty, &input_ty, axis)?;
+        let std = self.expand_reduction_grad(output, output_ty, &input_ty, axis)?;
+        let count = scalar(
+            &format!("{}.0", reduction_count(&input_ty, axis)),
+            input_ty.elem,
+        );
+        let denom = binary(BinaryOp::Mul, count, std);
+        let input_grad = binary(BinaryOp::Mul, grad, binary(BinaryOp::Div, centered, denom));
+        self.add_grad_to_expr(&args[0], input_grad)
+    }
+
+    fn reverse_ptp(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        axis: AxisSpec,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        if input_ty.rank() == 0 && matches!(axis, AxisSpec::All) {
+            return Ok(());
+        }
+        let max = call(CallOp::Max(axis), vec![args[0].clone()]);
+        let min = call(CallOp::Min(axis), vec![args[0].clone()]);
+        let max = self.expand_reduction_grad(max, output_ty, &input_ty, axis)?;
+        let min = self.expand_reduction_grad(min, output_ty, &input_ty, axis)?;
+        let grad = self.expand_reduction_grad(grad, output_ty, &input_ty, axis)?;
+        let max_grad = mask_grad(
+            call(CallOp::Equal, vec![args[0].clone(), max]),
+            grad.clone(),
+        );
+        let min_grad = mask_grad(call(CallOp::Equal, vec![args[0].clone(), min]), neg(grad));
+        self.add_grad_to_expr(&args[0], binary(BinaryOp::Add, max_grad, min_grad))
+    }
+
+    fn reverse_dot(&mut self, args: &[Expr], grad: Expr) -> syn::Result<()> {
+        self.add_grad_to_expr(
+            &args[0],
+            binary(BinaryOp::Mul, grad.clone(), args[1].clone()),
+        )?;
+        self.add_grad_to_expr(&args[1], binary(BinaryOp::Mul, grad, args[0].clone()))
+    }
+
+    fn reverse_vecdot(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        axis: Option<usize>,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let lhs_ty = self.expr_ty(&args[0])?;
+        let axis = AxisSpec::One(axis.unwrap_or(lhs_ty.rank() - 1));
+        let grad = self.expand_reduction_grad(grad, output_ty, &lhs_ty, axis)?;
+        self.add_grad_to_expr(
+            &args[0],
+            binary(BinaryOp::Mul, grad.clone(), args[1].clone()),
+        )?;
+        self.add_grad_to_expr(&args[1], binary(BinaryOp::Mul, grad, args[0].clone()))
+    }
+
+    fn reverse_inner(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let lhs_ty = self.expr_ty(&args[0])?;
+        let rhs_ty = self.expr_ty(&args[1])?;
+        if lhs_ty.rank() == 0 || rhs_ty.rank() == 0 {
+            let lhs_grad = self.unbroadcast(
+                binary(BinaryOp::Mul, grad.clone(), args[1].clone()),
+                output_ty,
+                &lhs_ty,
+            )?;
+            let rhs_grad = self.unbroadcast(
+                binary(BinaryOp::Mul, grad, args[0].clone()),
+                output_ty,
+                &rhs_ty,
+            )?;
+            self.add_grad_to_expr(&args[0], lhs_grad)?;
+            return self.add_grad_to_expr(&args[1], rhs_grad);
+        }
+
+        let k = lhs_ty.shape[lhs_ty.rank() - 1];
+        let lhs_prefix = element_count_slice(&lhs_ty.shape[..lhs_ty.rank() - 1]);
+        let rhs_prefix = element_count_slice(&rhs_ty.shape[..rhs_ty.rank() - 1]);
+        let matrix_elem = lhs_ty.elem;
+        let lhs_matrix_ty = tensor(matrix_elem, vec![lhs_prefix, k]);
+        let rhs_matrix_ty = tensor(matrix_elem, vec![rhs_prefix, k]);
+        let grad_matrix_ty = tensor(matrix_elem, vec![lhs_prefix, rhs_prefix]);
+        let lhs = call(
+            CallOp::Reshape(lhs_matrix_ty.clone()),
+            vec![args[0].clone()],
+        );
+        let rhs = call(
+            CallOp::Reshape(rhs_matrix_ty.clone()),
+            vec![args[1].clone()],
+        );
+        let grad = reshape_if_needed(grad, output_ty, &grad_matrix_ty);
+
+        let lhs_grad = call(CallOp::Matmul, vec![grad.clone(), rhs]);
+        let lhs_grad = call(CallOp::Reshape(lhs_ty.clone()), vec![lhs_grad]);
+        self.add_grad_to_expr(&args[0], lhs_grad)?;
+
+        let grad_t = call(CallOp::Transpose(Vec::new()), vec![grad]);
+        let rhs_grad = call(CallOp::Matmul, vec![grad_t, lhs]);
+        let rhs_grad = call(CallOp::Reshape(rhs_ty), vec![rhs_grad]);
+        self.add_grad_to_expr(&args[1], rhs_grad)
+    }
+
+    fn reverse_outer(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let lhs_ty = self.expr_ty(&args[0])?;
+        let rhs_ty = self.expr_ty(&args[1])?;
+        let lhs_len = element_count_slice(&lhs_ty.shape);
+        let rhs_len = element_count_slice(&rhs_ty.shape);
+        let elem = lhs_ty.elem;
+        let lhs_row_ty = tensor(elem, vec![1, lhs_len]);
+        let rhs_col_ty = tensor(elem, vec![rhs_len, 1]);
+        let grad_ty = tensor(elem, vec![lhs_len, rhs_len]);
+        let lhs_row = call(CallOp::Reshape(lhs_row_ty), vec![args[0].clone()]);
+        let rhs_col = call(CallOp::Reshape(rhs_col_ty), vec![args[1].clone()]);
+        let grad = reshape_if_needed(grad, output_ty, &grad_ty);
+
+        let lhs_grad = call(CallOp::Matmul, vec![grad.clone(), rhs_col]);
+        let lhs_grad = call(CallOp::Reshape(lhs_ty), vec![lhs_grad]);
+        self.add_grad_to_expr(&args[0], lhs_grad)?;
+
+        let rhs_grad = call(CallOp::Matmul, vec![lhs_row, grad]);
+        let rhs_grad = call(CallOp::Reshape(rhs_ty), vec![rhs_grad]);
+        self.add_grad_to_expr(&args[1], rhs_grad)
+    }
+
+    fn reverse_trace(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        axes: Option<[usize; 2]>,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let axes = default_axis_pair(&input_ty, axes)?;
+        let compact_ty = diagonal_compact_type(&input_ty, axes);
+        let mut grad_shape = output_ty.shape.clone();
+        grad_shape.push(1);
+        grad_shape.push(1);
+        let grad = call(
+            CallOp::Reshape(tensor(input_ty.elem, grad_shape)),
+            vec![grad],
+        );
+        let grad = call(CallOp::Broadcast(compact_ty.clone()), vec![grad]);
+        let eye = diagonal_eye(&input_ty, axes, &compact_ty);
+        let compact = binary(BinaryOp::Mul, grad, eye);
+        self.add_grad_to_expr(&args[0], permute_compact_diagonal(compact, &input_ty, axes))
+    }
+
+    fn reverse_diagonal(
+        &mut self,
+        args: &[Expr],
+        axes: Option<[usize; 2]>,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let axes = default_axis_pair(&input_ty, axes)?;
+        let compact_ty = diagonal_compact_type(&input_ty, axes);
+        let mut grad_shape = remove_axes_shape(&input_ty.shape, axes);
+        grad_shape.push(input_ty.shape[axes[0]]);
+        grad_shape.push(1);
+        let grad = call(
+            CallOp::Reshape(tensor(input_ty.elem, grad_shape)),
+            vec![grad],
+        );
+        let grad = call(CallOp::Broadcast(compact_ty.clone()), vec![grad]);
+        let eye = diagonal_eye(&input_ty, axes, &compact_ty);
+        let compact = binary(BinaryOp::Mul, grad, eye);
+        self.add_grad_to_expr(&args[0], permute_compact_diagonal(compact, &input_ty, axes))
+    }
+
+    fn reverse_tile(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        multiples: &[usize],
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        if multiples.contains(&0) {
+            return self.add_grad_to_expr(&args[0], zeros_like(args[0].clone()));
+        }
+        let mut current = grad;
+        let mut current_ty = output_ty.clone();
+        for (axis, multiple) in multiples.iter().copied().enumerate().rev() {
+            if multiple <= 1 {
+                continue;
+            }
+            let mut slice_ty = current_ty.clone();
+            slice_ty.shape[axis] = input_ty.shape[axis];
+            let mut acc = None;
+            for index in 0..multiple {
+                let mut starts = vec![0; current_ty.rank()];
+                starts[axis] = index * input_ty.shape[axis];
+                let slice = call(
+                    CallOp::Slice {
+                        target: slice_ty.clone(),
+                        starts,
+                    },
+                    vec![current.clone()],
+                );
+                acc = Some(match acc {
+                    Some(existing) => binary(BinaryOp::Add, existing, slice),
+                    None => slice,
+                });
+            }
+            current = acc.ok_or_else(|| error("internal autograd error: empty tile gradient"))?;
+            current_ty = slice_ty;
+        }
+        self.add_grad_to_expr(&args[0], current)
+    }
+
+    fn reverse_repeat(
+        &mut self,
+        args: &[Expr],
+        axis: usize,
+        count: usize,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        if count == 0 || input_ty.shape[axis] == 0 {
+            return self.add_grad_to_expr(&args[0], zeros_like(args[0].clone()));
+        }
+        if count == 1 {
+            return self.add_grad_to_expr(&args[0], grad);
+        }
+        let mut expanded_shape = input_ty.shape.clone();
+        expanded_shape.insert(axis + 1, count);
+        if expanded_shape.len() > 6 {
+            return Err(error(
+                "autograd MVP does not support repeat gradients that require rank above 6",
+            ));
+        }
+        let expanded_ty = tensor(input_ty.elem, expanded_shape);
+        let expanded = call(CallOp::Reshape(expanded_ty), vec![grad]);
+        let result = call(CallOp::Sum(AxisSpec::One(axis + 1)), vec![expanded]);
+        self.add_grad_to_expr(&args[0], result)
+    }
+
     fn expand_reduction_grad(
         &mut self,
         grad: Expr,
@@ -957,6 +1281,17 @@ fn elementwise_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorTyp
     })
 }
 
+fn single_call_type(op: &CallOp, args: &[TensorType]) -> syn::Result<TensorType> {
+    let results = infer_call_results(op, args)?;
+    let [ty]: [TensorType; 1] = results.try_into().map_err(|_| {
+        error(format!(
+            "internal autograd error: `{}` is not single-output",
+            op.name()
+        ))
+    })?;
+    Ok(ty)
+}
+
 struct MatmulGradSpec {
     lhs_is_vector: bool,
     rhs_is_vector: bool,
@@ -1051,11 +1386,7 @@ fn demoted_matmul_output_type(
 }
 
 fn matmul_type(lhs_ty: &TensorType, rhs_ty: &TensorType) -> syn::Result<TensorType> {
-    let results = infer_call_results(&CallOp::Matmul, &[lhs_ty.clone(), rhs_ty.clone()])?;
-    let [ty]: [TensorType; 1] = results
-        .try_into()
-        .map_err(|_| error("internal autograd error: matmul gradient produced multiple outputs"))?;
-    Ok(ty)
+    single_call_type(&CallOp::Matmul, &[lhs_ty.clone(), rhs_ty.clone()])
 }
 
 fn reshape_if_needed(expr: Expr, source_ty: &TensorType, target_ty: &TensorType) -> Expr {
@@ -1114,6 +1445,77 @@ fn swap_last_two_type(ty: &TensorType) -> syn::Result<TensorType> {
     let rank = swapped.rank();
     swapped.shape.swap(rank - 2, rank - 1);
     Ok(swapped)
+}
+
+fn tensor(elem: ElementType, shape: Vec<usize>) -> TensorType {
+    TensorType { elem, shape }
+}
+
+fn element_count_slice(shape: &[usize]) -> usize {
+    shape.iter().copied().product()
+}
+
+fn default_axis_pair(input_ty: &TensorType, axes: Option<[usize; 2]>) -> syn::Result<[usize; 2]> {
+    if input_ty.rank() < 2 {
+        return Err(error(
+            "internal autograd error: diagonal op input rank was below 2",
+        ));
+    }
+    let axes = axes.unwrap_or([input_ty.rank() - 2, input_ty.rank() - 1]);
+    if axes[0] >= input_ty.rank() || axes[1] >= input_ty.rank() || axes[0] == axes[1] {
+        return Err(error(format!(
+            "internal autograd error: invalid diagonal axes {:?} for {:?}",
+            axes, input_ty
+        )));
+    }
+    Ok(axes)
+}
+
+fn remove_axes_shape(shape: &[usize], axes: [usize; 2]) -> Vec<usize> {
+    shape
+        .iter()
+        .enumerate()
+        .filter_map(|(axis, dim)| (axis != axes[0] && axis != axes[1]).then_some(*dim))
+        .collect()
+}
+
+fn diagonal_compact_type(input_ty: &TensorType, axes: [usize; 2]) -> TensorType {
+    let mut shape = remove_axes_shape(&input_ty.shape, axes);
+    shape.push(input_ty.shape[axes[0]]);
+    shape.push(input_ty.shape[axes[1]]);
+    tensor(input_ty.elem, shape)
+}
+
+fn diagonal_eye(input_ty: &TensorType, axes: [usize; 2], compact_ty: &TensorType) -> Expr {
+    let eye_ty = tensor(
+        input_ty.elem,
+        vec![input_ty.shape[axes[0]], input_ty.shape[axes[1]]],
+    );
+    call(
+        CallOp::Broadcast(compact_ty.clone()),
+        vec![call(CallOp::Eye(eye_ty), Vec::new())],
+    )
+}
+
+fn permute_compact_diagonal(compact: Expr, input_ty: &TensorType, axes: [usize; 2]) -> Expr {
+    let non_axes = (0..input_ty.rank())
+        .filter(|axis| *axis != axes[0] && *axis != axes[1])
+        .collect::<Vec<_>>();
+    let compact_axes = (0..input_ty.rank())
+        .map(|axis| {
+            if axis == axes[0] {
+                non_axes.len()
+            } else if axis == axes[1] {
+                non_axes.len() + 1
+            } else {
+                non_axes
+                    .iter()
+                    .position(|non_axis| *non_axis == axis)
+                    .expect("non-diagonal axis missing from compact axis map")
+            }
+        })
+        .collect::<Vec<_>>();
+    call(CallOp::PermuteDims(compact_axes), vec![compact])
 }
 
 fn default_axes(input_ty: &TensorType, axes: &[usize]) -> Vec<usize> {
