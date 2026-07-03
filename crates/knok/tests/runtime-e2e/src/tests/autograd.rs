@@ -344,3 +344,73 @@ fn value_and_grad_tile_and_repeat_run_independently() {
     assert_close(loss.as_slice(), &[20.0]);
     assert_close(grad_x.as_slice(), &[2.0, 2.0, 2.0, 2.0]);
 }
+
+#[test]
+fn value_and_grad_split_runs() {
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+
+    let (loss, grad_x) = autograd_graphs::split_loss_value_and_grad::call(x).unwrap();
+
+    assert_close(loss.as_slice(), &[33.0]);
+    assert_close(grad_x.as_slice(), &[2.0, 1.0, 1.0, 8.0, 1.0, 1.0]);
+}
+
+#[test]
+fn value_and_grad_indexed_ops_run() {
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+    let gather_idx = Tensor2::from_array([[0_i64, -1], [1, 0]]);
+    let take_idx = Tensor2::from_array([[2_i64, 1], [0, -1]]);
+
+    let (loss, grad_x) =
+        autograd_graphs::indexed_loss_value_and_grad::call(x, gather_idx, take_idx).unwrap();
+
+    assert_close(loss.as_slice(), &[41.0]);
+    assert_close(grad_x.as_slice(), &[2.0, 2.0, 2.0, 3.0, 1.0, 2.0]);
+}
+
+#[test]
+fn value_and_grad_pooling_runs() {
+    let max_input = Tensor4::from_array([[
+        [[-8.0], [-7.0], [-6.0], [-5.0]],
+        [[-4.0], [-3.0], [-2.0], [-1.0]],
+        [[1.0], [2.0], [3.0], [4.0]],
+        [[5.0], [6.0], [7.0], [8.0]],
+    ]]);
+    let (loss, grad_x) = autograd_graphs::max_pool_loss_value_and_grad::call(max_input).unwrap();
+    assert_close(loss.as_slice(), &[10.0]);
+    assert_close(
+        grad_x.as_slice(),
+        &[
+            0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0,
+        ],
+    );
+
+    let avg_input = Tensor4::from_array([[
+        [[1.0], [2.0], [3.0]],
+        [[4.0], [5.0], [6.0]],
+        [[7.0], [8.0], [9.0]],
+    ]]);
+    let (loss, grad_x) = autograd_graphs::avg_pool_loss_value_and_grad::call(avg_input).unwrap();
+    assert_close(loss.as_slice(), &[11.25]);
+    assert_close(grad_x.as_slice(), &[0.25; 9]);
+}
+
+#[test]
+fn value_and_grad_conv2d_runs() {
+    let x = Tensor4::from_array([[
+        [[1.0], [2.0], [3.0]],
+        [[4.0], [5.0], [6.0]],
+        [[7.0], [8.0], [9.0]],
+    ]]);
+    let k = Tensor4::from_array([[[[1.0]], [[0.0]]], [[[0.0]], [[1.0]]]]);
+
+    let (loss, grad_x, grad_k) =
+        autograd_graphs::conv2d_sum_loss_value_and_grad::call(x, k).unwrap();
+
+    assert_close(loss.as_slice(), &[40.0]);
+    assert_close(
+        grad_x.as_slice(),
+        &[1.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 1.0],
+    );
+    assert_close(grad_k.as_slice(), &[12.0, 16.0, 24.0, 28.0]);
+}

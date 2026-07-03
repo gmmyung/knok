@@ -801,6 +801,42 @@ fn repeat_only_loss(x: T2<f32, 2, 2>) -> T0<f32> {
     sum(repeated)
 }
 
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn split_loss(x: T2<f32, 2, 3>) -> T0<f32> {
+    let (left, right): (T2<f32, 2, 1>, T2<f32, 2, 2>) = split(x, 1, [1, 2]);
+    let left_loss: T0<f32> = sum(square(left));
+    let right_loss: T0<f32> = sum(right);
+    left_loss + right_loss
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn indexed_loss(x: T2<f32, 2, 3>, gather_idx: T2<i64, 2, 2>, take_idx: T2<i64, 2, 2>) -> T0<f32> {
+    let gathered: T3<f32, 2, 2, 2> = gather(x.clone(), gather_idx, 1);
+    let taken: T2<f32, 2, 2> = take_along_axis(x, take_idx, 1);
+    let gather_loss: T0<f32> = sum(gathered);
+    let take_loss: T0<f32> = sum(taken);
+    gather_loss + take_loss
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn max_pool_loss(x: T4<f32, 1, 4, 4, 1>) -> T0<f32> {
+    let pooled: T4<f32, 1, 2, 2, 1> = max_pool2d(x);
+    sum(pooled)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn avg_pool_loss(x: T4<f32, 1, 3, 3, 1>) -> T0<f32> {
+    let pooled: T4<f32, 1, 2, 2, 1> =
+        avg_pool2d_options(x, Pool2dOptions::new(2, 2).padding(1, 0, 1, 0).stride(2, 2));
+    sum(pooled)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn conv2d_sum_loss(x: T4<f32, 1, 3, 3, 1>, k: T4<f32, 2, 2, 1, 1>) -> T0<f32> {
+    let y: T4<f32, 1, 2, 2, 1> = conv2d(x, k);
+    sum(y)
+}
+
 fn main() {
     knok_build::compile_graphs!(
         affine_relu,
@@ -952,7 +988,12 @@ fn main() {
         trace_diagonal_loss,
         tile_repeat_loss,
         tile_only_loss,
-        repeat_only_loss
+        repeat_only_loss,
+        split_loss,
+        indexed_loss,
+        max_pool_loss,
+        avg_pool_loss,
+        conv2d_sum_loss
     );
 
     knok_build::compile_mlir_models_with_options!(

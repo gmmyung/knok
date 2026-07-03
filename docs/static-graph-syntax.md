@@ -145,7 +145,9 @@ let (loss, dx) = grad_graphs::loss_value_and_grad::call(x)?;
 
 Use `grad_graphs!(loss)` when the build script only writes gradient wrappers to
 the default `knok_graphs.rs` output. When emitting both forward and gradient
-wrappers, keep them in separate output files.
+wrappers, keep them in separate output files. If a differentiated graph calls
+another graph registered in the same `grad_graphs!` invocation, the callee is
+inlined before the gradient graph is generated.
 
 ## External MLIR Models
 

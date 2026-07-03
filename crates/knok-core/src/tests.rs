@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    parse_tensor_type, type_check, value_and_grad_graph, AxisSpec, BinaryOp, CallOp, Conv2dOptions,
-    ElementType, Expr, Graph, GraphSignature, Input, Let, Pool2dOptions, TensorType,
+    parse_tensor_type, type_check, value_and_grad_graph, value_and_grad_graph_with_registry,
+    AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
+    Let, Pool2dOptions, TensorType,
 };
 
 fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {
@@ -585,24 +586,80 @@ fn value_and_grad_allows_detached_unsupported_ops() {
 }
 
 #[test]
-fn value_and_grad_rejects_unsupported_differentiated_ops() {
+fn value_and_grad_rejects_unresolved_graph_calls() {
     let graph = graph(
-        "pool_loss",
-        vec![input("x", ElementType::F32, &[1, 4, 4, 1])],
+        "graph_call_loss",
+        vec![input("x", ElementType::F32, &[2])],
         vec![tensor(ElementType::F32, &[])],
         Expr::Call {
             op: CallOp::Sum(AxisSpec::All),
             args: vec![Expr::Call {
-                op: CallOp::MaxPool2d(Pool2dOptions::default()),
+                op: CallOp::Graph("layer".into()),
                 args: vec![var("x")],
             }],
         },
     );
-    let typed = type_check(graph, &[]).unwrap();
+    let signatures = vec![(
+        "layer".into(),
+        GraphSignature {
+            inputs: vec![tensor(ElementType::F32, &[2])],
+            outputs: vec![tensor(ElementType::F32, &[2])],
+        },
+    )];
+    let typed = type_check(graph, &signatures).unwrap();
 
     let error = value_and_grad_graph(&typed).unwrap_err();
 
     assert!(error
         .to_string()
-        .contains("autograd MVP does not support differentiating `max_pool2d`"));
+        .contains("cannot resolve graph call `layer` without a graph registry entry"));
+}
+
+#[test]
+fn value_and_grad_inlines_graph_calls_from_registry() {
+    let layer = graph(
+        "layer",
+        vec![input("x", ElementType::F32, &[2])],
+        vec![tensor(ElementType::F32, &[2])],
+        Expr::Call {
+            op: CallOp::Square,
+            args: vec![var("x")],
+        },
+    );
+    let typed_layer = type_check(layer, &[]).unwrap();
+    let graph = graph(
+        "graph_call_loss",
+        vec![input("x", ElementType::F32, &[2])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::Graph("layer".into()),
+                args: vec![var("x")],
+            }],
+        },
+    );
+    let signatures = vec![(
+        "layer".into(),
+        GraphSignature {
+            inputs: typed_layer
+                .inputs
+                .iter()
+                .map(|input| input.ty.clone())
+                .collect(),
+            outputs: typed_layer.outputs.clone(),
+        },
+    )];
+    let typed = type_check(graph, &signatures).unwrap();
+    let registry = BTreeMap::from([("layer".into(), typed_layer)]);
+
+    let grad = value_and_grad_graph_with_registry(&typed, &registry).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2])
+        ]
+    );
 }

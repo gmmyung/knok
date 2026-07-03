@@ -16,7 +16,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Added experimental build-time value-and-gradient graph generation through
   `knok-build` `grad_graphs!` macros, including scalar-loss autograd coverage
   for arithmetic, math/reduction/layout operations, linalg contractions,
-  selection ops, shape/indexing ops, and explicit `detach` stop-gradient.
+  pooling and convolution, selection ops, shape/indexing ops, same-registry
+  graph calls, and explicit `detach` stop-gradient.
 
 ### Changed
 

@@ -139,14 +139,14 @@ fn main() {
             ],
         },
         Fixture {
-            name: "grad_unsupported_pool",
+            name: "grad_repeat_rank_limit",
             build_rs: r#"
 use knok_build::prelude::*;
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
-fn forward(x: Tensor4<f32, 1, 4, 4, 1>) -> Tensor0<f32> {
-    let pooled: Tensor4<f32, 1, 2, 2, 1> = max_pool2d(x);
-    sum(pooled)
+fn forward(x: Tensor6<f32, 1, 1, 1, 1, 1, 2>) -> Tensor0<f32> {
+    let repeated: Tensor6<f32, 1, 1, 1, 1, 1, 4> = repeat(x, 5, 2);
+    sum(repeated)
 }
 
 fn main() {
@@ -158,7 +158,7 @@ fn main() {
 "#,
             expected: &[
                 "knok build failed",
-                "autograd MVP does not support differentiating `max_pool2d`",
+                "autograd MVP does not support repeat gradients that require rank above 6",
             ],
         },
         Fixture {

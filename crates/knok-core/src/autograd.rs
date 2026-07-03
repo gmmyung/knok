@@ -4,8 +4,8 @@ use proc_macro2::Span;
 
 use crate::ops::{broadcast_shape_slices, infer_call_results};
 use crate::{
-    type_check, AxisSpec, BinaryOp, CallOp, ElementType, Expr, Graph, Input, TensorType,
-    TypedGraph, TypedLet, TypedValue, UnaryOp,
+    type_check, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, Input,
+    Pool2dOptions, TensorType, TypedGraph, TypedLet, TypedValue, UnaryOp,
 };
 
 const MAX_VALUE_AND_GRAD_OUTPUTS: usize = 12;
@@ -23,11 +23,22 @@ struct Node {
 /// rank-0 floating-point loss followed by gradients for each floating-point
 /// input in input order.
 pub fn value_and_grad_graph(graph: &TypedGraph) -> syn::Result<TypedGraph> {
-    ValueAndGradBuilder::new(graph)?.build()
+    value_and_grad_graph_with_registry(graph, &BTreeMap::new())
+}
+
+/// Builds a static value-and-gradient graph, resolving nested graph calls from
+/// `graph_registry` by inlining their typed bodies before differentiation.
+pub fn value_and_grad_graph_with_registry(
+    graph: &TypedGraph,
+    graph_registry: &BTreeMap<String, TypedGraph>,
+) -> syn::Result<TypedGraph> {
+    ValueAndGradBuilder::new(graph, graph_registry)?.build()
 }
 
 struct ValueAndGradBuilder<'a> {
     graph: &'a TypedGraph,
+    graph_registry: &'a BTreeMap<String, TypedGraph>,
+    inline_stack: Vec<String>,
     used_names: BTreeSet<String>,
     env: BTreeMap<String, TensorType>,
     lets: Vec<crate::Let>,
@@ -39,7 +50,10 @@ struct ValueAndGradBuilder<'a> {
 }
 
 impl<'a> ValueAndGradBuilder<'a> {
-    fn new(graph: &'a TypedGraph) -> syn::Result<Self> {
+    fn new(
+        graph: &'a TypedGraph,
+        graph_registry: &'a BTreeMap<String, TypedGraph>,
+    ) -> syn::Result<Self> {
         if graph.outputs.len() != 1 {
             return Err(error("autograd MVP expects a single-output graph"));
         }
@@ -84,6 +98,8 @@ impl<'a> ValueAndGradBuilder<'a> {
         let value_name = unique_name("__knok_autograd_value", &mut used_names);
         Ok(Self {
             graph,
+            graph_registry,
+            inline_stack: Vec::new(),
             used_names,
             env,
             lets: Vec::new(),
@@ -149,25 +165,64 @@ impl<'a> ValueAndGradBuilder<'a> {
     }
 
     fn flatten_typed_let(&mut self, binding: &TypedLet) -> syn::Result<()> {
-        if binding.names.len() != 1 || binding.value.tys.len() != 1 {
+        if binding.names.len() != binding.value.tys.len() {
             return Err(error(
-                "autograd MVP does not support multi-output let bindings",
+                "internal autograd error: let binding arity did not match value arity",
             ));
         }
-        let (expr, ty) = self.flatten_value(&binding.value)?;
-        if ty != binding.value.tys[0] {
-            return Err(error("internal autograd type mismatch for let binding"));
+        let outputs = self.flatten_value_outputs(&binding.value)?;
+        if outputs.len() != binding.names.len() {
+            return Err(error(
+                "internal autograd error: flattened let binding arity mismatch",
+            ));
         }
-        self.bind_forward_node(binding.names[0].clone(), expr, ty)
+        for ((name, expected_ty), (expr, ty)) in
+            binding.names.iter().zip(&binding.value.tys).zip(outputs)
+        {
+            if ty != *expected_ty {
+                return Err(error("internal autograd type mismatch for let binding"));
+            }
+            self.bind_forward_node(name.clone(), expr, ty)?;
+        }
+        Ok(())
     }
 
-    fn flatten_value(&mut self, value: &TypedValue) -> syn::Result<(Expr, TensorType)> {
-        self.flatten_expr(&value.kind)
+    fn flatten_value_outputs(
+        &mut self,
+        value: &TypedValue,
+    ) -> syn::Result<Vec<(Expr, TensorType)>> {
+        let outputs = self.flatten_expr_outputs(&value.kind)?;
+        if outputs.len() != value.tys.len() {
+            return Err(error(
+                "internal autograd error: flattened value arity mismatch",
+            ));
+        }
+        for ((_, ty), expected_ty) in outputs.iter().zip(&value.tys) {
+            if ty != expected_ty {
+                return Err(error("internal autograd type mismatch for value"));
+            }
+        }
+        Ok(outputs)
     }
 
     fn flatten_expr(&mut self, expr: &Expr) -> syn::Result<(Expr, TensorType)> {
+        self.flatten_expr_scoped(expr, &BTreeMap::new())
+    }
+
+    fn flatten_expr_outputs(&mut self, expr: &Expr) -> syn::Result<Vec<(Expr, TensorType)>> {
+        self.flatten_expr_outputs_scoped(expr, &BTreeMap::new())
+    }
+
+    fn flatten_expr_scoped(
+        &mut self,
+        expr: &Expr,
+        scope: &BTreeMap<String, (Expr, TensorType)>,
+    ) -> syn::Result<(Expr, TensorType)> {
         match expr {
             Expr::Var(name) => {
+                if let Some((expr, ty)) = scope.get(name) {
+                    return Ok((expr.clone(), ty.clone()));
+                }
                 let ty =
                     self.env.get(name).cloned().ok_or_else(|| {
                         error(format!("unknown value `{name}` in autograd graph"))
@@ -205,21 +260,32 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let expr = self.bind_forward_auto(expr, ty.clone())?;
                 Ok((expr, ty))
             }
-            Expr::Node { value, .. } => self.flatten_expr(value),
-            Expr::TupleGet { .. } => Err(error(
-                "autograd MVP does not support tuple projections or multi-output ops",
-            )),
+            Expr::Node { value, .. } => self.flatten_expr_scoped(value, scope),
+            Expr::TupleGet { value, index, .. } => {
+                let outputs = self.flatten_expr_outputs_scoped(value, scope)?;
+                outputs.get(*index).cloned().ok_or_else(|| {
+                    error(format!(
+                        "tuple projection index {index} out of bounds for {} values",
+                        outputs.len()
+                    ))
+                })
+            }
             Expr::Call { op, args } => {
                 if matches!(op, CallOp::Graph(_) | CallOp::Split { .. }) {
-                    return Err(error(format!(
-                        "autograd MVP does not support `{}`",
-                        op.name()
-                    )));
+                    let outputs = self.flatten_expr_outputs_scoped(expr, scope)?;
+                    let [output]: [(Expr, TensorType); 1] = outputs.try_into().map_err(|outputs: Vec<_>| {
+                        error(format!(
+                            "autograd MVP cannot use multi-output `{}` as a tensor expression ({} outputs)",
+                            op.name(),
+                            outputs.len()
+                        ))
+                    })?;
+                    return Ok(output);
                 }
                 let mut flat_args = Vec::with_capacity(args.len());
                 let mut arg_tys = Vec::with_capacity(args.len());
                 for arg in args {
-                    let (arg, ty) = self.flatten_expr(arg)?;
+                    let (arg, ty) = self.flatten_expr_scoped(arg, scope)?;
                     flat_args.push(arg);
                     arg_tys.push(ty);
                 }
@@ -239,6 +305,143 @@ impl<'a> ValueAndGradBuilder<'a> {
                 Ok((expr, ty))
             }
         }
+    }
+
+    fn flatten_expr_outputs_scoped(
+        &mut self,
+        expr: &Expr,
+        scope: &BTreeMap<String, (Expr, TensorType)>,
+    ) -> syn::Result<Vec<(Expr, TensorType)>> {
+        match expr {
+            Expr::Node { value, .. } => self.flatten_expr_outputs_scoped(value, scope),
+            Expr::Call {
+                op: CallOp::Split { axis, sections },
+                args,
+            } => self.flatten_split_outputs(args, *axis, sections, scope),
+            Expr::Call {
+                op: CallOp::Graph(name),
+                args,
+            } => self.flatten_graph_outputs(name, args, scope),
+            _ => self
+                .flatten_expr_scoped(expr, scope)
+                .map(|output| vec![output]),
+        }
+    }
+
+    fn flatten_split_outputs(
+        &mut self,
+        args: &[Expr],
+        axis: usize,
+        sections: &[usize],
+        scope: &BTreeMap<String, (Expr, TensorType)>,
+    ) -> syn::Result<Vec<(Expr, TensorType)>> {
+        if args.len() != 1 {
+            return Err(error("split expects one argument"));
+        }
+        let (input, input_ty) = self.flatten_expr_scoped(&args[0], scope)?;
+        let output_tys = infer_call_results(
+            &CallOp::Split {
+                axis,
+                sections: sections.to_vec(),
+            },
+            core::slice::from_ref(&input_ty),
+        )?;
+        let mut offset = 0;
+        output_tys
+            .into_iter()
+            .map(|ty| {
+                let mut starts = vec![0; input_ty.rank()];
+                starts[axis] = offset;
+                offset += ty.shape[axis];
+                let expr = call(
+                    CallOp::Slice {
+                        target: ty.clone(),
+                        starts,
+                    },
+                    vec![input.clone()],
+                );
+                let expr = self.bind_forward_auto(expr, ty.clone())?;
+                Ok((expr, ty))
+            })
+            .collect()
+    }
+
+    fn flatten_graph_outputs(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        scope: &BTreeMap<String, (Expr, TensorType)>,
+    ) -> syn::Result<Vec<(Expr, TensorType)>> {
+        if self.inline_stack.iter().any(|current| current == name) {
+            return Err(error(format!(
+                "recursive graph call `{name}` is not supported by autograd"
+            )));
+        }
+        let graph = self.graph_registry.get(name).ok_or_else(|| {
+            error(format!(
+                "autograd MVP cannot resolve graph call `{name}` without a graph registry entry"
+            ))
+        })?;
+        self.inline_stack.push(name.to_string());
+        let result = (|| {
+            if graph.inputs.len() != args.len() {
+                return Err(error(format!(
+                    "graph call `{name}` expected {} arguments, got {}",
+                    graph.inputs.len(),
+                    args.len()
+                )));
+            }
+
+            let mut local_scope = BTreeMap::new();
+            for (input, arg) in graph.inputs.iter().zip(args) {
+                let (expr, ty) = self.flatten_expr_scoped(arg, scope)?;
+                if ty != input.ty {
+                    return Err(error(format!(
+                        "graph call `{name}` argument `{}` expected {:?}, got {:?}",
+                        input.name, input.ty, ty
+                    )));
+                }
+                local_scope.insert(input.name.clone(), (expr, ty));
+            }
+
+            for binding in &graph.lets {
+                let outputs =
+                    self.flatten_expr_outputs_scoped(&binding.value.kind, &local_scope)?;
+                if outputs.len() != binding.names.len() || outputs.len() != binding.value.tys.len()
+                {
+                    return Err(error(format!(
+                        "graph call `{name}` has an internal let arity mismatch"
+                    )));
+                }
+                for ((binding_name, expected_ty), (expr, ty)) in
+                    binding.names.iter().zip(&binding.value.tys).zip(outputs)
+                {
+                    if ty != *expected_ty {
+                        return Err(error(format!(
+                            "graph call `{name}` has an internal let type mismatch"
+                        )));
+                    }
+                    local_scope.insert(binding_name.clone(), (expr, ty));
+                }
+            }
+
+            let outputs = graph
+                .body
+                .iter()
+                .map(|expr| self.flatten_expr_scoped(&expr.kind, &local_scope))
+                .collect::<syn::Result<Vec<_>>>()?;
+            if outputs.len() != graph.outputs.len() {
+                return Err(error(format!("graph call `{name}` output arity mismatch")));
+            }
+            for ((_, ty), expected_ty) in outputs.iter().zip(&graph.outputs) {
+                if ty != expected_ty {
+                    return Err(error(format!("graph call `{name}` output type mismatch")));
+                }
+            }
+            Ok(outputs)
+        })();
+        self.inline_stack.pop();
+        result
     }
 
     fn reverse_node(&mut self, node: &Node, grad: Expr) -> syn::Result<()> {
@@ -555,6 +758,15 @@ impl<'a> ValueAndGradBuilder<'a> {
             }
             CallOp::Tile(multiples) => self.reverse_tile(args, &node.ty, multiples, grad),
             CallOp::Repeat { axis, count } => self.reverse_repeat(args, *axis, *count, grad),
+            CallOp::Gather { axis, .. } => self.reverse_gather(args, &node.ty, *axis, grad),
+            CallOp::TakeAlongAxis { axis } => {
+                self.reverse_take_along_axis(args, &node.ty, *axis, grad)
+            }
+            CallOp::AvgPool2d(options) => self.reverse_avg_pool2d(args, options, grad),
+            CallOp::MaxPool2d(options) => {
+                self.reverse_max_pool2d(args, Expr::Var(node.name.clone()), &node.ty, options, grad)
+            }
+            CallOp::Conv2d(options) => self.reverse_conv2d(args, &node.ty, options, grad),
             CallOp::Transpose(axes) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 let inverse = inverse_permutation(default_axes(&input_ty, axes));
@@ -1116,6 +1328,251 @@ impl<'a> ValueAndGradBuilder<'a> {
         self.add_grad_to_expr(&args[0], result)
     }
 
+    fn reverse_gather(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        axis: usize,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let indices_ty = self.expr_ty(&args[1])?;
+        let reduce_axes = (axis..axis + indices_ty.rank()).collect::<Vec<_>>();
+        let input_grad = indexed_axis_grad(
+            &args[0],
+            &args[1],
+            &indices_ty,
+            output_ty,
+            &input_ty,
+            axis,
+            &reduce_axes,
+            grad,
+        )?;
+        self.add_grad_to_expr(&args[0], input_grad)
+    }
+
+    fn reverse_take_along_axis(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        axis: usize,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let indices_ty = self.expr_ty(&args[1])?;
+        let input_grad = indexed_axis_grad(
+            &args[0],
+            &args[1],
+            &indices_ty,
+            output_ty,
+            &input_ty,
+            axis,
+            &[axis],
+            grad,
+        )?;
+        self.add_grad_to_expr(&args[0], input_grad)
+    }
+
+    fn reverse_avg_pool2d(
+        &mut self,
+        args: &[Expr],
+        options: &Pool2dOptions,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let output_ty = single_call_type(
+            &CallOp::AvgPool2d(options.clone()),
+            core::slice::from_ref(&input_ty),
+        )?;
+        let unit_ty = pool_unit_type(&input_ty);
+        let scale = scalar(
+            &format!("{}.0", options.kernel[0] * options.kernel[1]),
+            input_ty.elem,
+        );
+        let mut acc = None;
+        for oh in 0..output_ty.shape[1] {
+            for ow in 0..output_ty.shape[2] {
+                let grad_unit = pool_output_unit(grad.clone(), &output_ty, oh, ow);
+                let grad_unit = binary(BinaryOp::Div, grad_unit, scale.clone());
+                for kh in 0..options.kernel[0] {
+                    for kw in 0..options.kernel[1] {
+                        if let Some((ih, iw)) = pool_input_position(options, oh, ow, kh, kw) {
+                            if ih >= input_ty.shape[1] || iw >= input_ty.shape[2] {
+                                continue;
+                            }
+                            let padded = pad_pool_unit_to_input(
+                                grad_unit.clone(),
+                                &unit_ty,
+                                &input_ty,
+                                ih,
+                                iw,
+                            );
+                            push_sum(&mut acc, padded);
+                        }
+                    }
+                }
+            }
+        }
+        self.add_grad_to_expr(&args[0], acc.unwrap_or_else(|| zeros_like(args[0].clone())))
+    }
+
+    fn reverse_max_pool2d(
+        &mut self,
+        args: &[Expr],
+        output: Expr,
+        output_ty: &TensorType,
+        options: &Pool2dOptions,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let unit_ty = pool_unit_type(&input_ty);
+        let mut acc = None;
+        for oh in 0..output_ty.shape[1] {
+            for ow in 0..output_ty.shape[2] {
+                let grad_unit = pool_output_unit(grad.clone(), output_ty, oh, ow);
+                let output_unit = pool_output_unit(output.clone(), output_ty, oh, ow);
+                for kh in 0..options.kernel[0] {
+                    for kw in 0..options.kernel[1] {
+                        if let Some((ih, iw)) = pool_input_position(options, oh, ow, kh, kw) {
+                            if ih >= input_ty.shape[1] || iw >= input_ty.shape[2] {
+                                continue;
+                            }
+                            let input_unit = call(
+                                CallOp::Slice {
+                                    target: unit_ty.clone(),
+                                    starts: vec![0, ih, iw, 0],
+                                },
+                                vec![args[0].clone()],
+                            );
+                            let masked = mask_grad(
+                                call(CallOp::Equal, vec![input_unit, output_unit.clone()]),
+                                grad_unit.clone(),
+                            );
+                            let padded =
+                                pad_pool_unit_to_input(masked, &unit_ty, &input_ty, ih, iw);
+                            push_sum(&mut acc, padded);
+                        }
+                    }
+                }
+            }
+        }
+        self.add_grad_to_expr(&args[0], acc.unwrap_or_else(|| zeros_like(args[0].clone())))
+    }
+
+    fn reverse_conv2d(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        options: &Conv2dOptions,
+        grad: Expr,
+    ) -> syn::Result<()> {
+        let input_ty = self.expr_ty(&args[0])?;
+        let kernel_ty = self.expr_ty(&args[1])?;
+        let groups = options.groups;
+        let input_channels_per_group = input_ty.shape[3] / groups;
+        let output_channels_per_group = kernel_ty.shape[3] / groups;
+
+        let mut input_acc = None;
+        let mut kernel_acc = None;
+        for group in 0..groups {
+            let output_channel_start = group * output_channels_per_group;
+            let input_channel_start = group * input_channels_per_group;
+            for kh in 0..kernel_ty.shape[0] {
+                for kw in 0..kernel_ty.shape[1] {
+                    for oh in 0..output_ty.shape[1] {
+                        for ow in 0..output_ty.shape[2] {
+                            let Some((ih, iw)) = conv_input_position(options, oh, ow, kh, kw)
+                            else {
+                                continue;
+                            };
+                            if ih >= input_ty.shape[1] || iw >= input_ty.shape[2] {
+                                continue;
+                            }
+                            let grad_block = conv_output_channel_block(
+                                grad.clone(),
+                                output_ty,
+                                oh,
+                                ow,
+                                output_channel_start,
+                                output_channels_per_group,
+                            );
+                            for local_ic in 0..input_channels_per_group {
+                                let input_channel = input_channel_start + local_ic;
+                                let input_unit = conv_input_unit(
+                                    args[0].clone(),
+                                    &input_ty,
+                                    ih,
+                                    iw,
+                                    input_channel,
+                                );
+                                let kernel_block = conv_kernel_output_block(
+                                    args[1].clone(),
+                                    &kernel_ty,
+                                    kh,
+                                    kw,
+                                    local_ic,
+                                    output_channel_start,
+                                    output_channels_per_group,
+                                );
+
+                                let input_piece =
+                                    binary(BinaryOp::Mul, grad_block.clone(), kernel_block);
+                                let input_piece =
+                                    call(CallOp::Sum(AxisSpec::One(3)), vec![input_piece]);
+                                let input_piece = call(
+                                    CallOp::Reshape(conv_input_unit_type(&input_ty)),
+                                    vec![input_piece],
+                                );
+                                let input_piece = call(
+                                    CallOp::Pad {
+                                        target: input_ty.clone(),
+                                        lows: vec![0, ih, iw, input_channel],
+                                    },
+                                    vec![input_piece],
+                                );
+                                push_sum(&mut input_acc, input_piece);
+
+                                let kernel_piece =
+                                    binary(BinaryOp::Mul, input_unit, grad_block.clone());
+                                let kernel_piece =
+                                    call(CallOp::Sum(AxisSpec::One(2)), vec![kernel_piece]);
+                                let kernel_piece =
+                                    call(CallOp::Sum(AxisSpec::One(1)), vec![kernel_piece]);
+                                let kernel_piece =
+                                    call(CallOp::Sum(AxisSpec::One(0)), vec![kernel_piece]);
+                                let kernel_unit_ty = tensor(
+                                    kernel_ty.elem,
+                                    vec![1, 1, 1, output_channels_per_group],
+                                );
+                                let kernel_piece = call(
+                                    CallOp::Reshape(kernel_unit_ty.clone()),
+                                    vec![kernel_piece],
+                                );
+                                let kernel_piece = call(
+                                    CallOp::Pad {
+                                        target: kernel_ty.clone(),
+                                        lows: vec![kh, kw, local_ic, output_channel_start],
+                                    },
+                                    vec![kernel_piece],
+                                );
+                                push_sum(&mut kernel_acc, kernel_piece);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.add_grad_to_expr(
+            &args[0],
+            input_acc.unwrap_or_else(|| zeros_like(args[0].clone())),
+        )?;
+        self.add_grad_to_expr(
+            &args[1],
+            kernel_acc.unwrap_or_else(|| zeros_like(args[1].clone())),
+        )
+    }
+
     fn expand_reduction_grad(
         &mut self,
         grad: Expr,
@@ -1453,6 +1910,216 @@ fn tensor(elem: ElementType, shape: Vec<usize>) -> TensorType {
 
 fn element_count_slice(shape: &[usize]) -> usize {
     shape.iter().copied().product()
+}
+
+fn indexed_axis_grad(
+    input: &Expr,
+    indices: &Expr,
+    indices_ty: &TensorType,
+    output_ty: &TensorType,
+    input_ty: &TensorType,
+    axis: usize,
+    reduce_axes: &[usize],
+    grad: Expr,
+) -> syn::Result<Expr> {
+    if input_ty.shape[axis] == 0 {
+        return Ok(zeros_like(input.clone()));
+    }
+    let mut pieces = Vec::with_capacity(input_ty.shape[axis]);
+    for index in 0..input_ty.shape[axis] {
+        let positive = call(
+            CallOp::Equal,
+            vec![indices.clone(), scalar(&index.to_string(), indices_ty.elem)],
+        );
+        let negative = call(
+            CallOp::Equal,
+            vec![
+                indices.clone(),
+                scalar(
+                    &format!("{}", index as isize - input_ty.shape[axis] as isize),
+                    indices_ty.elem,
+                ),
+            ],
+        );
+        let condition = call(CallOp::LogicalOr, vec![positive, negative]);
+        let condition = if indices_ty.shape == output_ty.shape {
+            condition
+        } else {
+            reshape_index_condition(condition, indices_ty, output_ty, axis)?
+        };
+        let mut piece = mask_grad(condition, grad.clone());
+        for reduce_axis in reduce_axes.iter().copied().rev() {
+            piece = call(CallOp::Sum(AxisSpec::One(reduce_axis)), vec![piece]);
+        }
+        let mut unit_ty = input_ty.clone();
+        unit_ty.shape[axis] = 1;
+        piece = call(CallOp::Reshape(unit_ty.clone()), vec![piece]);
+        pieces.push(piece);
+    }
+    concat_all(pieces, axis).ok_or_else(|| error("internal autograd error: empty index gradient"))
+}
+
+fn reshape_index_condition(
+    condition: Expr,
+    indices_ty: &TensorType,
+    output_ty: &TensorType,
+    axis: usize,
+) -> syn::Result<Expr> {
+    let mut mask_shape = vec![1; output_ty.rank()];
+    for (offset, dim) in indices_ty.shape.iter().copied().enumerate() {
+        mask_shape[axis + offset] = dim;
+    }
+    let mask_ty = tensor(ElementType::Bool, mask_shape);
+    let condition = reshape_if_needed(
+        condition,
+        &tensor(ElementType::Bool, indices_ty.shape.clone()),
+        &mask_ty,
+    );
+    let output_bool_ty = tensor(ElementType::Bool, output_ty.shape.clone());
+    Ok(if mask_ty == output_bool_ty {
+        condition
+    } else {
+        call(CallOp::Broadcast(output_bool_ty), vec![condition])
+    })
+}
+
+fn pool_unit_type(input_ty: &TensorType) -> TensorType {
+    tensor(
+        input_ty.elem,
+        vec![input_ty.shape[0], 1, 1, input_ty.shape[3]],
+    )
+}
+
+fn pool_output_unit(output: Expr, output_ty: &TensorType, oh: usize, ow: usize) -> Expr {
+    let unit_ty = tensor(
+        output_ty.elem,
+        vec![output_ty.shape[0], 1, 1, output_ty.shape[3]],
+    );
+    call(
+        CallOp::Slice {
+            target: unit_ty,
+            starts: vec![0, oh, ow, 0],
+        },
+        vec![output],
+    )
+}
+
+fn pool_input_position(
+    options: &Pool2dOptions,
+    output_h: usize,
+    output_w: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+) -> Option<(usize, usize)> {
+    let padded_h = output_h * options.stride[0] + kernel_h * options.dilation[0];
+    let padded_w = output_w * options.stride[1] + kernel_w * options.dilation[1];
+    let input_h = padded_h.checked_sub(options.padding.top)?;
+    let input_w = padded_w.checked_sub(options.padding.left)?;
+    Some((input_h, input_w))
+}
+
+fn pad_pool_unit_to_input(
+    unit: Expr,
+    unit_ty: &TensorType,
+    input_ty: &TensorType,
+    input_h: usize,
+    input_w: usize,
+) -> Expr {
+    debug_assert_eq!(
+        unit_ty.shape,
+        vec![input_ty.shape[0], 1, 1, input_ty.shape[3]]
+    );
+    call(
+        CallOp::Pad {
+            target: input_ty.clone(),
+            lows: vec![0, input_h, input_w, 0],
+        },
+        vec![unit],
+    )
+}
+
+fn conv_input_position(
+    options: &Conv2dOptions,
+    output_h: usize,
+    output_w: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+) -> Option<(usize, usize)> {
+    let padded_h = output_h * options.stride[0] + kernel_h * options.dilation[0];
+    let padded_w = output_w * options.stride[1] + kernel_w * options.dilation[1];
+    let input_h = padded_h.checked_sub(options.padding.top)?;
+    let input_w = padded_w.checked_sub(options.padding.left)?;
+    Some((input_h, input_w))
+}
+
+fn conv_input_unit_type(input_ty: &TensorType) -> TensorType {
+    tensor(input_ty.elem, vec![input_ty.shape[0], 1, 1, 1])
+}
+
+fn conv_input_unit(input: Expr, input_ty: &TensorType, h: usize, w: usize, channel: usize) -> Expr {
+    call(
+        CallOp::Slice {
+            target: conv_input_unit_type(input_ty),
+            starts: vec![0, h, w, channel],
+        },
+        vec![input],
+    )
+}
+
+fn conv_output_channel_block(
+    grad: Expr,
+    output_ty: &TensorType,
+    output_h: usize,
+    output_w: usize,
+    output_channel_start: usize,
+    output_channel_count: usize,
+) -> Expr {
+    let ty = tensor(
+        output_ty.elem,
+        vec![output_ty.shape[0], 1, 1, output_channel_count],
+    );
+    call(
+        CallOp::Slice {
+            target: ty,
+            starts: vec![0, output_h, output_w, output_channel_start],
+        },
+        vec![grad],
+    )
+}
+
+fn conv_kernel_output_block(
+    kernel: Expr,
+    kernel_ty: &TensorType,
+    kernel_h: usize,
+    kernel_w: usize,
+    input_channel: usize,
+    output_channel_start: usize,
+    output_channel_count: usize,
+) -> Expr {
+    let ty = tensor(kernel_ty.elem, vec![1, 1, 1, output_channel_count]);
+    call(
+        CallOp::Slice {
+            target: ty,
+            starts: vec![kernel_h, kernel_w, input_channel, output_channel_start],
+        },
+        vec![kernel],
+    )
+}
+
+fn push_sum(acc: &mut Option<Expr>, expr: Expr) {
+    *acc = Some(match acc.take() {
+        Some(existing) => binary(BinaryOp::Add, existing, expr),
+        None => expr,
+    });
+}
+
+fn concat_all(pieces: Vec<Expr>, axis: usize) -> Option<Expr> {
+    let mut iter = pieces.into_iter();
+    let mut acc = iter.next()?;
+    for piece in iter {
+        acc = call(CallOp::Concat(axis), vec![acc, piece]);
+    }
+    Some(acc)
 }
 
 fn default_axis_pair(input_ty: &TensorType, axes: Option<[usize; 2]>) -> syn::Result<[usize; 2]> {

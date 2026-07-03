@@ -36,7 +36,7 @@ use std::{
 };
 
 use knok_compile::{compile_graph_with_registry, compile_mlir_source};
-use knok_core::{value_and_grad_graph, Input, TensorType, TypedGraph};
+use knok_core::{value_and_grad_graph_with_registry, Input, TensorType, TypedGraph};
 
 pub use knok_build_macros::{
     compile_graphs, compile_graphs_with_options, compile_mlir_models,
@@ -267,14 +267,20 @@ pub fn emit_registered_grad_graphs_with_options(
     println!("cargo:rerun-if-changed=build.rs");
 
     let mut generated = String::new();
-    for registered in &registry.graphs {
-        let graph = value_and_grad_graph(&registered.graph)?;
+    let graphs = registry.graphs;
+    let graph_registry = graphs
+        .iter()
+        .map(|registered| (registered.graph.name.clone(), registered.graph.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    for registered in &graphs {
+        let graph = value_and_grad_graph_with_registry(&registered.graph, &graph_registry)?;
         let vmfb_name = graph_vmfb_name(&graph.name);
         let vmfb_path = out_dir.join(&vmfb_name);
         if options.stub_artifacts {
             fs::write(&vmfb_path, [0u8; 16])?;
         } else {
-            let compiled = compile_registered_graph(&graph, &BTreeMap::new())?;
+            let compiled = compile_registered_graph(&graph, &graph_registry)?;
             fs::write(&vmfb_path, compiled.vmfb)?;
         }
         generated.push_str(&codegen::graph_module(

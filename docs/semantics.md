@@ -55,11 +55,13 @@ The MVP differentiates elementwise arithmetic and math (`abs`, `exp`, `exp2`,
 `sigmoid`, `square`, `sqrt`, `reciprocal`, `pow`), selection ops (`where`,
 `minimum`, `maximum`, `clip`), reductions (`sum`, `mean`, `prod`, `min`, `max`,
 `ptp`, `var`, `std`, `softmax`), linalg ops (`matmul`, `dot`, `vecdot`,
-`inner`, `outer`, `trace`, `diagonal`), and shape/indexing ops (`reshape`,
-`broadcast`, `squeeze`, `unsqueeze`, `transpose`, `permute`, `permute_dims`,
-`swapaxes`, `moveaxis`, `flip`, `roll`, `pad`, `slice`, `concat`, `stack`,
-`take`, `tile`, `repeat`). Unsupported differentiated operations are
-build-time errors.
+`inner`, `outer`, `trace`, `diagonal`, `conv2d`), pooling ops (`max_pool2d`,
+`avg_pool2d`), and shape/indexing ops (`reshape`, `broadcast`, `squeeze`,
+`unsqueeze`, `transpose`, `permute`, `permute_dims`, `swapaxes`, `moveaxis`,
+`flip`, `roll`, `pad`, `slice`, `concat`, `stack`, `split`, `take`, `gather`,
+`take_along_axis`, `tile`, `repeat`). Graph calls registered in the same
+`grad_graphs!` invocation are inlined before differentiation. Unsupported
+differentiated operations or unsupported static cases are build-time errors.
 
 Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
 propagation through that value. Unsupported single-output operations are allowed
