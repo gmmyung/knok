@@ -617,6 +617,96 @@ fn value_and_grad_allows_detached_unsupported_ops() {
 }
 
 #[test]
+fn value_and_grad_treats_arg_indices_as_no_grad() {
+    let argmax = Expr::Call {
+        op: CallOp::Argmax(AxisSpec::One(1)),
+        args: vec![var("x")],
+    };
+    let indices = Expr::Call {
+        op: CallOp::Reshape(tensor(ElementType::I64, &[2, 1])),
+        args: vec![argmax],
+    };
+    let graph = graph(
+        "argmax_index_loss",
+        vec![input("x", ElementType::F32, &[2, 3])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::TakeAlongAxis { axis: 1 },
+                args: vec![var("x"), indices],
+            }],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let grad = value_and_grad_graph(&typed).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2, 3])
+        ]
+    );
+}
+
+#[test]
+fn value_and_grad_treats_boolean_conditions_as_no_grad() {
+    let positive = Expr::Call {
+        op: CallOp::Greater,
+        args: vec![
+            var("x"),
+            Expr::Const {
+                value: "0.0".into(),
+                elem: ElementType::F32,
+            },
+        ],
+    };
+    let row_has_positive = Expr::Call {
+        op: CallOp::Any(AxisSpec::One(1)),
+        args: vec![positive],
+    };
+    let condition = Expr::Call {
+        op: CallOp::All(AxisSpec::All),
+        args: vec![row_has_positive],
+    };
+    let graph = graph(
+        "condition_loss",
+        vec![input("x", ElementType::F32, &[2, 3])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Where,
+            args: vec![
+                condition,
+                Expr::Call {
+                    op: CallOp::Sum(AxisSpec::All),
+                    args: vec![Expr::Call {
+                        op: CallOp::Square,
+                        args: vec![var("x")],
+                    }],
+                },
+                Expr::Call {
+                    op: CallOp::Sum(AxisSpec::All),
+                    args: vec![var("x")],
+                },
+            ],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let grad = value_and_grad_graph(&typed).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2, 3])
+        ]
+    );
+}
+
+#[test]
 fn value_and_grad_rejects_unresolved_graph_calls() {
     let graph = graph(
         "graph_call_loss",

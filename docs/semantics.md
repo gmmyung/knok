@@ -60,19 +60,23 @@ The MVP differentiates elementwise arithmetic and math (`abs`, `exp`, `exp2`,
 `unsqueeze`, `transpose`, `permute`, `permute_dims`, `swapaxes`, `moveaxis`,
 `flip`, `roll`, `pad`, `slice`, `concat`, `stack`, `split`, `take`, `gather`,
 `take_along_axis`, `tile`, `repeat`). Graph calls registered in the same
-`grad_graphs!` invocation are inlined before differentiation. Unsupported
-differentiated operations or unsupported static cases are build-time errors.
+`grad_graphs!` invocation are inlined before differentiation.
+Non-floating outputs such as `argmax`, `argmin`, boolean predicates, and
+boolean reductions may feed index or condition operands, but they do not
+receive gradients. Unsupported differentiated floating-point operations or
+unsupported static cases are build-time errors.
 
 Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
 propagation through that value. Unsupported single-output operations are allowed
 behind `detach` as long as the detached value is not differentiated through.
 
-Gradient rules are intentionally explicit in edge cases. Rounding and predicate
-ops (`ceil`, `floor`, `rint`, `round`, comparisons, logical ops, `isnan`) do not
-propagate gradients. Reduction extrema (`min`, `max`, `ptp`) and `max_pool2d`
-route the full upstream gradient to every selected value, so ties can duplicate
-gradient rather than split it. Binary `minimum`/`maximum` break exact ties toward
-the left operand. `clip` propagates through the value at inclusive bounds and to
+Gradient rules are intentionally explicit in edge cases. Rounding, index, and
+predicate ops (`ceil`, `floor`, `rint`, `round`, comparisons, logical ops,
+`isnan`, `argmax`, `argmin`, `all`, `any`) do not propagate gradients. Reduction
+extrema (`min`, `max`, `ptp`) and `max_pool2d` route the full upstream gradient
+to every selected value, so ties can duplicate gradient rather than split it.
+Binary `minimum`/`maximum` break exact ties toward the left operand. `clip`
+propagates through the value at inclusive bounds and to
 the bound operands only outside the clipped range. `prod` uses the algebraic
 `output / input` local gradient, so zeros in the reduced input remain an MVP
 edge case that can produce non-finite gradients.

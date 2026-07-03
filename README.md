@@ -112,7 +112,8 @@ Existing `.mlir` files can also be compiled from `build.rs` with
   operations.
 - Build-time graph construction with `knok-build`.
 - Experimental build-time value-and-gradient graph generation for scalar
-  floating-point losses, including explicit `detach` stop-gradient.
+  floating-point losses, including explicit `detach` stop-gradient and no-grad
+  index/predicate values for conditions and indexing.
 - Hosted execution through IREE with the `knok` runtime API.
 - External MLIR model import for users who already have MLIR.
 

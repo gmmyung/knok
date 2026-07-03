@@ -834,6 +834,10 @@ impl<'a> ValueAndGradBuilder<'a> {
             | CallOp::Floor
             | CallOp::Rint
             | CallOp::Round
+            | CallOp::All(_)
+            | CallOp::Any(_)
+            | CallOp::Argmax(_)
+            | CallOp::Argmin(_)
             | CallOp::IsNan
             | CallOp::Greater
             | CallOp::GreaterEqual
@@ -850,8 +854,9 @@ impl<'a> ValueAndGradBuilder<'a> {
             | CallOp::Eye(_)
             | CallOp::OnesLike
             | CallOp::ZerosLike => Ok(()),
+            _ if !node.ty.elem.is_float() => Ok(()),
             _ => Err(error(format!(
-                "autograd MVP does not support differentiating `{}`",
+                "autograd MVP does not support differentiating floating-point `{}`",
                 op.name()
             ))),
         }
@@ -1646,8 +1651,11 @@ impl<'a> ValueAndGradBuilder<'a> {
     }
 
     fn add_grad(&mut self, name: &str, grad: Expr) -> syn::Result<()> {
-        if !self.env.contains_key(name) {
+        let Some(ty) = self.env.get(name) else {
             return Err(error(format!("unknown gradient target `{name}`")));
+        };
+        if !ty.elem.is_float() {
+            return Ok(());
         }
         let grad = if let Some(existing) = self.grads.remove(name) {
             binary(BinaryOp::Add, existing, grad)

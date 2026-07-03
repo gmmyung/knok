@@ -378,6 +378,16 @@ fn value_and_grad_indexed_ops_run() {
 }
 
 #[test]
+fn value_and_grad_argmax_index_path_is_no_grad() {
+    let x = Tensor2::from_array([[1.0, 5.0, 3.0], [4.0, 2.0, 6.0]]);
+
+    let (loss, grad_x) = autograd_graphs::argmax_indexed_loss_value_and_grad::call(x).unwrap();
+
+    assert_close(loss.as_slice(), &[11.0]);
+    assert_close(grad_x.as_slice(), &[0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+}
+
+#[test]
 fn value_and_grad_pooling_runs() {
     let max_input = Tensor4::from_array([[
         [[-8.0], [-7.0], [-6.0], [-5.0]],

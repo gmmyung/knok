@@ -832,6 +832,14 @@ fn indexed_axis0_loss(
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn argmax_indexed_loss(x: T2<f32, 2, 3>) -> T0<f32> {
+    let indices: T1<i64, 2> = argmax_axis(x.clone(), 1);
+    let indices: T2<i64, 2, 1> = reshape(indices);
+    let taken: T2<f32, 2, 1> = take_along_axis(x, indices, 1);
+    sum(taken)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn max_pool_loss(x: T4<f32, 1, 4, 4, 1>) -> T0<f32> {
     let pooled: T4<f32, 1, 2, 2, 1> = max_pool2d(x);
     sum(pooled)
@@ -1027,6 +1035,7 @@ fn main() {
         split_loss,
         indexed_loss,
         indexed_axis0_loss,
+        argmax_indexed_loss,
         max_pool_loss,
         avg_pool_loss,
         conv2d_sum_loss,
