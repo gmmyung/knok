@@ -786,6 +786,63 @@ fn value_and_grad_inlines_graph_calls_from_registry() {
 }
 
 #[test]
+fn value_and_grad_inlines_binary_graph_call_operands_from_registry_scope() {
+    let layer = graph(
+        "add_layer",
+        vec![
+            input("x", ElementType::F32, &[2]),
+            input("y", ElementType::F32, &[2]),
+        ],
+        vec![tensor(ElementType::F32, &[2])],
+        Expr::Binary {
+            op: BinaryOp::Add,
+            lhs: Box::new(var("x")),
+            rhs: Box::new(var("y")),
+        },
+    );
+    let typed_layer = type_check(layer, &[]).unwrap();
+    let graph = graph(
+        "graph_call_loss",
+        vec![
+            input("lhs", ElementType::F32, &[2]),
+            input("rhs", ElementType::F32, &[2]),
+        ],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::Graph("add_layer".into()),
+                args: vec![var("lhs"), var("rhs")],
+            }],
+        },
+    );
+    let signatures = vec![(
+        "add_layer".into(),
+        GraphSignature {
+            inputs: typed_layer
+                .inputs
+                .iter()
+                .map(|input| input.ty.clone())
+                .collect(),
+            outputs: typed_layer.outputs.clone(),
+        },
+    )];
+    let typed = type_check(graph, &signatures).unwrap();
+    let registry = BTreeMap::from([("add_layer".into(), typed_layer)]);
+
+    let grad = value_and_grad_graph_with_registry(&typed, &registry).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2]),
+            tensor(ElementType::F32, &[2]),
+        ]
+    );
+}
+
+#[test]
 fn value_and_grad_inlines_nested_graph_calls_from_registry() {
     let square = type_check(
         graph(

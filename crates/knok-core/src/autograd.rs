@@ -236,7 +236,7 @@ impl<'a> ValueAndGradBuilder<'a> {
                 },
             )),
             Expr::Unary { op, value } => {
-                let (value, ty) = self.flatten_expr(value)?;
+                let (value, ty) = self.flatten_expr_scoped(value, scope)?;
                 let expr = Expr::Unary {
                     op: *op,
                     value: Box::new(value),
@@ -245,8 +245,8 @@ impl<'a> ValueAndGradBuilder<'a> {
                 Ok((expr, ty))
             }
             Expr::Binary { op, lhs, rhs } => {
-                let (lhs, lhs_ty) = self.flatten_expr(lhs)?;
-                let (rhs, rhs_ty) = self.flatten_expr(rhs)?;
+                let (lhs, lhs_ty) = self.flatten_expr_scoped(lhs, scope)?;
+                let (rhs, rhs_ty) = self.flatten_expr_scoped(rhs, scope)?;
                 let ty = elementwise_type(&lhs_ty, &rhs_ty)?;
                 let expr = Expr::Binary {
                     op: *op,
