@@ -819,6 +819,19 @@ fn indexed_loss(x: T2<f32, 2, 3>, gather_idx: T2<i64, 2, 2>, take_idx: T2<i64, 2
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn indexed_axis0_loss(
+    x: T2<f32, 2, 3>,
+    gather_idx: T1<i64, 3>,
+    take_idx: T2<i64, 2, 3>,
+) -> T0<f32> {
+    let gathered: T2<f32, 3, 3> = gather(x.clone(), gather_idx, 0);
+    let taken: T2<f32, 2, 3> = take_along_axis(x, take_idx, 0);
+    let gather_loss: T0<f32> = sum(gathered);
+    let take_loss: T0<f32> = sum(taken);
+    gather_loss + take_loss
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn max_pool_loss(x: T4<f32, 1, 4, 4, 1>) -> T0<f32> {
     let pooled: T4<f32, 1, 2, 2, 1> = max_pool2d(x);
     sum(pooled)
@@ -834,6 +847,28 @@ fn avg_pool_loss(x: T4<f32, 1, 3, 3, 1>) -> T0<f32> {
 #[knok_build::graph(backend = Backend::LlvmCpu)]
 fn conv2d_sum_loss(x: T4<f32, 1, 3, 3, 1>, k: T4<f32, 2, 2, 1, 1>) -> T0<f32> {
     let y: T4<f32, 1, 2, 2, 1> = conv2d(x, k);
+    sum(y)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn grouped_conv2d_sum_loss(x: T4<f32, 1, 3, 3, 2>, k: T4<f32, 2, 2, 1, 2>) -> T0<f32> {
+    let y: T4<f32, 1, 2, 2, 2> = conv2d_options(x, k, Conv2dOptions::new().groups(2));
+    sum(y)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn padded_stride_dilated_conv2d_sum_loss(
+    x: T4<f32, 1, 5, 5, 1>,
+    k: T4<f32, 2, 2, 1, 1>,
+) -> T0<f32> {
+    let y: T4<f32, 1, 3, 3, 1> = conv2d_options(
+        x,
+        k,
+        Conv2dOptions::new()
+            .padding(1, 1, 1, 1)
+            .stride(2, 2)
+            .dilation(2, 2),
+    );
     sum(y)
 }
 
@@ -991,9 +1026,12 @@ fn main() {
         repeat_only_loss,
         split_loss,
         indexed_loss,
+        indexed_axis0_loss,
         max_pool_loss,
         avg_pool_loss,
-        conv2d_sum_loss
+        conv2d_sum_loss,
+        grouped_conv2d_sum_loss,
+        padded_stride_dilated_conv2d_sum_loss
     );
 
     knok_build::compile_mlir_models_with_options!(

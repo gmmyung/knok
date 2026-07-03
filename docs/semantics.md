@@ -67,6 +67,23 @@ Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
 propagation through that value. Unsupported single-output operations are allowed
 behind `detach` as long as the detached value is not differentiated through.
 
+Gradient rules are intentionally explicit in edge cases. Rounding and predicate
+ops (`ceil`, `floor`, `rint`, `round`, comparisons, logical ops, `isnan`) do not
+propagate gradients. Reduction extrema (`min`, `max`, `ptp`) and `max_pool2d`
+route the full upstream gradient to every selected value, so ties can duplicate
+gradient rather than split it. Binary `minimum`/`maximum` break exact ties toward
+the left operand. `clip` propagates through the value at inclusive bounds and to
+the bound operands only outside the clipped range. `prod` uses the algebraic
+`output / input` local gradient, so zeros in the reduced input remain an MVP
+edge case that can produce non-finite gradients.
+
+Some reverse rules expand static loops into graph IR. `conv2d`, pooling,
+`gather`, `take_along_axis`, `tile`, and `repeat` gradients are generated from
+existing tensor primitives instead of dedicated backward kernels, so larger
+static shapes can increase generated graph size and compile time. `repeat`
+gradients that require an intermediate rank above the Tensor6 limit are rejected
+at build time.
+
 ## Pooling
 
 `max_pool2d` and `avg_pool2d` use NHWC rank-4 input layout. Options are static:

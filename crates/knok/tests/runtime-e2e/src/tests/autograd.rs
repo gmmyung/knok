@@ -366,6 +366,15 @@ fn value_and_grad_indexed_ops_run() {
 
     assert_close(loss.as_slice(), &[41.0]);
     assert_close(grad_x.as_slice(), &[2.0, 2.0, 2.0, 3.0, 1.0, 2.0]);
+
+    let x = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+    let gather_idx = Tensor1::from_array([0_i64, 0, -1]);
+    let take_idx = Tensor2::from_array([[1_i64, 0, -1], [0, -2, 1]]);
+    let (loss, grad_x) =
+        autograd_graphs::indexed_axis0_loss_value_and_grad::call(x, gather_idx, take_idx).unwrap();
+
+    assert_close(loss.as_slice(), &[48.0]);
+    assert_close(grad_x.as_slice(), &[3.0, 4.0, 2.0, 2.0, 1.0, 3.0]);
 }
 
 #[test]
@@ -413,4 +422,45 @@ fn value_and_grad_conv2d_runs() {
         &[1.0, 1.0, 0.0, 1.0, 2.0, 1.0, 0.0, 1.0, 1.0],
     );
     assert_close(grad_k.as_slice(), &[12.0, 16.0, 24.0, 28.0]);
+
+    let x = Tensor4::from_array([[
+        [[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]],
+        [[4.0, 40.0], [5.0, 50.0], [6.0, 60.0]],
+        [[7.0, 70.0], [8.0, 80.0], [9.0, 90.0]],
+    ]]);
+    let k = Tensor4::from_array([[[[1.0, 1.0]], [[0.0, 0.0]]], [[[0.0, 0.0]], [[1.0, 1.0]]]]);
+    let (loss, grad_x, grad_k) =
+        autograd_graphs::grouped_conv2d_sum_loss_value_and_grad::call(x, k).unwrap();
+    assert_close(loss.as_slice(), &[440.0]);
+    assert_close(
+        grad_x.as_slice(),
+        &[
+            1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+            1.0,
+        ],
+    );
+    assert_close(
+        grad_k.as_slice(),
+        &[12.0, 120.0, 16.0, 160.0, 24.0, 240.0, 28.0, 280.0],
+    );
+
+    let x = Tensor4::from_array([[
+        [[1.0], [2.0], [3.0], [4.0], [5.0]],
+        [[6.0], [7.0], [8.0], [9.0], [10.0]],
+        [[11.0], [12.0], [13.0], [14.0], [15.0]],
+        [[16.0], [17.0], [18.0], [19.0], [20.0]],
+        [[21.0], [22.0], [23.0], [24.0], [25.0]],
+    ]]);
+    let k = Tensor4::from_array([[[[1.0]], [[2.0]]], [[[3.0]], [[4.0]]]]);
+    let (loss, grad_x, grad_k) =
+        autograd_graphs::padded_stride_dilated_conv2d_sum_loss_value_and_grad::call(x, k).unwrap();
+    assert_close(loss.as_slice(), &[520.0]);
+    assert_close(
+        grad_x.as_slice(),
+        &[
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0,
+            0.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ],
+    );
+    assert_close(grad_k.as_slice(), &[52.0, 52.0, 52.0, 52.0]);
 }

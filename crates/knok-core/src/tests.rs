@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use crate::{
     parse_tensor_type, type_check, value_and_grad_graph, value_and_grad_graph_with_registry,
     AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
-    Let, Pool2dOptions, TensorType,
+    Let, Pool2dOptions, TensorType, TypedGraph,
 };
 
 fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {
@@ -33,6 +33,37 @@ fn graph(name: &str, inputs: Vec<Input>, outputs: Vec<TensorType>, body: Expr) -
         lets: Vec::new(),
         body: vec![body],
     }
+}
+
+fn graph_signature(graph: &TypedGraph) -> GraphSignature {
+    GraphSignature {
+        inputs: graph.inputs.iter().map(|input| input.ty.clone()).collect(),
+        outputs: graph.outputs.clone(),
+    }
+}
+
+fn expr_node_count(expr: &Expr) -> usize {
+    match expr {
+        Expr::Var(_) | Expr::Const { .. } => 1,
+        Expr::Unary { value, .. } => 1 + expr_node_count(value),
+        Expr::Binary { lhs, rhs, .. } => 1 + expr_node_count(lhs) + expr_node_count(rhs),
+        Expr::Node { value, .. } => 1 + expr_node_count(value),
+        Expr::TupleGet { value, .. } => 1 + expr_node_count(value),
+        Expr::Call { args, .. } => 1 + args.iter().map(expr_node_count).sum::<usize>(),
+    }
+}
+
+fn graph_expr_node_count(graph: &TypedGraph) -> usize {
+    graph
+        .lets
+        .iter()
+        .map(|binding| expr_node_count(&binding.value.kind))
+        .sum::<usize>()
+        + graph
+            .body
+            .iter()
+            .map(|expr| expr_node_count(&expr.kind))
+            .sum::<usize>()
 }
 
 #[test]
@@ -662,4 +693,194 @@ fn value_and_grad_inlines_graph_calls_from_registry() {
             tensor(ElementType::F32, &[2])
         ]
     );
+}
+
+#[test]
+fn value_and_grad_inlines_nested_graph_calls_from_registry() {
+    let square = type_check(
+        graph(
+            "square_layer",
+            vec![input("x", ElementType::F32, &[2])],
+            vec![tensor(ElementType::F32, &[2])],
+            Expr::Call {
+                op: CallOp::Square,
+                args: vec![var("x")],
+            },
+        ),
+        &[],
+    )
+    .unwrap();
+    let relu_square = type_check(
+        graph(
+            "relu_square_layer",
+            vec![input("x", ElementType::F32, &[2])],
+            vec![tensor(ElementType::F32, &[2])],
+            Expr::Call {
+                op: CallOp::Relu,
+                args: vec![Expr::Call {
+                    op: CallOp::Graph("square_layer".into()),
+                    args: vec![var("x")],
+                }],
+            },
+        ),
+        &[("square_layer".into(), graph_signature(&square))],
+    )
+    .unwrap();
+    let graph = graph(
+        "nested_graph_call_loss",
+        vec![input("x", ElementType::F32, &[2])],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::Graph("relu_square_layer".into()),
+                args: vec![var("x")],
+            }],
+        },
+    );
+    let signatures = vec![
+        ("square_layer".into(), graph_signature(&square)),
+        ("relu_square_layer".into(), graph_signature(&relu_square)),
+    ];
+    let typed = type_check(graph, &signatures).unwrap();
+    let registry = BTreeMap::from([
+        ("square_layer".into(), square),
+        ("relu_square_layer".into(), relu_square),
+    ]);
+
+    let grad = value_and_grad_graph_with_registry(&typed, &registry).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2])
+        ]
+    );
+}
+
+#[test]
+fn value_and_grad_rejects_indirect_recursive_graph_calls() {
+    let signature = GraphSignature {
+        inputs: vec![tensor(ElementType::F32, &[2])],
+        outputs: vec![tensor(ElementType::F32, &[2])],
+    };
+    let graph_a = type_check(
+        graph(
+            "a",
+            vec![input("x", ElementType::F32, &[2])],
+            vec![tensor(ElementType::F32, &[2])],
+            Expr::Call {
+                op: CallOp::Graph("b".into()),
+                args: vec![var("x")],
+            },
+        ),
+        &[("b".into(), signature.clone())],
+    )
+    .unwrap();
+    let graph_b = type_check(
+        graph(
+            "b",
+            vec![input("x", ElementType::F32, &[2])],
+            vec![tensor(ElementType::F32, &[2])],
+            Expr::Call {
+                op: CallOp::Graph("a".into()),
+                args: vec![var("x")],
+            },
+        ),
+        &[("a".into(), signature)],
+    )
+    .unwrap();
+    let loss = type_check(
+        graph(
+            "recursive_graph_call_loss",
+            vec![input("x", ElementType::F32, &[2])],
+            vec![tensor(ElementType::F32, &[])],
+            Expr::Call {
+                op: CallOp::Sum(AxisSpec::All),
+                args: vec![Expr::Call {
+                    op: CallOp::Graph("a".into()),
+                    args: vec![var("x")],
+                }],
+            },
+        ),
+        &[("a".into(), graph_signature(&graph_a))],
+    )
+    .unwrap();
+    let registry = BTreeMap::from([("a".into(), graph_a), ("b".into(), graph_b)]);
+
+    let error = value_and_grad_graph_with_registry(&loss, &registry).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("recursive graph call `a` is not supported by autograd"));
+}
+
+#[test]
+fn value_and_grad_static_loop_graphs_have_bounded_expression_size() {
+    let conv = type_check(
+        graph(
+            "conv_loss",
+            vec![
+                input("x", ElementType::F32, &[1, 4, 4, 1]),
+                input("k", ElementType::F32, &[2, 2, 1, 1]),
+            ],
+            vec![tensor(ElementType::F32, &[])],
+            Expr::Call {
+                op: CallOp::Sum(AxisSpec::All),
+                args: vec![Expr::Call {
+                    op: CallOp::Conv2d(Conv2dOptions::default()),
+                    args: vec![var("x"), var("k")],
+                }],
+            },
+        ),
+        &[],
+    )
+    .unwrap();
+    let conv_grad = value_and_grad_graph(&conv).unwrap();
+    assert!(graph_expr_node_count(&conv_grad) <= 20_000);
+
+    let pool = type_check(
+        graph(
+            "pool_loss",
+            vec![input("x", ElementType::F32, &[1, 6, 6, 1])],
+            vec![tensor(ElementType::F32, &[])],
+            Expr::Call {
+                op: CallOp::Sum(AxisSpec::All),
+                args: vec![Expr::Call {
+                    op: CallOp::MaxPool2d(Pool2dOptions::default()),
+                    args: vec![var("x")],
+                }],
+            },
+        ),
+        &[],
+    )
+    .unwrap();
+    let pool_grad = value_and_grad_graph(&pool).unwrap();
+    assert!(graph_expr_node_count(&pool_grad) <= 20_000);
+
+    let indexed = type_check(
+        graph(
+            "indexed_loss",
+            vec![
+                input("x", ElementType::F32, &[3, 4]),
+                input("idx", ElementType::I64, &[2, 3]),
+            ],
+            vec![tensor(ElementType::F32, &[])],
+            Expr::Call {
+                op: CallOp::Sum(AxisSpec::All),
+                args: vec![Expr::Call {
+                    op: CallOp::Gather {
+                        target: tensor(ElementType::F32, &[3, 2, 3]),
+                        axis: 1,
+                    },
+                    args: vec![var("x"), var("idx")],
+                }],
+            },
+        ),
+        &[],
+    )
+    .unwrap();
+    let indexed_grad = value_and_grad_graph(&indexed).unwrap();
+    assert!(graph_expr_node_count(&indexed_grad) <= 8_000);
 }

@@ -17,7 +17,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   `knok-build` `grad_graphs!` macros, including scalar-loss autograd coverage
   for arithmetic, math/reduction/layout operations, linalg contractions,
   pooling and convolution, selection ops, shape/indexing ops, same-registry
-  graph calls, and explicit `detach` stop-gradient.
+  graph calls, documented edge-case gradient policies, and explicit `detach`
+  stop-gradient.
 
 ### Changed
 
