@@ -15,8 +15,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 - Added experimental build-time value-and-gradient graph generation through
   `knok-build` `grad_graphs!` macros, including scalar-loss autograd coverage
-  for arithmetic, selected math/reduction/layout operations, rank-2 matmul, and
-  explicit `detach` stop-gradient.
+  for arithmetic, selected math/reduction/layout operations, vector, matrix,
+  and batched matmul, and explicit `detach` stop-gradient.
 
 ### Changed
 

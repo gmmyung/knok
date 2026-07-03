@@ -370,7 +370,7 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let input_grad = self.expand_reduction_grad(scaled, &node.ty, &input_ty, *axis)?;
                 self.add_grad_to_expr(&args[0], input_grad)
             }
-            CallOp::Matmul => self.reverse_matmul(args, grad),
+            CallOp::Matmul => self.reverse_matmul(args, &node.ty, grad),
             CallOp::Reshape(_) => {
                 let input_ty = self.expr_ty(&args[0])?;
                 self.add_grad_to_expr(&args[0], call(CallOp::Reshape(input_ty), vec![grad]))
@@ -390,11 +390,8 @@ impl<'a> ValueAndGradBuilder<'a> {
                 self.add_grad_to_expr(&args[0], call(CallOp::PermuteDims(inverse), vec![grad]))
             }
             CallOp::Permute { axes, .. } => {
-                let input_ty = self.expr_ty(&args[0])?;
                 let inverse = inverse_permutation(axes.clone());
-                self.add_grad_to_expr(&args[0], call(CallOp::PermuteDims(inverse), vec![grad]))?;
-                let _ = input_ty;
-                Ok(())
+                self.add_grad_to_expr(&args[0], call(CallOp::PermuteDims(inverse), vec![grad]))
             }
             CallOp::Arange(_) | CallOp::Linspace(_) | CallOp::Eye(_) => Ok(()),
             _ => Err(error(format!(
@@ -404,18 +401,34 @@ impl<'a> ValueAndGradBuilder<'a> {
         }
     }
 
-    fn reverse_matmul(&mut self, args: &[Expr], grad: Expr) -> syn::Result<()> {
+    fn reverse_matmul(
+        &mut self,
+        args: &[Expr],
+        output_ty: &TensorType,
+        grad: Expr,
+    ) -> syn::Result<()> {
         let lhs_ty = self.expr_ty(&args[0])?;
         let rhs_ty = self.expr_ty(&args[1])?;
-        if lhs_ty.rank() != 2 || rhs_ty.rank() != 2 {
-            return Err(error(
-                "autograd MVP only supports rank-2 matrix-matrix matmul gradients",
-            ));
-        }
-        let rhs_t = call(CallOp::Transpose(Vec::new()), vec![args[1].clone()]);
-        let lhs_t = call(CallOp::Transpose(Vec::new()), vec![args[0].clone()]);
-        self.add_grad_to_expr(&args[0], call(CallOp::Matmul, vec![grad.clone(), rhs_t]))?;
-        self.add_grad_to_expr(&args[1], call(CallOp::Matmul, vec![lhs_t, grad]))
+        let spec = MatmulGradSpec::new(&lhs_ty, &rhs_ty, output_ty)?;
+        let lhs = reshape_if_needed(args[0].clone(), &lhs_ty, &spec.lhs_matrix_ty);
+        let rhs = reshape_if_needed(args[1].clone(), &rhs_ty, &spec.rhs_matrix_ty);
+        let grad = reshape_if_needed(grad, output_ty, &spec.grad_matrix_ty);
+
+        let rhs_t_ty = swap_last_two_type(&spec.rhs_matrix_ty)?;
+        let rhs_t = swap_last_two(rhs, &spec.rhs_matrix_ty)?;
+        let lhs_grad = call(CallOp::Matmul, vec![grad.clone(), rhs_t]);
+        let lhs_grad_ty = matmul_type(&spec.grad_matrix_ty, &rhs_t_ty)?;
+        let (lhs_grad, lhs_grad_ty) = spec.demote_lhs_grad(lhs_grad, lhs_grad_ty)?;
+        let lhs_grad = self.unbroadcast(lhs_grad, &lhs_grad_ty, &lhs_ty)?;
+        self.add_grad_to_expr(&args[0], lhs_grad)?;
+
+        let lhs_t_ty = swap_last_two_type(&spec.lhs_matrix_ty)?;
+        let lhs_t = swap_last_two(lhs, &spec.lhs_matrix_ty)?;
+        let rhs_grad = call(CallOp::Matmul, vec![lhs_t, grad]);
+        let rhs_grad_ty = matmul_type(&lhs_t_ty, &spec.grad_matrix_ty)?;
+        let (rhs_grad, rhs_grad_ty) = spec.demote_rhs_grad(rhs_grad, rhs_grad_ty)?;
+        let rhs_grad = self.unbroadcast(rhs_grad, &rhs_grad_ty, &rhs_ty)?;
+        self.add_grad_to_expr(&args[1], rhs_grad)
     }
 
     fn expand_reduction_grad(
@@ -435,7 +448,7 @@ impl<'a> ValueAndGradBuilder<'a> {
                     shape,
                 };
                 (
-                    call(CallOp::Unsqueeze(unsqueezed_ty.clone()), vec![grad]),
+                    call(CallOp::Reshape(unsqueezed_ty.clone()), vec![grad]),
                     unsqueezed_ty,
                 )
             }
@@ -468,7 +481,7 @@ impl<'a> ValueAndGradBuilder<'a> {
                 let mut shape = current.shape.clone();
                 shape.insert(axis, 1);
                 current.shape = shape;
-                expr = call(CallOp::Unsqueeze(current.clone()), vec![expr]);
+                expr = call(CallOp::Reshape(current.clone()), vec![expr]);
             }
         }
         if current != *target_ty {
@@ -581,6 +594,165 @@ fn elementwise_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<TensorTyp
         elem: lhs.elem,
         shape,
     })
+}
+
+struct MatmulGradSpec {
+    lhs_is_vector: bool,
+    rhs_is_vector: bool,
+    lhs_matrix_ty: TensorType,
+    rhs_matrix_ty: TensorType,
+    grad_matrix_ty: TensorType,
+}
+
+impl MatmulGradSpec {
+    fn new(lhs_ty: &TensorType, rhs_ty: &TensorType, output_ty: &TensorType) -> syn::Result<Self> {
+        // Match NumPy matmul gradients by temporarily promoting vector operands
+        // to matrices, then demoting and unbroadcasting the resulting gradients.
+        let lhs_is_vector = lhs_ty.rank() == 1;
+        let rhs_is_vector = rhs_ty.rank() == 1;
+        let lhs_matrix_ty = promoted_lhs_matmul_type(lhs_ty);
+        let rhs_matrix_ty = promoted_rhs_matmul_type(rhs_ty);
+        let grad_matrix_ty = matmul_type(&lhs_matrix_ty, &rhs_matrix_ty)?;
+        let expected_output =
+            demoted_matmul_output_type(&grad_matrix_ty, lhs_is_vector, rhs_is_vector)?;
+        if expected_output != *output_ty {
+            return Err(error(format!(
+                "internal autograd matmul type mismatch: expected {:?}, got {:?}",
+                expected_output, output_ty
+            )));
+        }
+        Ok(Self {
+            lhs_is_vector,
+            rhs_is_vector,
+            lhs_matrix_ty,
+            rhs_matrix_ty,
+            grad_matrix_ty,
+        })
+    }
+
+    fn demote_lhs_grad(&self, expr: Expr, ty: TensorType) -> syn::Result<(Expr, TensorType)> {
+        if self.lhs_is_vector {
+            let axis = ty.rank().saturating_sub(2);
+            remove_axis(expr, ty, axis)
+        } else {
+            Ok((expr, ty))
+        }
+    }
+
+    fn demote_rhs_grad(&self, expr: Expr, ty: TensorType) -> syn::Result<(Expr, TensorType)> {
+        if self.rhs_is_vector {
+            let axis = ty.rank().saturating_sub(1);
+            remove_axis(expr, ty, axis)
+        } else {
+            Ok((expr, ty))
+        }
+    }
+}
+
+fn promoted_lhs_matmul_type(ty: &TensorType) -> TensorType {
+    if ty.rank() == 1 {
+        TensorType {
+            elem: ty.elem,
+            shape: vec![1, ty.shape[0]],
+        }
+    } else {
+        ty.clone()
+    }
+}
+
+fn promoted_rhs_matmul_type(ty: &TensorType) -> TensorType {
+    if ty.rank() == 1 {
+        TensorType {
+            elem: ty.elem,
+            shape: vec![ty.shape[0], 1],
+        }
+    } else {
+        ty.clone()
+    }
+}
+
+fn demoted_matmul_output_type(
+    promoted: &TensorType,
+    lhs_is_vector: bool,
+    rhs_is_vector: bool,
+) -> syn::Result<TensorType> {
+    let mut shape = promoted.shape.clone();
+    if rhs_is_vector {
+        remove_shape_axis(&mut shape, promoted.rank().saturating_sub(1))?;
+    }
+    if lhs_is_vector {
+        remove_shape_axis(&mut shape, promoted.rank().saturating_sub(2))?;
+    }
+    Ok(TensorType {
+        elem: promoted.elem,
+        shape,
+    })
+}
+
+fn matmul_type(lhs_ty: &TensorType, rhs_ty: &TensorType) -> syn::Result<TensorType> {
+    let results = infer_call_results(&CallOp::Matmul, &[lhs_ty.clone(), rhs_ty.clone()])?;
+    let [ty]: [TensorType; 1] = results
+        .try_into()
+        .map_err(|_| error("internal autograd error: matmul gradient produced multiple outputs"))?;
+    Ok(ty)
+}
+
+fn reshape_if_needed(expr: Expr, source_ty: &TensorType, target_ty: &TensorType) -> Expr {
+    if source_ty == target_ty {
+        expr
+    } else {
+        call(CallOp::Reshape(target_ty.clone()), vec![expr])
+    }
+}
+
+fn remove_axis(expr: Expr, mut ty: TensorType, axis: usize) -> syn::Result<(Expr, TensorType)> {
+    remove_shape_axis(&mut ty.shape, axis)?;
+    let expr = call(CallOp::Reshape(ty.clone()), vec![expr]);
+    Ok((expr, ty))
+}
+
+fn remove_shape_axis(shape: &mut Vec<usize>, axis: usize) -> syn::Result<()> {
+    if axis >= shape.len() {
+        return Err(error(format!(
+            "internal autograd error: cannot remove axis {axis} from shape {:?}",
+            shape
+        )));
+    }
+    let dim = shape[axis];
+    if dim != 1 {
+        return Err(error(format!(
+            "internal autograd error: expected singleton matmul axis {axis}, got {dim}"
+        )));
+    }
+    shape.remove(axis);
+    Ok(())
+}
+
+fn swap_last_two(expr: Expr, ty: &TensorType) -> syn::Result<Expr> {
+    if ty.rank() < 2 {
+        return Err(error(
+            "internal autograd error: matmul operand was not promoted to matrix rank",
+        ));
+    }
+    Ok(call(
+        CallOp::SwapAxes {
+            axis0: ty.rank() - 2,
+            axis1: ty.rank() - 1,
+        },
+        vec![expr],
+    ))
+}
+
+fn swap_last_two_type(ty: &TensorType) -> syn::Result<TensorType> {
+    if ty.rank() < 2 {
+        return Err(error(
+            "internal autograd error: matmul operand was not promoted to matrix rank",
+        ));
+    }
+    let mut swapped = ty.clone();
+    let rank = swapped.rank();
+    swapped.shape.swap(rank - 2, rank - 1);
+    Ok(swapped)
 }
 
 fn default_axes(input_ty: &TensorType, axes: &[usize]) -> Vec<usize> {

@@ -647,6 +647,26 @@ fn matmul_sum_loss(lhs: T2<f32, 2, 3>, rhs: T2<f32, 3, 2>) -> T0<f32> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+fn vecvec_matmul_loss(lhs: T1<f32, 3>, rhs: T1<f32, 3>) -> T0<f32> {
+    matmul(lhs, rhs)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn matvec_sum_loss(lhs: T2<f32, 2, 3>, rhs: T1<f32, 3>) -> T0<f32> {
+    sum(matmul(lhs, rhs))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn vecmat_sum_loss(lhs: T1<f32, 3>, rhs: T2<f32, 3, 2>) -> T0<f32> {
+    sum(matmul(lhs, rhs))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn broadcast_matmul_sum_loss(lhs: T4<f32, 2, 1, 2, 3>, rhs: T3<f32, 2, 3, 2>) -> T0<f32> {
+    sum(matmul(lhs, rhs))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 fn shape_loss(x: T2<f32, 2, 3>) -> T0<f32> {
     let flat: T1<f32, 6> = reshape(x);
     let matrix: T2<f32, 3, 2> = reshape(flat);
@@ -797,6 +817,10 @@ fn main() {
         sum_square_loss,
         bias_sum_loss,
         matmul_sum_loss,
+        vecvec_matmul_loss,
+        matvec_sum_loss,
+        vecmat_sum_loss,
+        broadcast_matmul_sum_loss,
         shape_loss,
         relu_mean_loss,
         detached_square_loss

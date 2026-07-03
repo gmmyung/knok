@@ -51,9 +51,9 @@ followed by gradients for every floating-point input, in input order.
 
 Gradient generation is a build-time static graph transform, not a runtime tape.
 The MVP differentiates elementwise arithmetic, `exp`, `log`, `tanh`, `relu`,
-`sigmoid`, `square`, `sqrt`, `sum`, `mean`, rank-2 `matmul`, `reshape`,
-`broadcast`, `transpose`, `permute`, and `permute_dims`. Unsupported
-differentiated operations are build-time errors.
+`sigmoid`, `square`, `sqrt`, `sum`, `mean`, vector/matrix/batched `matmul`,
+`reshape`, `broadcast`, `transpose`, `permute`, and `permute_dims`.
+Unsupported differentiated operations are build-time errors.
 
 Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
 propagation through that value. Unsupported single-output operations are allowed
