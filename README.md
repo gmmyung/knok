@@ -169,12 +169,24 @@ See [docs/backends.md](docs/backends.md) for platform notes.
 | `runtime` | Enables hosted execution through IREE. Included by default. |
 | `std` | Enables standard-library support. Included by default. |
 | `half` | Enables `half::f16` and `half::bf16` tensor element types. |
+| `serde` | Implements Serde `Serialize` and `Deserialize` for fixed-rank tensors. |
 | `vulkan` | Exposes the Vulkan SPIR-V backend and runtime driver. |
 | `cuda` | Exposes the CUDA backend and runtime driver. |
 | `embedded-runtime` | Enables the IREE runtime dependency without enabling `std`. |
 
 With `default-features = false`, generated wrapper types can still typecheck in
 `no_std + alloc` targets, but hosted runtime execution is disabled.
+
+Enable `serde` when tensors need to cross a serialization boundary:
+
+```toml
+[dependencies]
+knok = { version = "0.3", features = ["serde"] }
+```
+
+Tensor serialization uses a format-neutral `{ shape, data }` representation.
+The `data` field stores flat row-major elements, and deserialization validates
+the recorded shape against the tensor's static shape.
 
 ## Learn More
 

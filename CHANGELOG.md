@@ -22,6 +22,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 - Added deterministic random tensor tracing helpers: compile-time
   `uniform_static` / `randint_static` constants and runtime key-threaded
   `rand` / `uniform` / `randint` graph ops.
+- Added an optional `serde` feature for fixed-rank tensor
+  `Serialize`/`Deserialize` support using a `{ shape, data }` representation.
 
 ### Changed
 

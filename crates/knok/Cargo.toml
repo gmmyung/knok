@@ -11,6 +11,10 @@ readme = "README.md"
 [dependencies]
 eerie = { workspace = true, optional = true }
 half = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_test.workspace = true
 
 [features]
 default = ["std", "runtime"]
@@ -20,3 +24,4 @@ runtime = ["std", "dep:eerie", "eerie/runtime", "eerie/std"]
 embedded-runtime = ["dep:eerie", "eerie/runtime"]
 vulkan = ["eerie?/vulkan"]
 cuda = ["eerie?/cuda"]
+serde = ["dep:serde", "half?/serde"]
