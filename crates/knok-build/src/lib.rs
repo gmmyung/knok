@@ -401,12 +401,13 @@ pub mod prelude {
         logical_not, logical_or, logical_xor, matmul, max, max_axis, max_pool2d,
         max_pool2d_options, maximum, mean, mean_axis, min, min_axis, minimum, moveaxis, not_equal,
         ones_like, outer, pad, permute, permute_dims, pow, prod, prod_axis, ptp, ptp_axis, r#where,
-        reciprocal, relu, repeat, reshape, rint, roll, round, sigmoid, sin, slice, softmax,
-        softmax_axis, split, sqrt, square, squeeze, stack, std, std_axis, sum, sum_axis, swapaxes,
-        take, take_along_axis, tan, tanh, tile, trace, trace_axes, transpose, transpose_axes,
-        unsqueeze, var, var_axis, vecdot, vecdot_axis, zeros_like, Backend, BuildOptions,
-        Conv2dOptions, MlirModel, Pool2dOptions, Tensor0, Tensor1, Tensor2, Tensor3, Tensor4,
-        Tensor5, Tensor6, T0, T1, T2, T3, T4, T5, T6,
+        rand, randint, randint_static, reciprocal, relu, repeat, reshape, rint, roll, round,
+        sigmoid, sin, slice, softmax, softmax_axis, split, sqrt, square, squeeze, stack, std,
+        std_axis, sum, sum_axis, swapaxes, take, take_along_axis, tan, tanh, tile, trace,
+        trace_axes, transpose, transpose_axes, uniform, uniform_static, unsqueeze, var, var_axis,
+        vecdot, vecdot_axis, zeros_like, Backend, BuildOptions, Conv2dOptions, MlirModel,
+        Pool2dOptions, Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6, T0, T1, T2,
+        T3, T4, T5, T6,
     };
     pub use half::{bf16, f16};
 }

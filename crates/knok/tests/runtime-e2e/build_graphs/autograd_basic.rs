@@ -27,3 +27,9 @@ pub(crate) fn relu_mean_loss(x: T2<f32, 2, 2>, w: T2<f32, 2, 2>, b: T1<f32, 2>) 
 pub(crate) fn detached_square_loss(x: T1<f32, 3>) -> T0<f32> {
     sum(square(detach(x)))
 }
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn random_weighted_sum_loss(x: T1<f32, 4>, key: T0<i64>) -> T0<f32> {
+    let (weights, _next_key): (T1<f32, 4>, T0<i64>) = rand(key);
+    sum(x * weights)
+}

@@ -65,6 +65,9 @@ Non-floating outputs such as `argmax`, `argmin`, boolean predicates, and
 boolean reductions may feed index or condition operands, but they do not
 receive gradients. Unsupported differentiated floating-point operations or
 unsupported static cases are build-time errors.
+Random tensors are treated as non-differentiable sources. They may feed
+differentiable operations, in which case gradients flow to differentiable
+operands that consume the sampled tensor but not to the random source or key.
 
 Use `detach(x)` to preserve `x` in the forward graph while stopping gradient
 propagation through that value. Unsupported single-output operations are allowed
@@ -87,6 +90,22 @@ existing tensor primitives instead of dedicated backward kernels, so larger
 static shapes can increase generated graph size and compile time. `repeat`
 gradients that require an intermediate rank above the Tensor6 limit are rejected
 at build time.
+
+## Random Tensors
+
+Random tensor helpers are deterministic and seed-based.
+
+- `uniform_static(seed, low, high)` and `randint_static(seed, low, high)` run
+  during build-time lowering and embed the generated tensor as an MLIR dense
+  constant.
+- `rand(key)`, `uniform(key, low, high)`, and `randint(key, low, high)` run in
+  the compiled graph and return `(tensor, next_key)`. Passing the same key
+  produces the same tensor; pass `next_key` forward to advance the stream.
+- Floating helpers sample `[low, high)` for `f32` and `f64` outputs.
+  `rand(key)` is shorthand for `uniform(key, 0.0, 1.0)`.
+- Integer helpers sample `[low, high)` for `i32` and `i64` outputs.
+- Static helper bounds are validated at build time. Runtime helpers currently
+  take literal bounds from the traced graph; callers should provide `low < high`.
 
 ## Pooling
 
@@ -112,4 +131,5 @@ padded elements are included in the average denominator.
   `outer`, `trace`, `diagonal`, `conv2d`, `conv2d_options`, `max_pool2d`,
   `max_pool2d_options`, `avg_pool2d`, `avg_pool2d_options`.
 - Creation and math: `zeros_like`, `ones_like`, `full_like`, `arange`,
-  `linspace`, `eye`, `identity`, floating-point math functions.
+  `linspace`, `eye`, `identity`, `rand`, `uniform`, `randint`,
+  `uniform_static`, `randint_static`, floating-point math functions.

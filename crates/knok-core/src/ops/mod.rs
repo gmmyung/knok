@@ -17,5 +17,8 @@ pub(crate) use matmul::matmul_result_type;
 pub(crate) use permute::validate_permute;
 pub(crate) use pool::{avg_pool2d_result_type, max_pool2d_result_type};
 pub(crate) use rules::{infer_call_result, infer_call_results};
-pub use static_creation::{static_arange_literals, static_eye_literals, static_linspace_literals};
+pub use static_creation::{
+    static_arange_literals, static_eye_literals, static_linspace_literals,
+    static_random_int_literals, static_random_uniform_literals,
+};
 pub(crate) use static_creation::{validate_static_creation_call, validate_static_creation_target};

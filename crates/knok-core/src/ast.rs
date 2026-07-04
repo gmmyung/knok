@@ -170,6 +170,24 @@ pub enum CallOp {
     Arange(TensorType),
     /// Static linspace construction for a target type.
     Linspace(TensorType),
+    /// Runtime uniform random tensor construction for a target type.
+    RandomUniform(TensorType),
+    /// Runtime integer random tensor construction for a target type.
+    RandomInt(TensorType),
+    /// Compile-time uniform random tensor construction for a target type.
+    StaticRandomUniform {
+        /// Result tensor type.
+        target: TensorType,
+        /// Deterministic compile-time seed.
+        seed: u64,
+    },
+    /// Compile-time integer random tensor construction for a target type.
+    StaticRandomInt {
+        /// Result tensor type.
+        target: TensorType,
+        /// Deterministic compile-time seed.
+        seed: u64,
+    },
     /// Natural logarithm.
     Log,
     /// Natural logarithm of one plus the input.
@@ -375,6 +393,10 @@ impl CallOp {
             Self::LessEqual => "less_equal",
             Self::Arange(_) => "arange",
             Self::Linspace(_) => "linspace",
+            Self::RandomUniform(_) => "random_uniform",
+            Self::RandomInt(_) => "random_int",
+            Self::StaticRandomUniform { .. } => "static_random_uniform",
+            Self::StaticRandomInt { .. } => "static_random_int",
             Self::Log => "log",
             Self::Log1P => "log1p",
             Self::Log2 => "log2",

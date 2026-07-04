@@ -1,6 +1,6 @@
 use knok::tensor::*;
 
-use crate::{autograd_graphs, common::*};
+use crate::{autograd_graphs, common::*, graphs};
 
 mod basic;
 mod elementwise;

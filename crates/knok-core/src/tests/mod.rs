@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    parse_tensor_type, type_check, value_and_grad_graph, value_and_grad_graph_with_registry,
-    AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType, Expr, Graph, GraphSignature, Input,
-    Let, Pool2dOptions, TensorType, TypedGraph,
+    parse_tensor_type, static_random_uniform_literals, type_check, value_and_grad_graph,
+    value_and_grad_graph_with_registry, AxisSpec, BinaryOp, CallOp, Conv2dOptions, ElementType,
+    Expr, Graph, GraphSignature, Input, Let, Pool2dOptions, TensorType, TypedGraph,
 };
 
 fn tensor(elem: ElementType, shape: &[usize]) -> TensorType {

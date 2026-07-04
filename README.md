@@ -110,6 +110,8 @@ Existing `.mlir` files can also be compiled from `build.rs` with
 - Elementwise arithmetic, comparisons, logical predicates, reductions, shape
   transforms, slicing/padding, matmul, convolution, pooling, and related tensor
   operations.
+- Deterministic random tensor helpers, including compile-time constants and
+  runtime key-threaded random streams.
 - Build-time graph construction with `knok-build`.
 - Experimental build-time value-and-gradient graph generation for scalar
   floating-point losses, including explicit `detach` stop-gradient and no-grad
@@ -119,6 +121,21 @@ Existing `.mlir` files can also be compiled from `build.rs` with
 
 The operation semantics are documented in [docs/semantics.md](docs/semantics.md)
 and dtype support is tracked in [docs/dtypes.md](docs/dtypes.md).
+
+Random helpers are deterministic. Static helpers embed build-time constants,
+while runtime helpers take and return an explicit `T0<i64>` key:
+
+```rust
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn sample(key: T0<i64>) -> (T2<f32, 4, 4>, T0<i64>) {
+    uniform(key, -1.0, 1.0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn weights() -> T2<f32, 4, 4> {
+    uniform_static(42, -0.05, 0.05)
+}
+```
 
 ## Backends
 

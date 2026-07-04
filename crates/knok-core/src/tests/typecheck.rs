@@ -71,6 +71,42 @@ fn typechecks_multi_output_let_binding() {
 }
 
 #[test]
+fn typechecks_random_multi_output_let_binding() {
+    let graph = Graph {
+        name: "random_values".into(),
+        backend: "llvm-cpu".into(),
+        inputs: vec![input("key", ElementType::I64, &[])],
+        outputs: vec![
+            tensor(ElementType::F32, &[4]),
+            tensor(ElementType::I64, &[]),
+        ],
+        lets: vec![Let {
+            names: vec!["values".into(), "next_key".into()],
+            value: Expr::Call {
+                op: CallOp::RandomUniform(tensor(ElementType::F32, &[4])),
+                args: vec![
+                    var("key"),
+                    Expr::Const {
+                        value: "0.0".into(),
+                        elem: ElementType::F32,
+                    },
+                    Expr::Const {
+                        value: "1.0".into(),
+                        elem: ElementType::F32,
+                    },
+                ],
+            },
+        }],
+        body: vec![var("values"), var("next_key")],
+    };
+
+    let typed = type_check(graph, &[]).unwrap();
+
+    assert_eq!(typed.outputs[0], tensor(ElementType::F32, &[4]));
+    assert_eq!(typed.outputs[1], tensor(ElementType::I64, &[]));
+}
+
+#[test]
 fn typechecks_reused_node_payload() {
     let value = Arc::new(Expr::Const {
         value: "1.0".into(),
@@ -402,6 +438,80 @@ fn rejects_invalid_static_creation_targets() {
         .unwrap_err()
         .to_string()
         .contains("eye target matrix must be square"));
+
+    let random_bounds = graph(
+        "bad_static_random_bounds",
+        Vec::new(),
+        vec![tensor(ElementType::F32, &[4])],
+        Expr::Call {
+            op: CallOp::StaticRandomUniform {
+                target: tensor(ElementType::F32, &[4]),
+                seed: 1,
+            },
+            args: vec![
+                Expr::Const {
+                    value: "1.0".into(),
+                    elem: ElementType::F32,
+                },
+                Expr::Const {
+                    value: "1.0".into(),
+                    elem: ElementType::F32,
+                },
+            ],
+        },
+    );
+    assert!(type_check(random_bounds, &[])
+        .unwrap_err()
+        .to_string()
+        .contains("static_random_uniform requires low < high"));
+
+    let random_target = graph(
+        "bad_static_random_target",
+        Vec::new(),
+        vec![tensor(ElementType::F32, &[4])],
+        Expr::Call {
+            op: CallOp::StaticRandomInt {
+                target: tensor(ElementType::F32, &[4]),
+                seed: 1,
+            },
+            args: vec![
+                Expr::Const {
+                    value: "0".into(),
+                    elem: ElementType::I32,
+                },
+                Expr::Const {
+                    value: "4".into(),
+                    elem: ElementType::I32,
+                },
+            ],
+        },
+    );
+    assert!(type_check(random_target, &[])
+        .unwrap_err()
+        .to_string()
+        .contains("static_random_int target element type must be i32 or i64"));
+}
+
+#[test]
+fn static_random_uniform_f32_stays_below_high_after_rounding() {
+    let values = static_random_uniform_literals(
+        &tensor(ElementType::F32, &[1]),
+        63_433_462,
+        &[
+            Expr::Const {
+                value: "0.0".into(),
+                elem: ElementType::F32,
+            },
+            Expr::Const {
+                value: "1.0".into(),
+                elem: ElementType::F32,
+            },
+        ],
+    )
+    .unwrap();
+    let value = values[0].parse::<f32>().unwrap();
+
+    assert!(value < 1.0, "static uniform rounded up to high: {value}");
 }
 
 #[test]

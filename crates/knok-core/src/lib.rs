@@ -19,6 +19,9 @@ pub use ast::{
     TypedValue, UnaryOp,
 };
 pub use autograd::{value_and_grad_graph, value_and_grad_graph_with_registry};
-pub use ops::{static_arange_literals, static_eye_literals, static_linspace_literals};
+pub use ops::{
+    static_arange_literals, static_eye_literals, static_linspace_literals,
+    static_random_int_literals, static_random_uniform_literals,
+};
 pub use type_parse::parse_tensor_type;
 pub use typecheck::type_check;

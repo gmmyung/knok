@@ -269,7 +269,13 @@ impl<'a> ValueAndGradBuilder<'a> {
                 })
             }
             Expr::Call { op, args } => {
-                if matches!(op, CallOp::Graph(_) | CallOp::Split { .. }) {
+                if matches!(
+                    op,
+                    CallOp::Graph(_)
+                        | CallOp::Split { .. }
+                        | CallOp::RandomUniform(_)
+                        | CallOp::RandomInt(_)
+                ) {
                     let outputs = self.flatten_expr_outputs_scoped(expr, scope)?;
                     let [output]: [(Expr, TensorType); 1] = outputs.try_into().map_err(|outputs: Vec<_>| {
                         error(format!(
@@ -317,6 +323,14 @@ impl<'a> ValueAndGradBuilder<'a> {
                 args,
             } => self.flatten_split_outputs(args, *axis, sections, scope),
             Expr::Call {
+                op: CallOp::RandomUniform(_),
+                args,
+            }
+            | Expr::Call {
+                op: CallOp::RandomInt(_),
+                args,
+            } => self.flatten_multi_output_call(expr, args, scope),
+            Expr::Call {
                 op: CallOp::Graph(name),
                 args,
             } => self.flatten_graph_outputs(name, args, scope),
@@ -362,6 +376,36 @@ impl<'a> ValueAndGradBuilder<'a> {
                 Ok((expr, ty))
             })
             .collect()
+    }
+
+    fn flatten_multi_output_call(
+        &mut self,
+        expr: &Expr,
+        args: &[Expr],
+        scope: &BTreeMap<String, (Expr, TensorType)>,
+    ) -> syn::Result<Vec<(Expr, TensorType)>> {
+        let Expr::Call { op, .. } = expr else {
+            return Err(error("internal autograd error: expected call expression"));
+        };
+        let mut flat_args = Vec::with_capacity(args.len());
+        let mut arg_tys = Vec::with_capacity(args.len());
+        for arg in args {
+            let (arg, ty) = self.flatten_expr_scoped(arg, scope)?;
+            flat_args.push(arg);
+            arg_tys.push(ty);
+        }
+        let tys = infer_call_results(op, &arg_tys)?;
+        if tys.len() <= 1 {
+            return Err(error(format!(
+                "internal autograd error: `{}` is not multi-output",
+                op.name()
+            )));
+        }
+        let expr = Expr::Call {
+            op: op.clone(),
+            args: flat_args,
+        };
+        self.bind_forward_outputs_auto(expr, tys)
     }
 
     fn flatten_graph_outputs(
@@ -572,6 +616,31 @@ impl<'a> ValueAndGradBuilder<'a> {
         Ok(Expr::Var(name))
     }
 
+    fn bind_forward_outputs_auto(
+        &mut self,
+        expr: Expr,
+        tys: Vec<TensorType>,
+    ) -> syn::Result<Vec<(Expr, TensorType)>> {
+        let names = (0..tys.len())
+            .map(|_| self.next_auto_name())
+            .collect::<Vec<_>>();
+        self.lets.push(crate::Let {
+            names: names.clone(),
+            value: expr.clone(),
+        });
+        let mut outputs = Vec::with_capacity(tys.len());
+        for (name, ty) in names.into_iter().zip(tys) {
+            self.env.insert(name.clone(), ty.clone());
+            self.forward_nodes.push(Node {
+                name: name.clone(),
+                expr: expr.clone(),
+                ty: ty.clone(),
+            });
+            outputs.push((Expr::Var(name), ty));
+        }
+        Ok(outputs)
+    }
+
     fn bind_auto(&mut self, expr: Expr, ty: TensorType) -> syn::Result<Expr> {
         let name = self.next_auto_name();
         self.bind_named(name.clone(), expr, ty)?;
@@ -650,6 +719,10 @@ fn call_stops_gradient(op: &CallOp, output_ty: &TensorType) -> bool {
                 | CallOp::Arange(_)
                 | CallOp::Linspace(_)
                 | CallOp::Eye(_)
+                | CallOp::RandomUniform(_)
+                | CallOp::RandomInt(_)
+                | CallOp::StaticRandomUniform { .. }
+                | CallOp::StaticRandomInt { .. }
                 | CallOp::OnesLike
                 | CallOp::ZerosLike
         )
