@@ -1,5 +1,9 @@
 use alloc::{vec, vec::Vec};
 use core::fmt;
+#[cfg(feature = "serde")]
+use core::marker::PhantomData;
+#[cfg(feature = "serde")]
+use serde::ser::SerializeStruct;
 
 /// Element type accepted by fixed-rank tensor containers.
 ///
@@ -744,3 +748,344 @@ impl_fixed_tensor_common!(Tensor3, "Tensor3", [D0, D1, D2]);
 impl_fixed_tensor_common!(Tensor4, "Tensor4", [D0, D1, D2, D3]);
 impl_fixed_tensor_common!(Tensor5, "Tensor5", [D0, D1, D2, D3, D4]);
 impl_fixed_tensor_common!(Tensor6, "Tensor6", [D0, D1, D2, D3, D4, D5]);
+
+#[cfg(feature = "serde")]
+const SERDE_FIELDS: &[&str] = &["shape", "data"];
+
+#[cfg(feature = "serde")]
+enum TensorSerdeField {
+    Shape,
+    Data,
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for TensorSerdeField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct FieldVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for FieldVisitor {
+            type Value = TensorSerdeField;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("`shape` or `data`")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "shape" => Ok(TensorSerdeField::Shape),
+                    "data" => Ok(TensorSerdeField::Data),
+                    _ => Err(E::unknown_field(value, SERDE_FIELDS)),
+                }
+            }
+        }
+
+        deserializer.deserialize_identifier(FieldVisitor)
+    }
+}
+
+#[cfg(feature = "serde")]
+struct TensorSerdeVisitor<T, F> {
+    name: &'static str,
+    expected_shape: &'static [usize],
+    _marker: PhantomData<fn() -> (T, F)>,
+}
+
+#[cfg(feature = "serde")]
+impl<T, F> TensorSerdeVisitor<T, F> {
+    fn new(name: &'static str, expected_shape: &'static [usize]) -> Self {
+        Self {
+            name,
+            expected_shape,
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+fn tensor_from_serde_parts<T, F, E>(
+    expected_shape: &[usize],
+    shape: Vec<usize>,
+    data: Vec<T>,
+) -> Result<F, E>
+where
+    F: FixedTensor<T>,
+    E: serde::de::Error,
+{
+    if shape.as_slice() != expected_shape {
+        return Err(E::custom(format_args!(
+            "tensor shape mismatch: expected {:?}, got {:?}",
+            expected_shape, shape
+        )));
+    }
+    F::from_vec(data).map_err(E::custom)
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T, F> serde::de::Visitor<'de> for TensorSerdeVisitor<T, F>
+where
+    T: serde::Deserialize<'de>,
+    F: FixedTensor<T>,
+{
+    type Value = F;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} serialized as `{{ shape, data }}`", self.name)
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut shape = None;
+        let mut data = None;
+        while let Some(key) = map.next_key()? {
+            match key {
+                TensorSerdeField::Shape => {
+                    if shape.is_some() {
+                        return Err(serde::de::Error::duplicate_field("shape"));
+                    }
+                    shape = Some(map.next_value::<Vec<usize>>()?);
+                }
+                TensorSerdeField::Data => {
+                    if data.is_some() {
+                        return Err(serde::de::Error::duplicate_field("data"));
+                    }
+                    data = Some(map.next_value::<Vec<T>>()?);
+                }
+            }
+        }
+
+        let shape = shape.ok_or_else(|| serde::de::Error::missing_field("shape"))?;
+        let data = data.ok_or_else(|| serde::de::Error::missing_field("data"))?;
+        tensor_from_serde_parts(self.expected_shape, shape, data)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let shape = seq
+            .next_element::<Vec<usize>>()?
+            .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+        let data = seq
+            .next_element::<Vec<T>>()?
+            .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+        if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+            return Err(serde::de::Error::invalid_length(3, &self));
+        }
+        tensor_from_serde_parts(self.expected_shape, shape, data)
+    }
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_tensor<'de, T, F, D>(
+    deserializer: D,
+    name: &'static str,
+    expected_shape: &'static [usize],
+) -> Result<F, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    F: FixedTensor<T>,
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_struct(
+        name,
+        SERDE_FIELDS,
+        TensorSerdeVisitor::<T, F>::new(name, expected_shape),
+    )
+}
+
+#[cfg(feature = "serde")]
+macro_rules! impl_tensor_serde {
+    ($name:ident, $debug_name:literal, []) => {
+        impl<T> serde::Serialize for $name<T>
+        where
+            T: serde::Serialize,
+        {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut state = serializer.serialize_struct($debug_name, 2)?;
+                state.serialize_field("shape", Self::SHAPE)?;
+                state.serialize_field("data", self.as_slice())?;
+                state.end()
+            }
+        }
+
+        impl<'de, T> serde::Deserialize<'de> for $name<T>
+        where
+            T: serde::Deserialize<'de>,
+        {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserialize_tensor::<T, Self, D>(deserializer, $debug_name, Self::SHAPE)
+            }
+        }
+    };
+    ($name:ident, $debug_name:literal, [$($dim:ident),*]) => {
+        impl<T, $(const $dim: usize),*> serde::Serialize for $name<T, $($dim),*>
+        where
+            T: serde::Serialize,
+        {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut state = serializer.serialize_struct($debug_name, 2)?;
+                state.serialize_field("shape", Self::SHAPE)?;
+                state.serialize_field("data", self.as_slice())?;
+                state.end()
+            }
+        }
+
+        impl<'de, T, $(const $dim: usize),*> serde::Deserialize<'de> for $name<T, $($dim),*>
+        where
+            T: serde::Deserialize<'de>,
+        {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserialize_tensor::<T, Self, D>(deserializer, $debug_name, Self::SHAPE)
+            }
+        }
+    };
+}
+
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor0, "Tensor0", []);
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor1, "Tensor1", [D0]);
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor2, "Tensor2", [D0, D1]);
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor3, "Tensor3", [D0, D1, D2]);
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor4, "Tensor4", [D0, D1, D2, D3]);
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor5, "Tensor5", [D0, D1, D2, D3, D4]);
+#[cfg(feature = "serde")]
+impl_tensor_serde!(Tensor6, "Tensor6", [D0, D1, D2, D3, D4, D5]);
+
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use serde_test::{assert_de_tokens, assert_de_tokens_error, assert_tokens, Token};
+
+    use super::{Tensor0, Tensor2};
+
+    #[test]
+    fn tensor2_serializes_shape_and_row_major_data() {
+        let tensor = Tensor2::<i32, 2, 3>::from_array([[1, 2, 3], [4, 5, 6]]);
+
+        assert_tokens(
+            &tensor,
+            &[
+                Token::Struct {
+                    name: "Tensor2",
+                    len: 2,
+                },
+                Token::Str("shape"),
+                Token::Seq { len: Some(2) },
+                Token::U64(2),
+                Token::U64(3),
+                Token::SeqEnd,
+                Token::Str("data"),
+                Token::Seq { len: Some(6) },
+                Token::I32(1),
+                Token::I32(2),
+                Token::I32(3),
+                Token::I32(4),
+                Token::I32(5),
+                Token::I32(6),
+                Token::SeqEnd,
+                Token::StructEnd,
+            ],
+        );
+    }
+
+    #[test]
+    fn tensor0_serializes_empty_shape_and_one_value() {
+        let tensor = Tensor0::from_scalar(7i32);
+
+        assert_tokens(
+            &tensor,
+            &[
+                Token::Struct {
+                    name: "Tensor0",
+                    len: 2,
+                },
+                Token::Str("shape"),
+                Token::Seq { len: Some(0) },
+                Token::SeqEnd,
+                Token::Str("data"),
+                Token::Seq { len: Some(1) },
+                Token::I32(7),
+                Token::SeqEnd,
+                Token::StructEnd,
+            ],
+        );
+    }
+
+    #[test]
+    fn tensor2_deserializes_sequence_style_struct() {
+        let tensor = Tensor2::<i32, 2, 3>::from_array([[1, 2, 3], [4, 5, 6]]);
+
+        assert_de_tokens(
+            &tensor,
+            &[
+                Token::TupleStruct {
+                    name: "Tensor2",
+                    len: 2,
+                },
+                Token::Seq { len: Some(2) },
+                Token::U64(2),
+                Token::U64(3),
+                Token::SeqEnd,
+                Token::Seq { len: Some(6) },
+                Token::I32(1),
+                Token::I32(2),
+                Token::I32(3),
+                Token::I32(4),
+                Token::I32(5),
+                Token::I32(6),
+                Token::SeqEnd,
+                Token::TupleStructEnd,
+            ],
+        );
+    }
+
+    #[test]
+    fn deserialize_rejects_shape_mismatch() {
+        assert_de_tokens_error::<Tensor2<i32, 2, 3>>(
+            &[
+                Token::Struct {
+                    name: "Tensor2",
+                    len: 2,
+                },
+                Token::Str("shape"),
+                Token::Seq { len: Some(2) },
+                Token::U64(2),
+                Token::U64(2),
+                Token::SeqEnd,
+                Token::Str("data"),
+                Token::Seq { len: Some(4) },
+                Token::I32(1),
+                Token::I32(2),
+                Token::I32(3),
+                Token::I32(4),
+                Token::SeqEnd,
+                Token::StructEnd,
+            ],
+            "tensor shape mismatch: expected [2, 3], got [2, 2]",
+        );
+    }
+}
