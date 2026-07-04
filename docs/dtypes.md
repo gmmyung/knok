@@ -33,7 +33,7 @@ Quantized and smaller integer tensor types are tracked separately in #20.
 | `where` | `bool` condition and matching value dtypes |
 | Index tensors for `gather` and `take_along_axis` | `i32` or `i64` |
 | `arange`, `linspace`, `eye`, `identity` | target dtype validates the literal family |
-| `rand`, `uniform`, `uniform_static` | floating target dtypes exposed by tracing helpers |
+| `rand`, `uniform`, `uniform_static` | `f32` or `f64` target dtypes |
 | `randint`, `randint_static` | `i32` or `i64` target dtypes |
 | Linalg/convolution ops | numeric dtypes where the lowering supports the op |
 

@@ -101,8 +101,8 @@ Random tensor helpers are deterministic and seed-based.
 - `rand(key)`, `uniform(key, low, high)`, and `randint(key, low, high)` run in
   the compiled graph and return `(tensor, next_key)`. Passing the same key
   produces the same tensor; pass `next_key` forward to advance the stream.
-- Floating helpers sample `[low, high)`. `rand(key)` is shorthand for
-  `uniform(key, 0.0, 1.0)`.
+- Floating helpers sample `[low, high)` for `f32` and `f64` outputs.
+  `rand(key)` is shorthand for `uniform(key, 0.0, 1.0)`.
 - Integer helpers sample `[low, high)` for `i32` and `i64` outputs.
 - Static helper bounds are validated at build time. Runtime helpers currently
   take literal bounds from the traced graph; callers should provide `low < high`.

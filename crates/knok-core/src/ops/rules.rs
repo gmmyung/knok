@@ -402,10 +402,10 @@ pub(crate) fn infer_call_results(op: &CallOp, args: &[TensorType]) -> syn::Resul
         CallOp::RandomUniform(target) => {
             expect_arity(op, args, 3)?;
             expect_random_key(&args[0], op.name())?;
-            if !target.elem.is_float() {
+            if !matches!(target.elem, ElementType::F32 | ElementType::F64) {
                 return Err(syn::Error::new(
                     Span::call_site(),
-                    "random_uniform target element type must be floating-point",
+                    "random_uniform target element type must be f32 or f64",
                 ));
             }
             random_bounds_result_type(&args[1], &args[2], target, op.name())?;

@@ -493,6 +493,28 @@ fn rejects_invalid_static_creation_targets() {
 }
 
 #[test]
+fn static_random_uniform_f32_stays_below_high_after_rounding() {
+    let values = static_random_uniform_literals(
+        &tensor(ElementType::F32, &[1]),
+        63_433_462,
+        &[
+            Expr::Const {
+                value: "0.0".into(),
+                elem: ElementType::F32,
+            },
+            Expr::Const {
+                value: "1.0".into(),
+                elem: ElementType::F32,
+            },
+        ],
+    )
+    .unwrap();
+    let value = values[0].parse::<f32>().unwrap();
+
+    assert!(value < 1.0, "static uniform rounded up to high: {value}");
+}
+
+#[test]
 fn rejects_invalid_shape_and_axis_ops() {
     let reshape = graph(
         "bad_reshape",

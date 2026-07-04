@@ -40,6 +40,7 @@ fn additional_creation_ops_run() {
 #[test]
 fn random_creation_ops_run() {
     let static_uniform = graphs::static_uniform_f32::call().unwrap();
+    let static_uniform_edge = graphs::static_uniform_f32_edge::call().unwrap();
     let static_ints = graphs::static_randint_i32::call().unwrap();
 
     assert!(
@@ -49,6 +50,11 @@ fn random_creation_ops_run() {
             .all(|value| (-1.0..1.0).contains(value)),
         "static uniform values were outside [-1, 1): {:?}",
         static_uniform.as_slice()
+    );
+    assert!(
+        static_uniform_edge.as_slice()[0] < 1.0,
+        "static uniform rounded up to high: {:?}",
+        static_uniform_edge.as_slice()
     );
     assert!(
         static_ints
@@ -84,5 +90,19 @@ fn random_creation_ops_run() {
         ints.as_slice().iter().all(|value| (-3..4).contains(value)),
         "runtime randint values were outside [-3, 4): {:?}",
         ints.as_slice()
+    );
+
+    let (wide_ints, next_key) =
+        graphs::runtime_randint_i32_wide::call(Tensor0::from_scalar(10_i64)).unwrap();
+    assert_exact(next_key.as_slice(), &[18_i64]);
+    assert!(
+        wide_ints.as_slice().iter().all(|value| *value != i32::MAX),
+        "wide runtime randint produced excluded high bound: {:?}",
+        wide_ints.as_slice()
+    );
+    assert!(
+        wide_ints.as_slice().iter().any(|value| *value != i32::MIN),
+        "wide runtime randint collapsed to the low bound: {:?}",
+        wide_ints.as_slice()
     );
 }

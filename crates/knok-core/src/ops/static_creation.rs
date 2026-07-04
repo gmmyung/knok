@@ -119,7 +119,7 @@ pub fn static_eye_literals(target: &TensorType) -> Result<Vec<String>, String> {
 
 /// Expands a deterministic compile-time uniform random tensor.
 ///
-/// The target must be floating-point and the arguments must be static `low`
+/// The target must be `f32` or `f64` and the arguments must be static `low`
 /// and `high` scalar constants with `low < high`.
 pub fn static_random_uniform_literals(
     target: &TensorType,
@@ -131,10 +131,14 @@ pub fn static_random_uniform_literals(
     let len = element_count(target);
     Ok((0..len)
         .map(|index| {
-            let unit = unit_f64_from_u64(splitmix64(seed.wrapping_add(index as u64)));
-            float_literal(low + unit * (high - low))
+            random_uniform_literal(
+                target.elem,
+                low,
+                high,
+                splitmix64(seed.wrapping_add(index as u64)),
+            )
         })
-        .collect())
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 /// Expands a deterministic compile-time integer random tensor.
@@ -238,12 +242,10 @@ fn validate_static_eye_target(target: &TensorType) -> Result<(), String> {
 }
 
 fn validate_random_uniform_target(target: &TensorType, op_name: &str) -> Result<(), String> {
-    if target.elem.is_float() {
+    if matches!(target.elem, ElementType::F32 | ElementType::F64) {
         Ok(())
     } else {
-        Err(format!(
-            "{op_name} target element type must be floating-point"
-        ))
+        Err(format!("{op_name} target element type must be f32 or f64"))
     }
 }
 
@@ -415,6 +417,49 @@ fn float_literal(value: f64) -> String {
     }
 }
 
+fn random_uniform_literal(
+    elem: ElementType,
+    low: f64,
+    high: f64,
+    hash: u64,
+) -> Result<String, String> {
+    match elem {
+        ElementType::F32 => {
+            let low = low as f32;
+            let high = high as f32;
+            if !low.is_finite() || !high.is_finite() {
+                return Err("static_random_uniform f32 bounds must be finite".to_string());
+            }
+            if low >= high {
+                return Err(
+                    "static_random_uniform requires low < high after f32 rounding".to_string(),
+                );
+            }
+            let unit = unit_f32_from_u64(hash);
+            let mut value = low + unit * (high - low);
+            if value >= high {
+                value = next_down_f32(high);
+            }
+            if value < low {
+                value = low;
+            }
+            Ok(float_literal(value as f64))
+        }
+        ElementType::F64 => {
+            let unit = unit_f64_from_u64(hash);
+            let mut value = low + unit * (high - low);
+            if value >= high {
+                value = next_down_f64(high);
+            }
+            if value < low {
+                value = low;
+            }
+            Ok(float_literal(value))
+        }
+        _ => Err("static_random_uniform target element type must be f32 or f64".to_string()),
+    }
+}
+
 fn element_count(ty: &TensorType) -> usize {
     ty.shape.iter().product()
 }
@@ -429,5 +474,40 @@ fn splitmix64(mut value: u64) -> u64 {
 
 fn unit_f64_from_u64(value: u64) -> f64 {
     const SCALE: f64 = 1.0 / ((1_u64 << 53) as f64);
-    ((value >> 11) as f64) * SCALE
+    ((value & ((1_u64 << 53) - 1)) as f64) * SCALE
+}
+
+fn unit_f32_from_u64(value: u64) -> f32 {
+    const SCALE: f32 = 1.0 / ((1_u32 << 24) as f32);
+    ((value & ((1_u64 << 24) - 1)) as f32) * SCALE
+}
+
+fn next_down_f64(value: f64) -> f64 {
+    if value == f64::NEG_INFINITY {
+        return value;
+    }
+    if value == 0.0 {
+        return -f64::from_bits(1);
+    }
+    let bits = value.to_bits();
+    if value > 0.0 {
+        f64::from_bits(bits - 1)
+    } else {
+        f64::from_bits(bits + 1)
+    }
+}
+
+fn next_down_f32(value: f32) -> f32 {
+    if value == f32::NEG_INFINITY {
+        return value;
+    }
+    if value == 0.0 {
+        return -f32::from_bits(1);
+    }
+    let bits = value.to_bits();
+    if value > 0.0 {
+        f32::from_bits(bits - 1)
+    } else {
+        f32::from_bits(bits + 1)
+    }
 }

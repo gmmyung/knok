@@ -165,7 +165,7 @@ impl Lowerer<'_, '_> {
                     context,
                     block,
                     location,
-                    "arith.remsi",
+                    "arith.remui",
                     &[sample.as_value(), range.as_value()],
                     &[elem_ty],
                     &[],
@@ -309,8 +309,8 @@ fn unit_float_from_hash<'c>(
 ) -> anyhow::Result<RawValue> {
     let (mask, scale) = match elem {
         ElementType::F64 => (9_007_199_254_740_991_i128, "9007199254740992.0"),
-        ElementType::F32 | ElementType::F16 | ElementType::BF16 => (16_777_215_i128, "16777216.0"),
-        _ => anyhow::bail!("random_uniform target element type must be floating-point"),
+        ElementType::F32 => (16_777_215_i128, "16777216.0"),
+        _ => anyhow::bail!("random_uniform target element type must be f32 or f64"),
     };
     let masked = and_i64(context, block, location, hash, mask)?;
     let elem_ty = mlir_element_type(context, elem)?;
@@ -348,7 +348,7 @@ fn integer_sample_from_hash<'c>(
     match elem {
         ElementType::I32 => {
             let i32_ty = mlir_element_type(context, ElementType::I32)?;
-            let truncated = append_block_op(
+            append_block_op(
                 context,
                 block,
                 location,
@@ -357,21 +357,10 @@ fn integer_sample_from_hash<'c>(
                 &[i32_ty],
                 &[],
                 Vec::new(),
-            )?[0];
-            let mask = int_constant_in_block(context, block, location, i32::MAX as i128, elem)?;
-            append_block_op(
-                context,
-                block,
-                location,
-                "arith.andi",
-                &[truncated.as_value(), mask.as_value()],
-                &[i32_ty],
-                &[],
-                Vec::new(),
             )
             .map(|values| values[0])
         }
-        ElementType::I64 => and_i64(context, block, location, hash, i64::MAX as i128),
+        ElementType::I64 => Ok(hash),
         _ => anyhow::bail!("random_int target element type must be i32 or i64"),
     }
 }

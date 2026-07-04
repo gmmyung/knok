@@ -51,6 +51,11 @@ pub(crate) fn static_uniform_f32() -> T1<f32, 4> {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn static_uniform_f32_edge() -> T1<f32, 1> {
+    uniform_static(63_433_462, 0.0, 1.0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 pub(crate) fn static_randint_i32() -> T1<i32, 8> {
     randint_static(7, 2, 5)
 }
@@ -63,4 +68,9 @@ pub(crate) fn runtime_uniform_f32(key: T0<i64>) -> (T1<f32, 4>, T0<i64>) {
 #[knok_build::graph(backend = Backend::LlvmCpu)]
 pub(crate) fn runtime_randint_i64(key: T0<i64>) -> (T1<i64, 6>, T0<i64>) {
     randint(key, -3, 4)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn runtime_randint_i32_wide(key: T0<i64>) -> (T1<i32, 8>, T0<i64>) {
+    randint(key, i32::MIN, i32::MAX)
 }
