@@ -61,6 +61,7 @@ impl Lowerer<'_, '_> {
             ],
             &iterators,
             |_, block, args| {
+                let elem_ty = mlir_element_type(context, elem)?;
                 let linear_index = flattened_linalg_index(context, block, location, &shape)?;
                 let counter = append_block_op(
                     context,
@@ -80,7 +81,7 @@ impl Lowerer<'_, '_> {
                     location,
                     "arith.subf",
                     &[args[2], args[1]],
-                    &[mlir_element_type(context, elem)?],
+                    &[elem_ty],
                     &[],
                     Vec::new(),
                 )?[0];
@@ -90,7 +91,7 @@ impl Lowerer<'_, '_> {
                     location,
                     "arith.mulf",
                     &[unit.as_value(), span.as_value()],
-                    &[mlir_element_type(context, elem)?],
+                    &[elem_ty],
                     &[],
                     Vec::new(),
                 )?[0];
@@ -100,11 +101,19 @@ impl Lowerer<'_, '_> {
                     location,
                     "arith.addf",
                     &[args[1], scaled.as_value()],
-                    &[mlir_element_type(context, elem)?],
+                    &[elem_ty],
                     &[],
                     Vec::new(),
                 )?[0];
-                Ok(vec![shifted])
+                let capped = clamp_uniform_sample_below_high(
+                    context,
+                    block,
+                    location,
+                    shifted,
+                    RawValue::from_value(args[2]),
+                    elem,
+                )?;
+                Ok(vec![capped])
             },
         )?;
         Ok(Value::tensor(raw[0], target.clone()))
@@ -363,6 +372,186 @@ fn integer_sample_from_hash<'c>(
         ElementType::I64 => Ok(hash),
         _ => anyhow::bail!("random_int target element type must be i32 or i64"),
     }
+}
+
+fn clamp_uniform_sample_below_high<'c>(
+    context: &'c melior::Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    sample: RawValue,
+    high: RawValue,
+    elem: ElementType,
+) -> anyhow::Result<RawValue> {
+    let upper = next_down_float(context, block, location, high, elem)?;
+    let is_at_or_above_high = cmpf(context, block, location, "oge", sample, high)?;
+    select(
+        context,
+        block,
+        location,
+        is_at_or_above_high,
+        upper,
+        sample,
+        elem,
+    )
+}
+
+fn next_down_float<'c>(
+    context: &'c melior::Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    value: RawValue,
+    elem: ElementType,
+) -> anyhow::Result<RawValue> {
+    let (int_elem, negative_min_subnormal_bits) = float_bit_layout(elem)?;
+    let int_ty = mlir_element_type(context, int_elem)?;
+    let zero = float_constant_in_block(context, block, location, "0.0", elem)?;
+    let one = int_constant_in_block(context, block, location, 1, int_elem)?;
+    let bits = bitcast(context, block, location, value, int_ty)?;
+    let decremented = int_binary(context, block, location, "arith.subi", bits, one, int_elem)?;
+    let incremented = int_binary(context, block, location, "arith.addi", bits, one, int_elem)?;
+    let is_positive = cmpf(context, block, location, "ogt", value, zero)?;
+    let nonzero_bits = select(
+        context,
+        block,
+        location,
+        is_positive,
+        decremented,
+        incremented,
+        int_elem,
+    )?;
+    let is_zero = cmpf(context, block, location, "oeq", value, zero)?;
+    let negative_min_subnormal = int_constant_in_block(
+        context,
+        block,
+        location,
+        negative_min_subnormal_bits,
+        int_elem,
+    )?;
+    let next_bits = select(
+        context,
+        block,
+        location,
+        is_zero,
+        negative_min_subnormal,
+        nonzero_bits,
+        int_elem,
+    )?;
+    bitcast(
+        context,
+        block,
+        location,
+        next_bits,
+        mlir_element_type(context, elem)?,
+    )
+}
+
+fn float_bit_layout(elem: ElementType) -> anyhow::Result<(ElementType, i128)> {
+    match elem {
+        ElementType::F32 => Ok((ElementType::I32, i32::MIN as i128 + 1)),
+        ElementType::F64 => Ok((ElementType::I64, i64::MIN as i128 + 1)),
+        _ => anyhow::bail!("random_uniform target element type must be f32 or f64"),
+    }
+}
+
+fn bitcast<'c>(
+    context: &'c melior::Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    value: RawValue,
+    ty: Type<'c>,
+) -> anyhow::Result<RawValue> {
+    append_block_op(
+        context,
+        block,
+        location,
+        "arith.bitcast",
+        &[value.as_value()],
+        &[ty],
+        &[],
+        Vec::new(),
+    )
+    .map(|values| values[0])
+}
+
+fn int_binary<'c>(
+    context: &'c melior::Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    op_name: &str,
+    lhs: RawValue,
+    rhs: RawValue,
+    elem: ElementType,
+) -> anyhow::Result<RawValue> {
+    append_block_op(
+        context,
+        block,
+        location,
+        op_name,
+        &[lhs.as_value(), rhs.as_value()],
+        &[mlir_element_type(context, elem)?],
+        &[],
+        Vec::new(),
+    )
+    .map(|values| values[0])
+}
+
+fn cmpf<'c>(
+    context: &'c melior::Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    predicate: &str,
+    lhs: RawValue,
+    rhs: RawValue,
+) -> anyhow::Result<RawValue> {
+    append_block_op(
+        context,
+        block,
+        location,
+        "arith.cmpf",
+        &[lhs.as_value(), rhs.as_value()],
+        &[mlir_element_type(context, ElementType::Bool)?],
+        &[(
+            "predicate".to_string(),
+            format!("{} : i64", cmpf_predicate_value(predicate)),
+        )],
+        Vec::new(),
+    )
+    .map(|values| values[0])
+}
+
+fn cmpf_predicate_value(predicate: &str) -> i64 {
+    match predicate {
+        "oeq" => 1,
+        "ogt" => 2,
+        "oge" => 3,
+        other => panic!("unknown random lowering arith.cmpf predicate `{other}`"),
+    }
+}
+
+fn select<'c>(
+    context: &'c melior::Context,
+    block: &Block<'c>,
+    location: Location<'c>,
+    condition: RawValue,
+    true_value: RawValue,
+    false_value: RawValue,
+    elem: ElementType,
+) -> anyhow::Result<RawValue> {
+    append_block_op(
+        context,
+        block,
+        location,
+        "arith.select",
+        &[
+            condition.as_value(),
+            true_value.as_value(),
+            false_value.as_value(),
+        ],
+        &[mlir_element_type(context, elem)?],
+        &[],
+        Vec::new(),
+    )
+    .map(|values| values[0])
 }
 
 fn add_i64<'c>(

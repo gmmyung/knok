@@ -84,6 +84,11 @@ fn random_creation_ops_run() {
     let (advanced_uniform, _) = graphs::runtime_uniform_f32::call(next_key).unwrap();
     assert_ne!(uniform.as_slice(), advanced_uniform.as_slice());
 
+    let (subnormal_uniform, next_key) =
+        graphs::runtime_uniform_f32_subnormal::call(Tensor0::from_scalar(0_i64)).unwrap();
+    assert_exact(next_key.as_slice(), &[8_i64]);
+    assert_exact(subnormal_uniform.as_slice(), &[0.0_f32; 8]);
+
     let (ints, next_key) = graphs::runtime_randint_i64::call(Tensor0::from_scalar(10_i64)).unwrap();
     assert_exact(next_key.as_slice(), &[16_i64]);
     assert!(

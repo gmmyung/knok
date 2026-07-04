@@ -59,7 +59,7 @@ impl ScalarLiteral for bool {
 impl ScalarLiteral for f32 {
     fn const_expr(self) -> Expr {
         Expr::Const {
-            value: format!("{self:?}"),
+            value: mlir_float_literal(format!("{self:?}")),
             elem: Self::ELEMENT,
         }
     }
@@ -68,9 +68,27 @@ impl ScalarLiteral for f32 {
 impl ScalarLiteral for f64 {
     fn const_expr(self) -> Expr {
         Expr::Const {
-            value: format!("{self:?}"),
+            value: mlir_float_literal(format!("{self:?}")),
             elem: Self::ELEMENT,
         }
+    }
+}
+
+fn mlir_float_literal(mut text: String) -> String {
+    if matches!(text.as_str(), "inf" | "-inf" | "NaN") {
+        return text;
+    }
+    let exponent = text.find('e').or_else(|| text.find('E'));
+    if let Some(index) = exponent {
+        if !text[..index].contains('.') {
+            text.insert_str(index, ".0");
+        }
+        return text;
+    }
+    if text.contains('.') {
+        text
+    } else {
+        format!("{text}.0")
     }
 }
 

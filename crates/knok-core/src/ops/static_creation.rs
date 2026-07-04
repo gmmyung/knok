@@ -409,8 +409,15 @@ fn float_literal(value: f64) -> String {
     if value == 0.0 {
         return "0.0".to_string();
     }
-    let text = value.to_string();
-    if text.contains('.') || text.contains('e') || text.contains('E') {
+    let mut text = value.to_string();
+    let exponent = text.find('e').or_else(|| text.find('E'));
+    if let Some(index) = exponent {
+        if !text[..index].contains('.') {
+            text.insert_str(index, ".0");
+        }
+        return text;
+    }
+    if text.contains('.') {
         text
     } else {
         format!("{text}.0")

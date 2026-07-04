@@ -66,6 +66,11 @@ pub(crate) fn runtime_uniform_f32(key: T0<i64>) -> (T1<f32, 4>, T0<i64>) {
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn runtime_uniform_f32_subnormal(key: T0<i64>) -> (T1<f32, 8>, T0<i64>) {
+    uniform(key, 0.0, f32::from_bits(1))
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
 pub(crate) fn runtime_randint_i64(key: T0<i64>) -> (T1<i64, 6>, T0<i64>) {
     randint(key, -3, 4)
 }

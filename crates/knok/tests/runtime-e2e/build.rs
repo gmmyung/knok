@@ -47,6 +47,7 @@ fn main() {
         creation::static_uniform_f32_edge,
         creation::static_randint_i32,
         creation::runtime_uniform_f32,
+        creation::runtime_uniform_f32_subnormal,
         creation::runtime_randint_i64,
         creation::runtime_randint_i32_wide,
         elementwise::abs_f32,
