@@ -42,3 +42,22 @@ fn value_and_grad_relu_mean_and_detach_run() {
     assert_close(loss.as_slice(), &[14.0]);
     assert_close(grad_x.as_slice(), &[0.0, 0.0, 0.0]);
 }
+
+#[test]
+fn value_and_grad_treats_random_as_constant() {
+    let key = Tensor0::from_scalar(42_i64);
+    let x = Tensor1::from_array([1.0, 2.0, 3.0, 4.0]);
+    let (weights, _) = graphs::runtime_uniform_f32::call(key.clone()).unwrap();
+    let expected_loss = x
+        .as_slice()
+        .iter()
+        .zip(weights.as_slice())
+        .map(|(x, weight)| x * weight)
+        .sum::<f32>();
+
+    let (loss, grad_x) =
+        autograd_graphs::random_weighted_sum_loss_value_and_grad::call(x, key).unwrap();
+
+    assert_close(loss.as_slice(), &[expected_loss]);
+    assert_close(grad_x.as_slice(), weights.as_slice());
+}

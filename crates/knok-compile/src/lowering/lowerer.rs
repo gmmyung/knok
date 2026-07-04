@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use knok_core::{
-    static_arange_literals, static_eye_literals, static_linspace_literals, BinaryOp, CallOp, Expr,
-    TensorType, TypedGraph, UnaryOp,
+    static_arange_literals, static_eye_literals, static_linspace_literals,
+    static_random_int_literals, static_random_uniform_literals, BinaryOp, CallOp, Expr, TensorType,
+    TypedGraph, UnaryOp,
 };
 use melior::{
     dialect::{func, DialectRegistry},
@@ -325,6 +326,22 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                     .map_err(|message| anyhow::anyhow!(message))?;
                 self.dense_constant(ty, &values)
             }
+            CallOp::StaticRandomUniform { target, seed } => {
+                let values = static_random_uniform_literals(target, *seed, args)
+                    .map_err(|message| anyhow::anyhow!(message))?;
+                self.dense_constant(target, &values)
+            }
+            CallOp::StaticRandomInt { target, seed } => {
+                let values = static_random_int_literals(target, *seed, args)
+                    .map_err(|message| anyhow::anyhow!(message))?;
+                self.dense_constant(target, &values)
+            }
+            CallOp::RandomUniform(_) | CallOp::RandomInt(_) => {
+                anyhow::bail!(
+                    "{} produces multiple values and must be lowered through tuple projections",
+                    op.name()
+                )
+            }
             CallOp::Log => {
                 let value = self.lower_expr(&args[0])?;
                 self.emit_unary("math.log", value)
@@ -615,6 +632,18 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             CallOp::Split { axis, sections } => {
                 let input = self.lower_expr(&args[0])?;
                 self.split(input, *axis, sections)
+            }
+            CallOp::RandomUniform(target) => {
+                let key = self.lower_expr(&args[0])?;
+                let low = self.lower_expr(&args[1])?;
+                let high = self.lower_expr(&args[2])?;
+                self.random_uniform(target, key, low, high)
+            }
+            CallOp::RandomInt(target) => {
+                let key = self.lower_expr(&args[0])?;
+                let low = self.lower_expr(&args[1])?;
+                let high = self.lower_expr(&args[2])?;
+                self.random_int(target, key, low, high)
             }
             _ => Ok(vec![self.lower_call(op, args)?]),
         }

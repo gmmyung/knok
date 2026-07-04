@@ -44,3 +44,23 @@ pub(crate) fn ones_like_f32(x: T1<f32, 3>) -> T1<f32, 3> {
 pub(crate) fn full_like_f32(x: T1<f32, 3>) -> T1<f32, 3> {
     full_like(x, 3.5)
 }
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn static_uniform_f32() -> T1<f32, 4> {
+    uniform_static(123, -1.0, 1.0)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn static_randint_i32() -> T1<i32, 8> {
+    randint_static(7, 2, 5)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn runtime_uniform_f32(key: T0<i64>) -> (T1<f32, 4>, T0<i64>) {
+    rand(key)
+}
+
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+pub(crate) fn runtime_randint_i64(key: T0<i64>) -> (T1<i64, 6>, T0<i64>) {
+    randint(key, -3, 4)
+}

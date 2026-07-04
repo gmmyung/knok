@@ -70,8 +70,18 @@ Creation and convolution helpers use explicit function names:
 
 ```rust
 let r: Tensor1<i32, 4> = arange_step(0, 8, 2);
+let w: Tensor2<f32, 4, 4> = uniform_static(42, -0.05, 0.05);
 let y: Tensor4<f32, 1, 2, 2, 1> =
     conv2d_options(x, k, Conv2dOptions::new().padding(1, 1, 1, 1).stride(2, 2));
+```
+
+Runtime random helpers thread an explicit rank-0 `i64` key through the graph:
+
+```rust
+#[knok_build::graph(backend = Backend::LlvmCpu)]
+fn sample(key: T0<i64>) -> (T1<f32, 8>, T0<i64>) {
+    rand(key)
+}
 ```
 
 ## Target Import

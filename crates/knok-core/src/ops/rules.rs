@@ -385,6 +385,44 @@ pub(crate) fn infer_call_results(op: &CallOp, args: &[TensorType]) -> syn::Resul
                 .map_err(|message| syn::Error::new(Span::call_site(), message))?;
             Ok(target.clone())
         }
+        CallOp::StaticRandomUniform { target, .. } => {
+            expect_arity(op, args, 2)?;
+            validate_static_creation_target(op)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            random_bounds_result_type(&args[0], &args[1], target, op.name())?;
+            Ok(target.clone())
+        }
+        CallOp::StaticRandomInt { target, .. } => {
+            expect_arity(op, args, 2)?;
+            validate_static_creation_target(op)
+                .map_err(|message| syn::Error::new(Span::call_site(), message))?;
+            random_bounds_result_type(&args[0], &args[1], target, op.name())?;
+            Ok(target.clone())
+        }
+        CallOp::RandomUniform(target) => {
+            expect_arity(op, args, 3)?;
+            expect_random_key(&args[0], op.name())?;
+            if !target.elem.is_float() {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "random_uniform target element type must be floating-point",
+                ));
+            }
+            random_bounds_result_type(&args[1], &args[2], target, op.name())?;
+            return Ok(vec![target.clone(), args[0].clone()]);
+        }
+        CallOp::RandomInt(target) => {
+            expect_arity(op, args, 3)?;
+            expect_random_key(&args[0], op.name())?;
+            if !matches!(target.elem, ElementType::I32 | ElementType::I64) {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "random_int target element type must be i32 or i64",
+                ));
+            }
+            random_bounds_result_type(&args[1], &args[2], target, op.name())?;
+            return Ok(vec![target.clone(), args[0].clone()]);
+        }
         CallOp::Unsqueeze(target) => {
             expect_arity(op, args, 1)?;
             validate_unsqueeze(&args[0], target)?;
@@ -486,6 +524,40 @@ fn logical_result_type(lhs: &TensorType, rhs: &TensorType) -> syn::Result<Tensor
                 format!("logical operands are not broadcast-compatible: {message}"),
             )
         })
+}
+
+fn expect_random_key(key: &TensorType, op_name: &str) -> syn::Result<()> {
+    if key.rank() != 0 || key.elem != ElementType::I64 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} key must be a rank-0 i64 tensor, got {key:?}"),
+        ));
+    }
+    Ok(())
+}
+
+fn random_bounds_result_type(
+    low: &TensorType,
+    high: &TensorType,
+    target: &TensorType,
+    op_name: &str,
+) -> syn::Result<()> {
+    if low.rank() != 0 || high.rank() != 0 {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!("{op_name} bounds must be rank-0 tensors"),
+        ));
+    }
+    if low.elem != target.elem || high.elem != target.elem {
+        return Err(syn::Error::new(
+            Span::call_site(),
+            format!(
+                "{op_name} bounds must match the target element type {:?}, got {:?} and {:?}",
+                target.elem, low.elem, high.elem
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn where_result_type(

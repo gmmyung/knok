@@ -117,11 +117,60 @@ pub fn static_eye_literals(target: &TensorType) -> Result<Vec<String>, String> {
     Ok(values)
 }
 
+/// Expands a deterministic compile-time uniform random tensor.
+///
+/// The target must be floating-point and the arguments must be static `low`
+/// and `high` scalar constants with `low < high`.
+pub fn static_random_uniform_literals(
+    target: &TensorType,
+    seed: u64,
+    args: &[Expr],
+) -> Result<Vec<String>, String> {
+    validate_random_uniform_target(target, "static_random_uniform")?;
+    let (low, high) = parse_float_bounds("static_random_uniform", args)?;
+    let len = element_count(target);
+    Ok((0..len)
+        .map(|index| {
+            let unit = unit_f64_from_u64(splitmix64(seed.wrapping_add(index as u64)));
+            float_literal(low + unit * (high - low))
+        })
+        .collect())
+}
+
+/// Expands a deterministic compile-time integer random tensor.
+///
+/// The target must be `i32` or `i64` and the arguments must be static `low`
+/// and `high` scalar constants with `low < high`.
+pub fn static_random_int_literals(
+    target: &TensorType,
+    seed: u64,
+    args: &[Expr],
+) -> Result<Vec<String>, String> {
+    validate_random_int_target(target, "static_random_int")?;
+    let (low, high) = parse_integer_bounds("static_random_int", args)?;
+    let range = u128::try_from(high - low)
+        .map_err(|_| "static_random_int range must be positive".to_string())?;
+    let len = element_count(target);
+    (0..len)
+        .map(|index| {
+            let sample = splitmix64(seed.wrapping_add(index as u64)) as u128;
+            let value = low + (sample % range) as i128;
+            integer_literal_for_elem(value, target.elem)
+        })
+        .collect()
+}
+
 pub(crate) fn validate_static_creation_target(op: &CallOp) -> Result<(), String> {
     match op {
         CallOp::Arange(target) => validate_static_vector_target(target, "arange"),
         CallOp::Linspace(target) => validate_static_vector_target(target, "linspace"),
         CallOp::Eye(target) => validate_static_eye_target(target),
+        CallOp::StaticRandomUniform { target, .. } => {
+            validate_random_uniform_target(target, "static_random_uniform")
+        }
+        CallOp::StaticRandomInt { target, .. } => {
+            validate_random_int_target(target, "static_random_int")
+        }
         _ => Ok(()),
     }
 }
@@ -145,6 +194,14 @@ pub(crate) fn validate_static_creation_call(op: &CallOp, args: &[Expr]) -> syn::
                 .map(|_| ())
                 .map_err(|message| syn::Error::new(Span::call_site(), message))
         }
+        CallOp::StaticRandomUniform { target, seed } => {
+            static_random_uniform_literals(target, *seed, args)
+                .map(|_| ())
+                .map_err(|message| syn::Error::new(Span::call_site(), message))
+        }
+        CallOp::StaticRandomInt { target, seed } => static_random_int_literals(target, *seed, args)
+            .map(|_| ())
+            .map_err(|message| syn::Error::new(Span::call_site(), message)),
         _ => Ok(()),
     }
 }
@@ -178,6 +235,24 @@ fn validate_static_eye_target(target: &TensorType) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn validate_random_uniform_target(target: &TensorType, op_name: &str) -> Result<(), String> {
+    if target.elem.is_float() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{op_name} target element type must be floating-point"
+        ))
+    }
+}
+
+fn validate_random_int_target(target: &TensorType, op_name: &str) -> Result<(), String> {
+    if matches!(target.elem, ElementType::I32 | ElementType::I64) {
+        Ok(())
+    } else {
+        Err(format!("{op_name} target element type must be i32 or i64"))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -230,6 +305,32 @@ fn parse_numeric_params(
             }
         })
         .collect()
+}
+
+fn parse_float_bounds(op_name: &str, args: &[Expr]) -> Result<(f64, f64), String> {
+    let params = parse_numeric_params(op_name, args, 2..=2)?;
+    let low = params[0].as_float();
+    let high = params[1].as_float();
+    if low < high {
+        Ok((low, high))
+    } else {
+        Err(format!("{op_name} requires low < high"))
+    }
+}
+
+fn parse_integer_bounds(op_name: &str, args: &[Expr]) -> Result<(i128, i128), String> {
+    let params = parse_numeric_params(op_name, args, 2..=2)?;
+    let low = params[0]
+        .as_int()
+        .ok_or_else(|| format!("{op_name} bounds must be integer literals"))?;
+    let high = params[1]
+        .as_int()
+        .ok_or_else(|| format!("{op_name} bounds must be integer literals"))?;
+    if low < high {
+        Ok((low, high))
+    } else {
+        Err(format!("{op_name} requires low < high"))
+    }
 }
 
 fn integer_arange_len(start: i128, stop: i128, step: i128) -> Result<usize, String> {
@@ -312,4 +413,21 @@ fn float_literal(value: f64) -> String {
     } else {
         format!("{text}.0")
     }
+}
+
+fn element_count(ty: &TensorType) -> usize {
+    ty.shape.iter().product()
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut mixed = value;
+    mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    mixed ^ (mixed >> 31)
+}
+
+fn unit_f64_from_u64(value: u64) -> f64 {
+    const SCALE: f64 = 1.0 / ((1_u64 << 53) as f64);
+    ((value >> 11) as f64) * SCALE
 }

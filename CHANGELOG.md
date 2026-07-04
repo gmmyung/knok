@@ -19,6 +19,9 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
   pooling and convolution, selection ops, shape/indexing ops, same-registry
   graph calls, documented edge-case gradient policies, no-grad index/predicate
   values, and explicit `detach` stop-gradient.
+- Added deterministic random tensor tracing helpers: compile-time
+  `uniform_static` / `randint_static` constants and runtime key-threaded
+  `rand` / `uniform` / `randint` graph ops.
 
 ### Changed
 

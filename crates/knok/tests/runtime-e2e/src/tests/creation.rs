@@ -36,3 +36,53 @@ fn additional_creation_ops_run() {
     assert_close(ones.as_slice(), &[1.0, 1.0, 1.0]);
     assert_close(full.as_slice(), &[3.5, 3.5, 3.5]);
 }
+
+#[test]
+fn random_creation_ops_run() {
+    let static_uniform = graphs::static_uniform_f32::call().unwrap();
+    let static_ints = graphs::static_randint_i32::call().unwrap();
+
+    assert!(
+        static_uniform
+            .as_slice()
+            .iter()
+            .all(|value| (-1.0..1.0).contains(value)),
+        "static uniform values were outside [-1, 1): {:?}",
+        static_uniform.as_slice()
+    );
+    assert!(
+        static_ints
+            .as_slice()
+            .iter()
+            .all(|value| (2..5).contains(value)),
+        "static randint values were outside [2, 5): {:?}",
+        static_ints.as_slice()
+    );
+
+    let key = Tensor0::from_scalar(123_i64);
+    let (uniform, next_key) = graphs::runtime_uniform_f32::call(key.clone()).unwrap();
+    let (same_uniform, same_next_key) = graphs::runtime_uniform_f32::call(key).unwrap();
+
+    assert_close(uniform.as_slice(), same_uniform.as_slice());
+    assert_exact(next_key.as_slice(), &[127_i64]);
+    assert_exact(same_next_key.as_slice(), &[127_i64]);
+    assert!(
+        uniform
+            .as_slice()
+            .iter()
+            .all(|value| (0.0..1.0).contains(value)),
+        "runtime uniform values were outside [0, 1): {:?}",
+        uniform.as_slice()
+    );
+
+    let (advanced_uniform, _) = graphs::runtime_uniform_f32::call(next_key).unwrap();
+    assert_ne!(uniform.as_slice(), advanced_uniform.as_slice());
+
+    let (ints, next_key) = graphs::runtime_randint_i64::call(Tensor0::from_scalar(10_i64)).unwrap();
+    assert_exact(next_key.as_slice(), &[16_i64]);
+    assert!(
+        ints.as_slice().iter().all(|value| (-3..4).contains(value)),
+        "runtime randint values were outside [-3, 4): {:?}",
+        ints.as_slice()
+    );
+}
