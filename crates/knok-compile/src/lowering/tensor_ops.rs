@@ -546,9 +546,17 @@ impl Lowerer<'_, '_> {
         let Some(first) = values.first().cloned() else {
             anyhow::bail!("internal error: concat_many needs at least one tensor");
         };
-        values
-            .drain(1..)
-            .try_fold(first, |acc, value| self.concat(acc, value, axis))
+        let mut output_ty = first.ty.clone();
+        output_ty.shape[axis] = values.iter().map(|value| value.ty.shape[axis]).sum();
+        let mut acc = self.append_tensor_empty(&output_ty)?;
+        let mut offset = 0;
+        for value in values.drain(..) {
+            let mut offsets = vec![0; output_ty.rank()];
+            offsets[axis] = offset;
+            offset += value.ty.shape[axis];
+            acc = self.insert_slice(value, acc, &output_ty, &offsets)?;
+        }
+        Ok(acc)
     }
 
     fn empty_tensor(&mut self, ty: &TensorType) -> anyhow::Result<Value> {

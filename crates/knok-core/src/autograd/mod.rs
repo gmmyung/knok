@@ -949,6 +949,72 @@ fn indexed_axis_grad(
     concat_all(pieces, axis).ok_or_else(|| error("internal autograd error: empty index gradient"))
 }
 
+fn take_along_axis_unit_grad(
+    _input: &Expr,
+    indices: &Expr,
+    indices_ty: &TensorType,
+    output_ty: &TensorType,
+    input_ty: &TensorType,
+    axis: usize,
+    grad: Expr,
+) -> syn::Result<Option<Expr>> {
+    if input_ty.rank() != indices_ty.rank()
+        || indices_ty.shape != output_ty.shape
+        || indices_ty.shape[axis] != 1
+    {
+        return Ok(None);
+    }
+
+    let axis_size = input_ty.shape[axis];
+    let normalized_indices = normalize_index_tensor(indices.clone(), indices_ty.elem, axis_size);
+    let input_index_ty = tensor(indices_ty.elem, input_ty.shape.clone());
+    let normalized_indices = if indices_ty.shape == input_ty.shape {
+        normalized_indices
+    } else {
+        call(
+            CallOp::Broadcast(input_index_ty.clone()),
+            vec![normalized_indices],
+        )
+    };
+
+    let axis_values_ty = tensor(indices_ty.elem, vec![axis_size]);
+    let axis_values = call(
+        CallOp::Arange(axis_values_ty.clone()),
+        vec![
+            scalar(indices_ty.elem.zero_literal(), indices_ty.elem),
+            scalar(&axis_size.to_string(), indices_ty.elem),
+        ],
+    );
+    let mut axis_grid_shape = vec![1; input_ty.rank()];
+    axis_grid_shape[axis] = axis_size;
+    let axis_grid_ty = tensor(indices_ty.elem, axis_grid_shape);
+    let axis_grid = reshape_if_needed(axis_values, &axis_values_ty, &axis_grid_ty);
+    let axis_grid = if axis_grid_ty == input_index_ty {
+        axis_grid
+    } else {
+        call(CallOp::Broadcast(input_index_ty), vec![axis_grid])
+    };
+
+    let condition = call(CallOp::Equal, vec![axis_grid, normalized_indices]);
+    let grad = if output_ty == input_ty {
+        grad
+    } else {
+        call(CallOp::Broadcast(input_ty.clone()), vec![grad])
+    };
+    Ok(Some(mask_grad(condition, grad)))
+}
+
+fn normalize_index_tensor(indices: Expr, elem: ElementType, axis_size: usize) -> Expr {
+    let zero = scalar(elem.zero_literal(), elem);
+    let negative = call(CallOp::Less, vec![indices.clone(), zero]);
+    let shifted = binary(
+        BinaryOp::Add,
+        indices.clone(),
+        scalar(&axis_size.to_string(), elem),
+    );
+    call(CallOp::Where, vec![negative, shifted, indices])
+}
+
 fn reshape_index_condition(
     condition: Expr,
     indices_ty: &TensorType,

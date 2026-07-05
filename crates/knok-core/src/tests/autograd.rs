@@ -126,6 +126,37 @@ fn value_and_grad_treats_arg_indices_as_no_grad() {
 }
 
 #[test]
+fn take_along_axis_unit_index_gradient_avoids_concat() {
+    let graph = graph(
+        "unit_take_loss",
+        vec![
+            input("x", ElementType::F32, &[2, 3]),
+            input("idx", ElementType::I64, &[2, 1]),
+        ],
+        vec![tensor(ElementType::F32, &[])],
+        Expr::Call {
+            op: CallOp::Sum(AxisSpec::All),
+            args: vec![Expr::Call {
+                op: CallOp::TakeAlongAxis { axis: 1 },
+                args: vec![var("x"), var("idx")],
+            }],
+        },
+    );
+    let typed = type_check(graph, &[]).unwrap();
+
+    let grad = value_and_grad_graph(&typed).unwrap();
+
+    assert_eq!(
+        grad.outputs,
+        vec![
+            tensor(ElementType::F32, &[]),
+            tensor(ElementType::F32, &[2, 3])
+        ]
+    );
+    assert!(!graph_contains_concat(&grad));
+}
+
+#[test]
 fn value_and_grad_treats_boolean_conditions_as_no_grad() {
     let positive = Expr::Call {
         op: CallOp::Greater,
@@ -504,4 +535,28 @@ fn value_and_grad_static_loop_graphs_have_bounded_expression_size() {
     .unwrap();
     let indexed_grad = value_and_grad_graph(&indexed).unwrap();
     assert!(graph_expr_node_count(&indexed_grad) <= 8_000);
+}
+
+fn graph_contains_concat(graph: &TypedGraph) -> bool {
+    graph
+        .lets
+        .iter()
+        .any(|binding| expr_contains_concat(&binding.value.kind))
+        || graph
+            .body
+            .iter()
+            .any(|expr| expr_contains_concat(&expr.kind))
+}
+
+fn expr_contains_concat(expr: &Expr) -> bool {
+    match expr {
+        Expr::Var(_) | Expr::Const { .. } => false,
+        Expr::Unary { value, .. } => expr_contains_concat(value),
+        Expr::Binary { lhs, rhs, .. } => expr_contains_concat(lhs) || expr_contains_concat(rhs),
+        Expr::Node { value, .. } => expr_contains_concat(value),
+        Expr::TupleGet { value, .. } => expr_contains_concat(value),
+        Expr::Call { op, args } => {
+            matches!(op, CallOp::Concat(_)) || args.iter().any(expr_contains_concat)
+        }
+    }
 }
