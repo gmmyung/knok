@@ -894,15 +894,29 @@ impl<'a> ValueAndGradBuilder<'a> {
     ) -> syn::Result<()> {
         let input_ty = self.expr_ty(&args[0])?;
         let indices_ty = self.expr_ty(&args[1])?;
-        let input_grad = indexed_axis_grad(
+        let input_grad = take_along_axis_unit_grad(
             &args[0],
             &args[1],
             &indices_ty,
             output_ty,
             &input_ty,
             axis,
-            &[axis],
-            grad,
+            grad.clone(),
+        )?
+        .map_or_else(
+            || {
+                indexed_axis_grad(
+                    &args[0],
+                    &args[1],
+                    &indices_ty,
+                    output_ty,
+                    &input_ty,
+                    axis,
+                    &[axis],
+                    grad,
+                )
+            },
+            Ok,
         )?;
         self.add_grad_to_expr(&args[0], input_grad)
     }
