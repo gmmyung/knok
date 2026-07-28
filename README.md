@@ -203,6 +203,13 @@ the recorded shape against the tensor's static shape.
   behavior.
 - [Benchmarks](docs/benchmarks.md): local runtime benchmark harness and shapes.
 
+## AI-Assisted Development
+
+Parts of this project have been developed with assistance from AI coding tools.
+AI-generated suggestions are reviewed, edited, and tested before they are
+accepted. The maintainer remains responsible for the project's design,
+implementation, security, correctness, and licensing.
+
 ## Development
 
 Run the full local validation suite:
