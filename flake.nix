@@ -3,10 +3,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, rust-overlay, ... }:
     let
       systems = [
         "aarch64-darwin"
@@ -20,7 +24,10 @@
         nixpkgs.lib.genAttrs systems (
           system:
           f {
-            pkgs = import nixpkgs { inherit system; };
+            pkgs = import nixpkgs {
+              inherit system;
+              overlays = [ rust-overlay.overlays.default ];
+            };
           }
         );
     in
@@ -31,6 +38,17 @@
           lib = pkgs.lib;
           llvm = pkgs.llvmPackages_23;
           rustLlvm = pkgs.rustc.llvmPackages;
+          # Keep the compiler, profiling runtime, and readers from one distribution.
+          coverageRust = pkgs.rust-bin.stable.${pkgs.rustc.version}.minimal.override {
+            extensions = [ "llvm-tools" ];
+          };
+          coverageTool = pkgs.cargo-llvm-cov.override {
+            rustPlatform = pkgs.makeRustPlatform {
+              cargo = coverageRust;
+              rustc = coverageRust;
+            };
+            llvmPackages_22 = llvm;
+          };
           compilerVersion = "3.13.0";
           target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
           targetKey = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] target);
@@ -136,12 +154,17 @@
         shells
         // {
           coverage = shells.default.overrideAttrs (old: {
-            nativeBuildInputs = old.nativeBuildInputs ++ [
-              pkgs.cargo-llvm-cov
-              rustLlvm.llvm
-            ];
-            LLVM_COV = "${rustLlvm.llvm}/bin/llvm-cov";
-            LLVM_PROFDATA = "${rustLlvm.llvm}/bin/llvm-profdata";
+            nativeBuildInputs =
+              lib.subtractLists [
+                pkgs.cargo
+                pkgs.rustc
+                pkgs.rustfmt
+                pkgs.clippy
+              ] old.nativeBuildInputs
+              ++ [
+                coverageRust
+                coverageTool
+              ];
           });
           cross-lang-lto = shells.default.overrideAttrs (
             old:

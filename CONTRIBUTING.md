@@ -39,8 +39,8 @@ to `target/coverage/html/index.html`, a badge SVG to
 `target/coverage/badge/coverage.svg`, prints a line coverage summary, and
 enforces `KNOK_COVERAGE_MIN_LINES` when that environment variable is non-empty.
 
-Coverage is validated on Linux. On macOS 27, the current Nix coverage package's
-own instrumented tests crash; use Linux for coverage reports.
+The coverage shell uses the official Rust distribution and its bundled LLVM
+profiling tools so the compiler, profiling runtime, and report readers match.
 
 For faster iteration, run focused checks first:
 
