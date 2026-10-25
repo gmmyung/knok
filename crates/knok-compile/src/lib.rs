@@ -10,5 +10,8 @@ mod compile;
 mod lowering;
 mod mlir;
 
-pub use compile::{compile_graph, compile_graph_with_registry, compile_mlir_source, CompiledGraph};
+pub use compile::{
+    compile_graph, compile_graph_with_options, compile_graph_with_registry, compile_mlir_source,
+    compile_mlir_source_with_options, CompileOptions, CompiledGraph,
+};
 pub use lowering::{lower_to_mlir, lower_to_mlir_with_registry};

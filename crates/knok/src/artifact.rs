@@ -4,32 +4,60 @@
 ///
 /// Generated graph modules expose an `artifact()` function returning this
 /// value. Runtime wrappers use it to validate typed inputs, select a backend
-/// variant for an [`Engine`](crate::Engine), and resolve the compiled function
+/// variant for an engine, and resolve the compiled function
 /// inside the embedded VMFB module.
 #[derive(Clone, Copy, Debug)]
 pub struct GraphArtifact {
     /// Function name inside the IREE VM module.
-    pub function_name: &'static str,
+    function_name: &'static str,
     /// Input tensor descriptors for typed runtime validation.
-    pub input_descs: &'static [TensorDesc],
+    input_descs: &'static [TensorDesc],
     /// Output tensor descriptors for typed runtime validation.
-    pub output_descs: &'static [TensorDesc],
+    output_descs: &'static [TensorDesc],
     /// Backend-specific VMFB variants.
-    pub variants: &'static [GraphArtifactVariant],
+    variants: &'static [GraphArtifactVariant],
 }
 
 impl GraphArtifact {
-    #[cfg(feature = "runtime")]
-    pub(crate) fn has_typed_signature(&self) -> bool {
-        !self.input_descs.is_empty() || !self.output_descs.is_empty()
+    /// Declares the complete static signature of a compiled function.
+    /// Empty descriptor slices mean zero inputs or outputs.
+    pub const fn new(
+        function_name: &'static str,
+        input_descs: &'static [TensorDesc],
+        output_descs: &'static [TensorDesc],
+        variants: &'static [GraphArtifactVariant],
+    ) -> Self {
+        Self {
+            function_name,
+            input_descs,
+            output_descs,
+            variants,
+        }
     }
 
-    /// Returns the artifact variant matching a runtime driver name.
-    pub fn variant_for_driver(&self, driver: &str) -> Option<GraphArtifactVariant> {
+    /// Returns the exported VM function name.
+    pub const fn function_name(&self) -> &'static str {
+        self.function_name
+    }
+    /// Returns the complete input signature.
+    pub const fn input_descs(&self) -> &'static [TensorDesc] {
+        self.input_descs
+    }
+    /// Returns the complete output signature.
+    pub const fn output_descs(&self) -> &'static [TensorDesc] {
+        self.output_descs
+    }
+    /// Returns the compiled backend variants.
+    pub const fn variants(&self) -> &'static [GraphArtifactVariant] {
+        self.variants
+    }
+
+    /// Returns the first variant compatible with the selected runtime driver.
+    pub fn variant_for_driver(&self, driver: crate::Driver) -> Option<GraphArtifactVariant> {
         self.variants
             .iter()
             .copied()
-            .find(|variant| variant.driver == driver)
+            .find(|variant| variant.backend.supports_driver(driver))
     }
 
     /// Returns the first available artifact variant.
@@ -79,18 +107,43 @@ pub enum DType {
     I64,
 }
 
-/// One compiled VMFB variant for a backend/driver pair.
+/// One compiled VMFB variant for a backend.
 ///
 /// A generated graph can embed multiple variants over time. The runtime selects
-/// the variant whose `driver` matches the active [`Engine`](crate::Engine).
+/// a variant whose backend supports the engine's driver.
 #[derive(Clone, Copy, Debug)]
 pub struct GraphArtifactVariant {
     /// Embedded VMFB bytes.
-    pub vmfb: &'static [u8],
+    vmfb: &'static [u8],
     /// IREE target backend name used at compile time.
-    pub backend: &'static str,
-    /// IREE runtime driver expected for execution.
-    pub driver: &'static str,
+    backend: crate::Backend,
     /// IREE compiler flags used to produce this variant.
-    pub compile_flags: &'static [&'static str],
+    compile_flags: &'static [&'static str],
+}
+
+impl GraphArtifactVariant {
+    /// Describes one compiled variant. Compatible drivers are determined by its backend.
+    pub const fn new(
+        vmfb: &'static [u8],
+        backend: crate::Backend,
+        compile_flags: &'static [&'static str],
+    ) -> Self {
+        Self {
+            vmfb,
+            backend,
+            compile_flags,
+        }
+    }
+    /// Returns the embedded VMFB bytes.
+    pub const fn vmfb(&self) -> &'static [u8] {
+        self.vmfb
+    }
+    /// Returns the compilation backend.
+    pub const fn backend(&self) -> crate::Backend {
+        self.backend
+    }
+    /// Returns the compiler flags recorded at build time.
+    pub const fn compile_flags(&self) -> &'static [&'static str] {
+        self.compile_flags
+    }
 }

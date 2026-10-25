@@ -12,8 +12,8 @@
 //! knok::generated_graphs!(pub mod graphs);
 //! ```
 //!
-//! For repeated hosted inference, construct one [`Engine`] and call generated
-//! `graphs::<name>::run(&engine, ...)` wrappers.
+//! For repeated hosted inference, construct one `Engine` and use
+//! `graphs::<name>::load(&engine)` to prepare a reusable model with borrowed inputs.
 //!
 //! With default features disabled, `knok` is `no_std + alloc`; hosted runtime
 //! execution is unavailable on the target unless the runtime feature set is
@@ -31,6 +31,7 @@ pub mod backend;
 pub mod graph;
 mod private;
 /// Hosted runtime configuration and engine types.
+#[cfg(feature = "runtime")]
 pub mod runtime;
 /// Fixed-rank tensor containers used by generated graph wrappers.
 pub mod tensor;
@@ -78,82 +79,69 @@ macro_rules! generated_graphs {
 
 pub use artifact::{DType, GraphArtifact, GraphArtifactVariant, TensorDesc};
 pub use backend::{Backend, Driver, SUPPORTED_BACKENDS};
-pub use graph::Graph;
-pub use runtime::{Engine, RuntimeConfig};
+pub use graph::{Graph, GraphSignatureError};
+
+#[doc(hidden)]
+#[cfg(feature = "runtime")]
+#[macro_export]
+macro_rules! __runtime { ($($items:tt)*) => { $($items)* }; }
+
+#[doc(hidden)]
+#[cfg(not(feature = "runtime"))]
+#[macro_export]
+macro_rules! __runtime {
+    ($($items:tt)*) => {};
+}
+#[cfg(feature = "runtime")]
+pub use runtime::{DeviceInfo, Engine, Model, RuntimeConfig};
 
 /// Result alias used by the public runtime and tensor APIs.
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// Errors returned by tensor construction and hosted runtime execution.
+/// Errors returned by tensor construction and graph execution.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// IREE runtime returned an error.
     #[cfg(feature = "runtime")]
     Runtime(eerie::runtime::RuntimeError),
-    /// Tensor data length does not match the statically declared shape.
+    /// Tensor data does not match its static shape.
     Shape {
         /// Expected static shape.
         expected: &'static [usize],
-        /// Runtime shape computed from the input data.
+        /// Actual dimensions or data length.
         actual: alloc::vec::Vec<usize>,
     },
-    /// Number of runtime inputs did not match artifact metadata.
-    InputCountMismatch {
-        /// Expected input count.
-        expected: usize,
-        /// Actual input count.
-        actual: usize,
-    },
-    /// Runtime input dtype did not match artifact metadata.
-    InputDTypeMismatch {
-        /// Zero-based input index.
-        index: usize,
-        /// Expected dtype.
-        expected: DType,
-        /// Actual dtype.
-        actual: DType,
-    },
-    /// Requested backend name is not supported by this crate.
-    UnsupportedBackend(&'static str),
-    /// No artifact variant matched the requested runtime driver.
+    /// Artifact metadata disagrees with the typed graph handle.
+    GraphSignature(GraphSignatureError),
+    /// No compiled backend is compatible with the selected driver.
     MissingArtifactVariant {
         /// Graph function name.
         function_name: &'static str,
         /// Requested driver name.
         driver: alloc::string::String,
     },
-    /// Artifact does not contain any variants.
+    /// Artifact contains no compiled variants.
     MissingDefaultArtifactVariant {
         /// Graph function name.
         function_name: &'static str,
     },
-    /// Runtime engine driver does not match a selected artifact variant.
-    RuntimeDriverMismatch {
-        /// Artifact backend name.
-        backend: &'static str,
-        /// Driver expected by the artifact variant.
-        expected_driver: &'static str,
-        /// Driver used by the engine.
-        actual_driver: alloc::string::String,
-    },
-    /// Internal hosted runtime mutex was poisoned.
-    EngineLockPoisoned,
-    /// A single-output helper was used with a multi-output graph.
+    /// Function returned a different number of outputs.
     OutputCountMismatch {
-        /// Expected output count.
+        /// Expected count.
         expected: usize,
-        /// Actual output count.
+        /// Actual count.
         actual: usize,
     },
-    /// Requested output index is outside the graph output list.
-    OutputIndexOutOfBounds {
-        /// Requested output index.
+    /// Function returned a different output shape.
+    OutputShapeMismatch {
+        /// Zero-based output index.
         index: usize,
-        /// Number of available outputs.
-        len: usize,
+        /// Expected static shape.
+        expected: &'static [usize],
+        /// Actual runtime shape.
+        actual: alloc::vec::Vec<usize>,
     },
-    /// Hosted runtime APIs were called without the runtime feature.
-    HostedRuntimeDisabled,
 }
 
 #[cfg(feature = "runtime")]
@@ -164,76 +152,55 @@ impl From<eerie::runtime::RuntimeError> for Error {
 }
 
 impl core::fmt::Display for Error {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             #[cfg(feature = "runtime")]
-            Self::Runtime(error) => write!(formatter, "runtime error: {error}"),
-            Self::Shape { expected, actual } => {
-                write!(
-                    formatter,
-                    "tensor shape mismatch: expected {expected:?}, got {actual:?}"
-                )
-            }
-            Self::InputCountMismatch { expected, actual } => {
-                write!(
-                    formatter,
-                    "runtime input count mismatch: expected {expected}, got {actual}"
-                )
-            }
-            Self::InputDTypeMismatch {
-                index,
-                expected,
-                actual,
-            } => {
-                write!(
-                    formatter,
-                    "runtime input {index} dtype mismatch: expected {expected:?}, got {actual:?}"
-                )
-            }
-            Self::UnsupportedBackend(backend) => {
-                write!(formatter, "unsupported backend: {backend}")
-            }
+            Self::Runtime(error) => write!(f, "runtime error: {error}"),
+            Self::Shape { expected, actual } => write!(
+                f,
+                "tensor shape mismatch: expected {expected:?}, got {actual:?}"
+            ),
+            Self::GraphSignature(error) => core::fmt::Display::fmt(error, f),
             Self::MissingArtifactVariant {
                 function_name,
                 driver,
-            } => {
-                write!(
-                    formatter,
-                    "no artifact variant for function {function_name} and runtime driver {driver}"
-                )
-            }
-            Self::MissingDefaultArtifactVariant { function_name } => {
-                write!(
-                    formatter,
-                    "artifact for function {function_name} has no compiled variants"
-                )
-            }
-            Self::RuntimeDriverMismatch {
-                backend,
-                expected_driver,
-                actual_driver,
-            } => {
-                write!(
-                    formatter,
-                    "runtime driver mismatch for backend {backend}: expected {expected_driver}, got {actual_driver}"
-                )
-            }
-            Self::EngineLockPoisoned => formatter.write_str("runtime engine cache lock poisoned"),
-            Self::OutputCountMismatch { expected, actual } => {
-                write!(
-                    formatter,
-                    "runtime output count mismatch: expected {expected}, got {actual}"
-                )
-            }
-            Self::OutputIndexOutOfBounds { index, len } => {
-                write!(
-                    formatter,
-                    "runtime output index out of bounds: index {index}, len {len}"
-                )
-            }
-            Self::HostedRuntimeDisabled => formatter.write_str("runtime feature is disabled"),
+            } => write!(
+                f,
+                "no artifact variant for function {function_name} and runtime driver {driver}"
+            ),
+            Self::MissingDefaultArtifactVariant { function_name } => write!(
+                f,
+                "artifact for function {function_name} has no compiled variants"
+            ),
+            Self::OutputCountMismatch { expected, actual } => write!(
+                f,
+                "runtime output count mismatch: expected {expected}, got {actual}"
+            ),
+            Self::OutputShapeMismatch {
+                index,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "runtime output {index} shape mismatch: expected {expected:?}, got {actual:?}"
+            ),
         }
     }
 }
 
-impl core::error::Error for Error {}
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            #[cfg(feature = "runtime")]
+            Self::Runtime(error) => Some(error),
+            Self::GraphSignature(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<GraphSignatureError> for Error {
+    fn from(error: GraphSignatureError) -> Self {
+        Self::GraphSignature(error)
+    }
+}

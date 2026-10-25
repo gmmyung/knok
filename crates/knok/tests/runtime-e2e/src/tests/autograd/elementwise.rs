@@ -8,7 +8,7 @@ fn value_and_grad_extended_elementwise_ops_run() {
     let y = Tensor1::from_array(y_values);
 
     let (loss, grad_x, grad_y) =
-        autograd_graphs::extended_elementwise_loss_value_and_grad::call(x, y).unwrap();
+        autograd_graphs::extended_elementwise_loss_value_and_grad::call(&x, &y).unwrap();
 
     let expected_loss = x_values
         .iter()
@@ -58,7 +58,7 @@ fn value_and_grad_selection_ops_run() {
     let y = Tensor1::from_array([-1.0, 2.0, 1.0]);
 
     let (loss, grad_x, grad_y) =
-        autograd_graphs::selection_loss_value_and_grad::call(x, y).unwrap();
+        autograd_graphs::selection_loss_value_and_grad::call(&x, &y).unwrap();
 
     assert_close(loss.as_slice(), &[4.5]);
     assert_close(grad_x.as_slice(), &[1.0, 1.0, 1.0]);
@@ -71,7 +71,7 @@ fn value_and_grad_full_like_runs() {
     let x = Tensor1::from_array([1.0, 2.0, 3.0]);
 
     let (loss, grad_fill, grad_x) =
-        autograd_graphs::full_like_loss_value_and_grad::call(fill, x).unwrap();
+        autograd_graphs::full_like_loss_value_and_grad::call(&fill, &x).unwrap();
 
     assert_close(loss.as_slice(), &[7.5]);
     assert_close(grad_fill.as_slice(), &[3.0]);

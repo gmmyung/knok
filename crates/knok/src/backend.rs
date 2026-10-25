@@ -21,6 +21,8 @@ pub enum Backend {
 pub enum Driver {
     /// CPU local task driver.
     LocalTask,
+    /// CPU driver that executes synchronously.
+    LocalSync,
     /// Apple Metal driver on macOS.
     #[cfg(any(target_os = "macos", doc))]
     Metal,
@@ -73,9 +75,12 @@ impl Backend {
         }
     }
 
-    /// Returns whether `driver` is the expected runtime driver for this backend.
+    /// Returns whether the backend can execute on `driver`.
     pub fn supports_driver(self, driver: Driver) -> bool {
-        self.default_driver() == driver.name()
+        match (self, driver) {
+            (Self::LlvmCpu, Driver::LocalTask | Driver::LocalSync) => true,
+            _ => self.default_driver() == driver.name(),
+        }
     }
 }
 
@@ -95,6 +100,7 @@ impl Driver {
     pub const fn name(self) -> &'static str {
         match self {
             Self::LocalTask => "local-task",
+            Self::LocalSync => "local-sync",
             #[cfg(any(target_os = "macos", doc))]
             Self::Metal => "metal",
             #[cfg(feature = "vulkan")]
@@ -108,6 +114,7 @@ impl Driver {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "local-task" => Some(Self::LocalTask),
+            "local-sync" => Some(Self::LocalSync),
             #[cfg(any(target_os = "macos", doc))]
             "metal" => Some(Self::Metal),
             #[cfg(feature = "vulkan")]

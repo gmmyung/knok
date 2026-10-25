@@ -21,6 +21,75 @@ use crate::{
 
 static CACHE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Explicit IREE compiler tuning, applied to traced and imported graphs.
+#[derive(Clone, Debug, Default)]
+pub struct CompileOptions {
+    flags: Vec<String>,
+}
+
+impl CompileOptions {
+    /// Selects the LLVM CPU target processor, such as `generic` or `host`.
+    pub fn target_cpu(self, cpu: impl AsRef<str>) -> Self {
+        self.flag(format!("--iree-llvmcpu-target-cpu={}", cpu.as_ref()))
+    }
+    /// Selects LLVM CPU features, such as `+avx2,+fma`.
+    pub fn cpu_features(self, features: impl AsRef<str>) -> Self {
+        self.flag(format!(
+            "--iree-llvmcpu-target-cpu-features={}",
+            features.as_ref()
+        ))
+    }
+    /// Appends an IREE compiler option. The graph's backend cannot be overridden.
+    pub fn flag(mut self, flag: impl Into<String>) -> Self {
+        self.flags.push(flag.into());
+        self
+    }
+    /// Resolves the full compiler invocation, including Cargo target/profile defaults.
+    pub fn flags(&self, backend: &str) -> anyhow::Result<Vec<String>> {
+        parse_backend(backend)?;
+        if self
+            .flags
+            .iter()
+            .any(|flag| flag.split('=').next() == Some("--iree-hal-target-backends"))
+        {
+            anyhow::bail!(
+                "select the backend on the graph or MLIR model, not through compiler flags"
+            );
+        }
+        Ok(backend_flags(backend, &self.flags))
+    }
+}
+
+#[cfg(test)]
+mod option_tests {
+    use super::CompileOptions;
+
+    #[test]
+    fn tuning_preserves_backend_and_overrides_profile_defaults() {
+        let flags = CompileOptions::default()
+            .target_cpu("generic")
+            .cpu_features("+neon")
+            .flag("--iree-opt-level=O1")
+            .flags("llvm-cpu")
+            .unwrap();
+        assert!(flags.contains(&"--iree-llvmcpu-target-cpu=generic".into()));
+        assert!(flags.contains(&"--iree-llvmcpu-target-cpu-features=+neon".into()));
+        assert_eq!(
+            flags
+                .iter()
+                .filter(|f| f.starts_with("--iree-opt-level="))
+                .count(),
+            1
+        );
+        assert!(flags.contains(&"--iree-opt-level=O1".into()));
+        assert!(CompileOptions::default()
+            .flag("--iree-hal-target-backends=cuda")
+            .flags("llvm-cpu")
+            .is_err());
+        assert!(CompileOptions::default().flags("invalid").is_err());
+    }
+}
+
 /// Result of lowering a typed graph and compiling it with IREE.
 pub struct CompiledGraph {
     /// MLIR emitted from the typed graph before IREE compilation.
@@ -39,17 +108,37 @@ pub fn compile_graph_with_registry(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
 ) -> anyhow::Result<CompiledGraph> {
+    compile_graph_with_options(graph, graphs, &CompileOptions::default())
+}
+
+/// Lowers and compiles a graph with explicit IREE tuning and a callable registry.
+pub fn compile_graph_with_options(
+    graph: &TypedGraph,
+    graphs: &BTreeMap<String, TypedGraph>,
+    options: &CompileOptions,
+) -> anyhow::Result<CompiledGraph> {
     let mlir = lower_to_mlir_with_registry(graph, graphs)?;
     let backend = parse_backend(&graph.backend)?;
-    let vmfb = compile_verified_mlir_source(backend, &mlir)?;
+    let flags = options.flags(&graph.backend)?;
+    let vmfb = compile_with_iree(backend, &flags, &mlir)?;
     Ok(CompiledGraph { mlir, vmfb })
 }
 
 /// Compiles an MLIR module string to IREE VM bytecode for the given backend.
 pub fn compile_mlir_source(backend: &str, mlir: &str) -> anyhow::Result<Vec<u8>> {
+    compile_mlir_source_with_options(backend, mlir, &CompileOptions::default())
+}
+
+/// Compiles an MLIR module with explicit IREE tuning.
+pub fn compile_mlir_source_with_options(
+    backend: &str,
+    mlir: &str,
+    options: &CompileOptions,
+) -> anyhow::Result<Vec<u8>> {
+    let flags = options.flags(backend)?;
     let backend = parse_backend(backend)?;
     let mlir = canonicalize_and_verify(mlir)?;
-    compile_verified_mlir_source(backend, &mlir)
+    compile_with_iree(backend, &flags, &mlir)
 }
 
 fn parse_backend(backend: &str) -> anyhow::Result<IreeBackend> {
@@ -63,13 +152,9 @@ fn parse_backend(backend: &str) -> anyhow::Result<IreeBackend> {
     })
 }
 
-fn compile_verified_mlir_source(backend: IreeBackend, mlir: &str) -> anyhow::Result<Vec<u8>> {
-    compile_with_iree(backend, &[], mlir)
-}
-
 fn compile_with_iree(
     backend: IreeBackend,
-    extra_flags: &[String],
+    flags: &[String],
     mlir: &str,
 ) -> anyhow::Result<Vec<u8>> {
     // Cargo build scripts need the same export policy as ordinary executables.
@@ -98,17 +183,16 @@ fn compile_with_iree(
         });
     }
     let backend_name = backend.target_name();
-    let flags = backend_flags(backend_name, extra_flags);
     let version = compiler_fingerprint(&compiler)?;
     let library = compiler.library_path().to_string_lossy();
-    let key = cache_key(backend_name, mlir, &library, &version, &flags);
+    let key = cache_key(backend_name, mlir, &library, &version, flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     if let Some(vmfb) = read_cached_vmfb(&vmfb_path)? {
         return Ok(vmfb);
     }
 
     let vmfb = compiler
-        .compile_str(mlir, &flags)
+        .compile_str(mlir, flags)
         .map_err(|error| match error {
             CompilerError::IREECompilerError(error, diagnostics) => {
                 anyhow::anyhow!("{error}\n{diagnostics}")

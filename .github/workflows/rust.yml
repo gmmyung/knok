@@ -49,11 +49,14 @@ jobs:
           extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
       - run: nix develop --command cargo check -p knok --no-default-features
+      - run: nix develop --command cargo test -p knok --no-default-features --features half,serde
       - run: nix develop --command cargo check -p knok-build-tracing-smoke
       - run: nix develop --command cargo check -p knok-no-std-smoke
 
   docs:
     runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings -D missing_docs
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
@@ -63,6 +66,7 @@ jobs:
           extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
       - run: nix develop --command cargo doc -p knok --no-deps
+      - run: nix develop --command cargo doc -p knok --no-default-features --no-deps
 
   runtime:
     runs-on: ubuntu-24.04

@@ -61,13 +61,17 @@ for generated value-and-gradient wrappers.
 
 ## Runtime Flow
 
-The hosted path uses `Engine` for repeated inference. Generated
-`graphs::<name>::run` wrappers reuse the engine's IREE instance, driver, device,
-loaded module, and compiled artifact. Convenience wrappers are useful for
-examples and small one-off calls but include runtime setup cost.
+The hosted path uses `Engine` to own the IREE instance and device and cache
+loaded modules by static VMFB address/length. Prepared `Model` handles borrow
+the engine and retain resolved functions, avoiding cache access and lookup in
+loops. Inputs borrow host tensors; output counts, dtypes, and full shapes are
+validated before host copies. Generated `run` helpers resolve a function per
+call, while `call` also creates an engine.
 
-No-default-features builds expose compile-time artifacts but do not provide the
-hosted runtime convenience path.
+No-default-features builds expose tensors and checked graph/artifact metadata.
+Execution traits and helpers are gated by the dependency's `runtime` feature;
+generated code uses `knok::__runtime!` so this does not depend on the consuming
+crate's feature names. There are no placeholder engines.
 
 ## Release Flow
 

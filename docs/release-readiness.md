@@ -7,7 +7,7 @@ Use this checklist before cutting the next minor release.
 - Confirm README examples compile against the current public API.
 - Confirm crate-level docs explain build-time tracing and hosted runtime use.
 - Confirm feature modes are documented: default runtime, no-default-features,
-  `half`, and `embedded-runtime`.
+  `half`, and no-default-features builds.
 - Confirm known limitations are documented rather than hidden.
 
 ## Compiler and Runtime

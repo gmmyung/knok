@@ -42,6 +42,34 @@ module ABI.
 
 Custom IREE 3.13 libraries can be selected with `KNOK_IREE_COMPILER`.
 
+## Compiler Options
+
+Set explicit IREE tuning in `build.rs`:
+
+```rust
+use knok_build::prelude::*;
+
+knok_build::compile_graphs_with_options!(
+    BuildOptions::default().compiler_options(
+        CompileOptions::default()
+            .target_cpu("host")
+            .cpu_features("host")
+            .flag("--iree-opt-level=O2")
+    );
+    forward
+);
+```
+
+Choose features supported by the deployment CPU. `host` CPU tuning makes
+artifacts specific to the build host. These options also apply to
+`grad_graphs_with_options!` and `compile_mlir_models_with_options!`; emitted
+artifact variants record the resolved flags. Compiler options participate in
+the cache key. Select the backend on the graph/model rather than overriding
+`--iree-hal-target-backends` in flags.
+
+Without overrides, CPU optimization and target triple follow Cargo's profile
+and target. Options do not copy Cargo Rust flags into native compiler flags.
+
 ## Cache
 
 `KNOK_CACHE_DIR` overrides the VMFB cache directory. Build scripts default to
@@ -111,7 +139,7 @@ to select another interpreter or `KNOK_IREE_COMPILER` for a custom library.
 crate feature is enabled and the selected compiler library was built with
 that target backend.
 
-`runtime driver mismatch`
+`no artifact variant ... runtime driver ...`
 
-Use an engine whose runtime driver matches the artifact variant. The typed
+Use an engine whose runtime driver supports the artifact backend. The typed
 backend helpers choose the default driver for each supported backend.
