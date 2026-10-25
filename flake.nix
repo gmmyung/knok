@@ -121,6 +121,7 @@
                   fi
 
                   if ! "$compiler_venv/bin/python" -c 'import importlib.metadata as m; assert m.version("iree-base-compiler") == "${compilerVersion}"' >/dev/null 2>&1; then
+                    "$compiler_venv/bin/python" -m pip install --upgrade pip || exit 1
                     "$compiler_venv/bin/pip" install "iree-base-compiler==${compilerVersion}" || exit 1
                   fi
 

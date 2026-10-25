@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   KNOK_COVERAGE_MIN_LINES: "70"
 
 permissions:
@@ -15,12 +18,14 @@ permissions:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: --no-daemon
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
