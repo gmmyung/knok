@@ -2,10 +2,14 @@ use std::{
     collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Once,
+    },
 };
 
+use anyhow::Context;
+use eerie::compiler::{Compiler, CompilerError};
 use fs2::FileExt;
 use knok_core::TypedGraph;
 
@@ -68,43 +72,65 @@ fn compile_with_iree(
     extra_flags: &[String],
     mlir: &str,
 ) -> anyhow::Result<Vec<u8>> {
+    // Cargo build scripts need the same export policy as ordinary executables.
+    // Detect the unsafe layout before IREE initialization can hang in dyld.
+    #[cfg(target_os = "macos")]
+    if unsafe { !libc::dlsym(libc::RTLD_MAIN_ONLY, c"mlirContextCreate".as_ptr()).is_null() } {
+        anyhow::bail!(
+            "the macOS build host exports Melior's MLIR symbols; use `nix develop` or configure the host linker as described at https://github.com/gmmyung/knok/blob/main/docs/compiler.md#macos-build-hosts"
+        );
+    }
     let cache_dir = cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
     let _compiler_lock = lock_compiler_cache(&cache_dir)?;
-    let compiler = iree_compile_command();
+    let compiler = match env::var_os("KNOK_IREE_COMPILER") {
+        Some(path) => Compiler::with_library(path),
+        None => Compiler::new(),
+    }
+    .context("failed to load the IREE compiler")?;
+    if env::var_os("OUT_DIR").is_some() {
+        static TRACK_LIBRARY: Once = Once::new();
+        TRACK_LIBRARY.call_once(|| {
+            println!(
+                "cargo:rerun-if-changed={}",
+                compiler.library_path().display()
+            );
+        });
+    }
     let backend_name = backend.target_name();
     let flags = backend_flags(backend_name, extra_flags);
-    let version = compiler_version(&compiler)?;
-    let key = cache_key(backend_name, mlir, &compiler, &version, &flags);
+    let version = compiler_fingerprint(&compiler)?;
+    let library = compiler.library_path().to_string_lossy();
+    let key = cache_key(backend_name, mlir, &library, &version, &flags);
     let vmfb_path = cache_dir.join(format!("{key}.vmfb"));
     if let Some(vmfb) = read_cached_vmfb(&vmfb_path)? {
         return Ok(vmfb);
     }
 
-    let suffix = unique_cache_temp_suffix();
-    let tmp_mlir_path = cache_dir.join(format!("{key}.{suffix}.mlir.tmp"));
-    let tmp_vmfb_path = cache_dir.join(format!("{key}.{suffix}.vmfb.tmp"));
-    fs::write(&tmp_mlir_path, mlir)?;
-    if let Err(error) = compile_with_iree_compile(&compiler, &flags, &tmp_mlir_path, &tmp_vmfb_path)
-    {
-        let _ = fs::remove_file(&tmp_mlir_path);
-        let _ = fs::remove_file(&tmp_vmfb_path);
-        return Err(error);
-    }
-    let _ = fs::remove_file(&tmp_mlir_path);
-    let vmfb = fs::read(&tmp_vmfb_path)?;
+    let vmfb = compiler
+        .compile_str(mlir, &flags)
+        .map_err(|error| match error {
+            CompilerError::IREECompilerError(error, diagnostics) => {
+                anyhow::anyhow!("{error}\n{diagnostics}")
+            }
+            CompilerError::IREECompilerDiagnosticsError(diagnostics) => {
+                anyhow::anyhow!("{diagnostics}")
+            }
+            error => error.into(),
+        })
+        .with_context(|| format!("IREE compilation failed for backend `{backend_name}`"))?;
     if vmfb.len() < 16 {
-        let _ = fs::remove_file(&tmp_mlir_path);
-        let _ = fs::remove_file(&tmp_vmfb_path);
         anyhow::bail!(
             "IREE compiler produced an invalid VMFB cache artifact with {} bytes",
             vmfb.len()
         );
     }
+    let suffix = unique_cache_temp_suffix();
+    let tmp_vmfb_path = cache_dir.join(format!("{key}.{suffix}.vmfb.tmp"));
+    fs::write(&tmp_vmfb_path, &vmfb)?;
     match fs::rename(&tmp_vmfb_path, &vmfb_path) {
         Ok(()) => Ok(vmfb),
         Err(_) => {
-            let _ = fs::remove_file(&tmp_mlir_path);
             let _ = fs::remove_file(&tmp_vmfb_path);
             read_cached_vmfb(&vmfb_path)?
                 .ok_or_else(|| anyhow::anyhow!("failed to publish VMFB cache artifact"))
@@ -123,54 +149,15 @@ fn lock_compiler_cache(cache_dir: &Path) -> anyhow::Result<fs::File> {
     Ok(file)
 }
 
-fn iree_compile_command() -> String {
-    env::var("KNOK_IREE_COMPILE").unwrap_or_else(|_| "iree-compile".to_string())
-}
-
-fn compiler_version(compiler: &str) -> anyhow::Result<String> {
-    let output = Command::new(compiler).arg("--version").output().map_err(|error| {
-        anyhow::anyhow!(
-            "failed to run IREE compiler `{compiler}`: {error}; set KNOK_IREE_COMPILE or install iree-compile"
-        )
-    })?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "IREE compiler `{compiler} --version` failed with status {}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-fn compile_with_iree_compile(
-    compiler: &str,
-    flags: &[String],
-    input_path: &Path,
-    output_path: &Path,
-) -> anyhow::Result<()> {
-    let output = Command::new(compiler)
-        .args(flags)
-        .arg("-o")
-        .arg(output_path)
-        .arg(input_path)
-        .output()
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "failed to run IREE compiler `{compiler}`: {error}; set KNOK_IREE_COMPILE or install iree-compile"
-            )
-        })?;
-    if !output.status.success() {
-        let _ = fs::remove_file(output_path);
-        anyhow::bail!(
-            "IREE compiler `{compiler}` failed with status {}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
+fn compiler_fingerprint(compiler: &Compiler) -> anyhow::Result<String> {
+    let metadata = fs::metadata(compiler.library_path())?;
+    Ok(format!(
+        "{};api={:?};size={};modified={:?}",
+        compiler.get_revision()?,
+        compiler.api_version(),
+        metadata.len(),
+        metadata.modified()?,
+    ))
 }
 
 fn read_cached_vmfb(path: &Path) -> anyhow::Result<Option<Vec<u8>>> {
@@ -207,7 +194,7 @@ fn cache_key(
     flags: &[String],
 ) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"knok-cache-v3");
+    hasher.update(b"knok-cache-v4");
     hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
     hasher.update(backend.as_bytes());
     hasher.update(compiler.as_bytes());
@@ -957,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_backend_errors_before_spawning_compiler() {
+    fn unsupported_backend_errors_before_loading_compiler() {
         let error = compile_mlir_source("unsupported", "module {}").unwrap_err();
 
         assert!(error
@@ -966,9 +953,37 @@ mod tests {
     }
 
     #[test]
-    fn compile_source_rejects_invalid_mlir_before_spawning_compiler() {
+    fn compile_source_rejects_invalid_mlir_before_loading_compiler() {
         let error = compile_mlir_source("llvm-cpu", "module @knok {").unwrap_err();
 
         assert!(error.to_string().contains("generated MLIR"));
+    }
+
+    #[test]
+    fn embedded_compiler_reuses_initialization_and_recovers_from_errors() {
+        let source = "module @test { func.func @identity(%x: tensor<4xf32>) -> tensor<4xf32> { return %x : tensor<4xf32> } }"
+            .replace("@test", &format!("@test_{}", unique_cache_temp_suffix().replace('-', "_")));
+        for _ in 0..2 {
+            let vmfb = compile_mlir_source("llvm-cpu", &source).unwrap();
+            assert!(vmfb.len() > 16);
+        }
+        let error = super::compile_with_iree(
+            super::IreeBackend::from_target_backend("llvm-cpu").unwrap(),
+            &["--knok-invalid-compiler-option".into()],
+            &source,
+        )
+        .unwrap_err();
+        let diagnostics = format!("{error:#}");
+        assert!(
+            diagnostics.contains("knok-invalid-compiler-option"),
+            "{diagnostics}"
+        );
+        assert!(!diagnostics.contains("Mutex"), "{diagnostics}");
+        let vmfb = compile_mlir_source(
+            "llvm-cpu",
+            source.replace("@identity", "@after_error").as_str(),
+        )
+        .unwrap();
+        assert!(vmfb.len() > 16);
     }
 }

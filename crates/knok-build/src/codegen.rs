@@ -82,6 +82,12 @@ fn generated_module(
     let input_expr = rust_input_expr(&input_names);
     let output_type = rust_output_type(outputs);
     let run_params = prefixed_params("engine: &::knok::Engine", &input_params);
+    let mut output_name = "outputs".to_string();
+    while input_names.contains(&output_name) {
+        output_name.push('_');
+    }
+    let run_into_params =
+        prefixed_params(&run_params, &format!("{output_name}: &mut {output_type}"));
     let call_params = input_params.clone();
 
     Ok(format!(
@@ -110,6 +116,10 @@ fn generated_module(
 
     pub fn run({run_params}) -> ::knok::Result<{output_type}> {{
         GRAPH.run(engine, {input_expr})
+    }}
+
+    pub fn run_into({run_into_params}) -> ::knok::Result<()> {{
+        GRAPH.run_into(engine, {input_expr}, {output_name})
     }}
 
     pub fn call({call_params}) -> ::knok::Result<{output_type}> {{

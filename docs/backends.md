@@ -60,11 +60,11 @@ Use `cuda` instead of `vulkan` for CUDA artifacts.
 
 ## Compiler Requirement
 
-Build-time graph compilation invokes `iree-compile`. Put the binary on `PATH`,
-or set:
+Build-time graph compilation uses Eerie's IREE shared library. Install the
+matching wheel in your Python environment:
 
 ```sh
-export KNOK_IREE_COMPILE=/path/to/iree-compile
+python -m pip install 'iree-base-compiler==3.13.0'
 ```
 
 The Nix development shell installs the pinned compiler and adds it to `PATH`.

@@ -107,4 +107,9 @@ fn softmax_ops_run() {
             1.0 / 3.0,
         ],
     );
+    let shifted = Tensor2::from_array([[1001.0, 1002.0, 1003.0], [1001.0, 1001.0, 1001.0]]);
+    let shifted_all = graphs::softmax_all_f32::call(shifted.clone()).unwrap();
+    let shifted_axis = graphs::softmax_axis1_f32::call(shifted).unwrap();
+    assert_close(shifted_all.as_slice(), all.as_slice());
+    assert_close(shifted_axis.as_slice(), axis.as_slice());
 }

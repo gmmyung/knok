@@ -17,6 +17,7 @@ Each generated module exposes:
 - `GRAPH`: a typed `knok::Graph<I, O>` handle.
 - `artifact()`: static VMFB and signature metadata.
 - `run(&Engine, ...)`: repeated inference with a caller-owned engine.
+- `run_into(&Engine, ..., &mut output)`: inference into existing output tensors.
 - `call(...)`: one-shot inference with an engine created from the artifact.
 
 Most applications should use `run` in hot paths and `call` for occasional
@@ -59,8 +60,23 @@ let engine = knok::Engine::for_artifact(artifact)?;
 let y = graph.run(&engine, x)?;
 ```
 
-The public `Graph` API is intentionally small: `artifact`, `run`, and
-`run_once`. Raw runtime inputs and outputs are crate internals.
+The public `Graph` API is intentionally small: `artifact`, `run`, `run_into`,
+and `run_once`. Raw runtime inputs and outputs are crate internals.
+
+## Reusing Output Storage
+
+Allocate output tensors once and pass them to `run_into`:
+
+```rust
+let engine = knok::Engine::for_artifact(graphs::forward::artifact())?;
+let mut output = knok::tensor::Tensor2::<f32, 2, 2>::zeros();
+graphs::forward::run_into(&engine, x, &mut output)?;
+```
+
+For multi-output graphs, pass `&mut (output_a, output_b)` with the generated
+output types. The host tensor allocations are reused; device buffers and
+invocation metadata may still allocate. If an error occurs while copying a
+tuple, earlier outputs may already have been updated.
 
 ## Driver Mismatches
 

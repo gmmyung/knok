@@ -13,6 +13,10 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Added
 
+- Added generated `run_into` wrappers and `Graph::run_into` for reusing host
+  output tensor storage, including mixed-dtype tuples.
+- Added opt-in `cross-lang-lto` for the native runtime, with a matching Linux
+  and macOS Nix shell.
 - Added experimental build-time value-and-gradient graph generation through
   `knok-build` `grad_graphs!` macros, including scalar-loss autograd coverage
   for arithmetic, math/reduction/layout operations, linalg contractions,
@@ -27,6 +31,19 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Changed
 
+- Compile graphs in-process through Eerie's automatically discovered compiler
+  library, sharing initialization across graphs and eliminating compiler
+  subprocesses and temporary MLIR files. `KNOK_IREE_COMPILER` selects a custom
+  library; the old `KNOK_IREE_COMPILE` executable override is removed.
+- Configure macOS build-host exports in the Nix shell so Melior and the stock
+  IREE wheel can coexist, including in Cargo build scripts. Remove native
+  library paths and rpaths from the shell's Rust flags.
+- Lower axis softmax with the same stable max-shifted reductions as global
+  softmax, avoiding an IREE 3.13 release-mode distribution error in its gradient.
+- Preserve compiler diagnostic chains and graph names in build-script errors.
+- Updated the runtime to Eerie 0.7.0 and aligned the development compiler with
+  IREE 3.13.0. Existing VMFBs from IREE 3.11 or earlier must be recompiled;
+  build-time graph caches are invalidated automatically by the compiler version.
 - Rejected reused `Expr::Node` ids with different expression payloads during
   `knok_core::type_check` instead of reusing cached node output types.
 

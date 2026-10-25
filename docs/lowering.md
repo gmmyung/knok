@@ -37,4 +37,4 @@ Lowering tests should keep covering:
 - axis and shape attributes on tensor ops
 - linalg regions with explicit yields
 - tuple projection reuse for multi-output graph ops
-- generated MLIR verification before invoking `iree-compile`
+- generated MLIR verification before invoking the embedded IREE compiler

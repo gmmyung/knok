@@ -305,7 +305,7 @@ fn expand_registered_graph_emit(
                 #emit(registry, #options)
             })();
             if let Err(error) = result {
-                panic!("knok build failed: {error}");
+                panic!("knok build failed: {error:#}");
             }
         }
     }
@@ -323,7 +323,7 @@ fn expand_compile_mlir_models(
                 ::knok_build::emit_mlir_models_with_options(models, #options)
             })();
             if let Err(error) = result {
-                panic!("knok build failed: {error}");
+                panic!("knok build failed: {error:#}");
             }
         }
     }

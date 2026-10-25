@@ -8,12 +8,16 @@ wrappers in the target crate.
 ## Development Setup
 
 Use the Nix development shell. It provides Rust, LLVM/MLIR, `melior`
-dependencies, and the pinned `iree-compile` tool used by build scripts and
+dependencies, and the pinned IREE compiler library used by build scripts and
 tests.
 
 ```sh
 nix develop
 ```
+
+The shell configures macOS executable exports so Melior and the stock IREE
+compiler wheel can coexist, including inside Cargo build scripts. No compiler
+library paths or manual Rust flags are needed.
 
 The main validation command is:
 

@@ -12,7 +12,7 @@ Use this checklist before cutting the next minor release.
 
 ## Compiler and Runtime
 
-- Confirm `docs/compiler.md` matches the current `iree-compile` lookup logic.
+- Confirm `docs/compiler.md` matches compiler library discovery and host setup.
 - Confirm `docs/backends.md` matches supported compile backends and runtime
   drivers.
 - Confirm runtime E2E tests cover creation, elementwise, linalg, reductions,

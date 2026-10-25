@@ -11,6 +11,7 @@ readme = "README.md"
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
+eerie = { workspace = true, features = ["compiler"] }
 fs2.workspace = true
 knok-core.workspace = true
 melior.workspace = true
@@ -18,6 +19,9 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
 
 [features]
 cuda = []

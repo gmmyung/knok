@@ -12,6 +12,8 @@ pub trait RawGraphInputs {
 
 pub trait RawGraphOutput: Sized {
     fn read_raw_outputs(outputs: raw::Outputs) -> crate::Result<Self>;
+
+    fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()>;
 }
 
 pub trait RawGraphTensor: Sized {
@@ -22,6 +24,8 @@ pub trait RawGraphTensor: Sized {
     fn from_vec(data: Vec<Self::Element>) -> crate::Result<Self>;
 
     fn as_slice(&self) -> &[Self::Element];
+
+    fn as_mut_slice(&mut self) -> &mut [Self::Element];
 }
 
 pub trait RawGraphElement: Copy {

@@ -62,9 +62,6 @@ impl Lowerer<'_, '_> {
 
     pub(super) fn softmax(&mut self, input: Value, axis: AxisSpec) -> anyhow::Result<Value> {
         ensure_non_empty_reduction(&input.ty, axis, "softmax")?;
-        if let Some(axis) = axis.index() {
-            return self.axis_softmax(input, axis);
-        }
         let max = self.max_keep_dims(input.clone(), axis, false)?;
         let max = if let Some(axis) = axis.index() {
             self.broadcast_along_axis(max, &input.ty, axis)?
@@ -86,18 +83,6 @@ impl Lowerer<'_, '_> {
             self.broadcast(denominator, &exp.ty)?
         };
         self.emit_binary("arith.divf", exp, denominator)
-    }
-
-    fn axis_softmax(&mut self, input: Value, axis: usize) -> anyhow::Result<Value> {
-        let ty = input.ty.clone();
-        let empty = self.append_tensor_empty(&ty)?;
-        self.append_named_linalg(
-            "linalg.softmax",
-            &[input],
-            empty,
-            &ty,
-            &[("dimension".to_string(), format!("{axis} : i64"))],
-        )
     }
 
     pub(super) fn sigmoid(&mut self, input: Value) -> anyhow::Result<Value> {

@@ -24,14 +24,14 @@ knok = "0.3"
 knok-build = "0.3"
 ```
 
-Build-time compilation needs `iree-compile` on `PATH`. You can also point to it
-explicitly:
+Build-time compilation uses the IREE compiler from your Python environment:
 
 ```sh
-export KNOK_IREE_COMPILE=/path/to/iree-compile
+python -m pip install 'iree-base-compiler==3.13.0'
 ```
 
-The Nix development shell in this repository provides the pinned compiler:
+The Nix development shell provides the compiler, LLVM/MLIR, and macOS build-host
+configuration:
 
 ```sh
 nix develop
@@ -96,6 +96,10 @@ fn run_many(xs: impl IntoIterator<Item = Tensor2<f32, 2, 2>>) -> knok::Result<()
 
 `Engine::for_artifact` uses the runtime driver recorded by `knok-build`, so the
 engine matches the backend used to compile the graph.
+
+Use `graphs::forward::run_into(&engine, x, &mut output)` to reuse an existing
+output tensor's host storage. Multiple outputs use a mutable tuple of tensors.
+Device buffers and invocation metadata may still allocate.
 
 Existing `.mlir` files can also be compiled from `build.rs` with
 `knok_build::compile_mlir_models!` and imported through the same
@@ -173,6 +177,7 @@ See [docs/backends.md](docs/backends.md) for platform notes.
 | `vulkan` | Exposes the Vulkan SPIR-V backend and runtime driver. |
 | `cuda` | Exposes the CUDA backend and runtime driver. |
 | `embedded-runtime` | Enables the IREE runtime dependency without enabling `std`. |
+| `cross-lang-lto` | Enables native runtime ThinLTO; requires the [matching toolchain](docs/compiler.md#cross-language-lto). |
 
 With `default-features = false`, generated wrapper types can still typecheck in
 `no_std + alloc` targets, but hosted runtime execution is disabled.
@@ -199,7 +204,7 @@ the recorded shape against the tensor's static shape.
   notes.
 - [Runtime workflow](docs/runtime.md): generated wrappers, `Graph`, and
   reusable engines.
-- [Compiler setup](docs/compiler.md): `iree-compile` installation and cache
+- [Compiler setup](docs/compiler.md): compiler installation and cache
   behavior.
 - [Benchmarks](docs/benchmarks.md): local runtime benchmark harness and shapes.
 

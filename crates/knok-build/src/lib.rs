@@ -35,6 +35,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
 use knok_compile::{compile_graph_with_registry, compile_mlir_source};
 use knok_core::{value_and_grad_graph_with_registry, Input, TensorType, TypedGraph};
 
@@ -219,6 +220,7 @@ pub fn emit_registered_graphs_with_options(
         env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
     }
     println!("cargo:rerun-if-changed=build.rs");
+    track_compiler_environment();
 
     let mut generated = String::new();
     let graphs = registry.graphs;
@@ -265,6 +267,7 @@ pub fn emit_registered_grad_graphs_with_options(
         env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
     }
     println!("cargo:rerun-if-changed=build.rs");
+    track_compiler_environment();
 
     let mut generated = String::new();
     let graphs = registry.graphs;
@@ -309,6 +312,7 @@ pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptio
         env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
     }
     println!("cargo:rerun-if-changed=build.rs");
+    track_compiler_environment();
 
     let mut generated = String::new();
     for model in &models {
@@ -331,6 +335,18 @@ pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptio
     Ok(())
 }
 
+fn track_compiler_environment() {
+    for variable in [
+        "EERIE_PYTHON",
+        "KNOK_IREE_COMPILER",
+        "KNOK_CACHE_DIR",
+        "PATH",
+        "PYTHONPATH",
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+    }
+}
+
 fn resolve_model_path(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -350,7 +366,8 @@ fn compile_registered_graph(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
 ) -> Result<knok_compile::CompiledGraph> {
-    compile_graph_with_registry(graph, graphs).map_err(Into::into)
+    compile_graph_with_registry(graph, graphs)
+        .with_context(|| format!("failed to compile graph `{}`", graph.name))
 }
 
 #[cfg(test)]

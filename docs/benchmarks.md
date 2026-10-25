@@ -13,7 +13,7 @@ nix develop --command scripts/benchmark.sh
 ```
 
 The script runs `cargo bench --bench runtime` in `benchmarks/runtime`. It uses
-the pinned `iree-compile` from the Nix shell.
+the pinned IREE compiler library from the Nix shell.
 
 Pass Criterion options after `--`:
 

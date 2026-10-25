@@ -974,11 +974,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         )];
         all_attrs.extend_from_slice(attrs);
         let result_type = mlir_tensor_type(self.context, ty)?;
-        let regions = if op_name == "linalg.softmax" {
-            Vec::new()
-        } else {
-            vec![self.named_linalg_region(op_name, inputs, ty)?]
-        };
+        let regions = vec![self.named_linalg_region(op_name, inputs, ty)?];
         let results = self.append_op_with_built_attrs(
             op_name,
             &operands,

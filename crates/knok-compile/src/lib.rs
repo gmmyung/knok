@@ -2,7 +2,8 @@
 //!
 //! `knok-build` uses this crate from build scripts to turn traced graph IR into
 //! VMFB bytes. MLIR modules are built and verified in-process with `melior`;
-//! final VMFB compilation is delegated to the `iree-compile` command line tool.
+//! final VMFB compilation uses Eerie's runtime-loaded IREE compiler in the same
+//! process. Compiler initialization is shared across graph compilations.
 
 mod backend;
 mod compile;

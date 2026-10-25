@@ -116,6 +116,19 @@ pub(crate) mod raw {
             let output = T::buffer_from_value(value.clone())?;
             Ok(output.read()?)
         }
+
+        /// Reads one output into existing host storage.
+        pub fn read_into<T: Element>(&self, index: usize, target: &mut [T]) -> crate::Result<()> {
+            let value = self
+                .values
+                .get(index)
+                .ok_or(crate::Error::OutputIndexOutOfBounds {
+                    index,
+                    len: self.values.len(),
+                })?;
+            let output = T::buffer_from_value(value.clone())?;
+            Ok(output.read_into(target)?)
+        }
     }
 
     #[cfg(not(feature = "runtime"))]
@@ -137,6 +150,10 @@ pub(crate) mod raw {
         }
 
         pub fn read<T: Element>(&self, _index: usize) -> crate::Result<alloc::vec::Vec<T>> {
+            Err(crate::Error::HostedRuntimeDisabled)
+        }
+
+        pub fn read_into<T: Element>(&self, _index: usize, _target: &mut [T]) -> crate::Result<()> {
             Err(crate::Error::HostedRuntimeDisabled)
         }
     }

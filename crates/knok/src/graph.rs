@@ -56,6 +56,16 @@ where
         })
     }
 
+    /// Runs the graph and writes results into existing output tensors.
+    ///
+    /// Reuses the outputs' host storage. Device buffers and invocation metadata
+    /// may still allocate. For multiple outputs, pass a mutable tuple of tensors.
+    pub fn run_into(&self, engine: &Engine, inputs: I, outputs: &mut O) -> crate::Result<()> {
+        RawGraphInputs::with_raw_inputs(&inputs, |raw_inputs| {
+            outputs.read_raw_outputs_into(engine.invoke(self.artifact, raw_inputs)?)
+        })
+    }
+
     /// Runs the graph once by constructing an engine for the artifact's default variant.
     ///
     /// This is convenient for occasional calls. Reuse an [`Engine`] and call
@@ -99,6 +109,10 @@ impl RawGraphOutput for () {
             })
         }
     }
+
+    fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()> {
+        Self::read_raw_outputs(outputs)
+    }
 }
 
 impl GraphOutput for () {}
@@ -124,6 +138,16 @@ where
 {
     fn read_raw_outputs(outputs: raw::Outputs) -> crate::Result<Self> {
         T::from_vec(outputs.one::<T::Element>()?)
+    }
+
+    fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()> {
+        if outputs.len() != 1 {
+            return Err(crate::Error::OutputCountMismatch {
+                expected: 1,
+                actual: outputs.len(),
+            });
+        }
+        outputs.read_into::<T::Element>(0, self.as_mut_slice())
     }
 }
 
@@ -176,6 +200,10 @@ macro_rules! impl_graph_tensor {
 
             fn as_slice(&self) -> &[Self::Element] {
                 self.as_slice()
+            }
+
+            fn as_mut_slice(&mut self) -> &mut [Self::Element] {
+                self.as_mut_slice()
             }
         }
 
@@ -236,6 +264,18 @@ macro_rules! impl_graph_tuple {
                         $name::from_vec(outputs.read::<$name::Element>($index)?)?,
                     )+
                 ))
+            }
+
+            fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()> {
+                let expected = [$(stringify!($name)),+].len();
+                if outputs.len() != expected {
+                    return Err(crate::Error::OutputCountMismatch {
+                        expected,
+                        actual: outputs.len(),
+                    });
+                }
+                $(outputs.read_into::<$name::Element>($index, self.$index.as_mut_slice())?;)+
+                Ok(())
             }
         }
 
