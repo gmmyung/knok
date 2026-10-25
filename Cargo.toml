@@ -29,12 +29,12 @@ knok-build = { path = "crates/knok-build", version = "0.3.3" }
 knok-build-macros = { path = "crates/knok-build-macros", version = "0.3.3" }
 knok-compile = { path = "crates/knok-compile", version = "0.3.3" }
 libc = "0.2"
-melior = "0.27"
+melior = "0.28.2"
 proc-macro2 = "1.0"
 quote = "1.0"
 serde = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_test = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
+syn = { version = "3.0", features = ["full", "extra-traits"] }
 tempfile = "3.23"
 thiserror = "2.0"
 trybuild = "1.0"

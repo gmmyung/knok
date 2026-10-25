@@ -20,9 +20,12 @@
 ```sh
 nix develop --command scripts/release-check.sh
 nix develop --command cargo test -p knok-runtime-e2e
-nix develop --command scripts/coverage.sh
+nix develop .#coverage --command scripts/coverage.sh
 nix develop --command scripts/benchmark.sh
 ```
+
+Coverage is validated on Linux CI. Its separate shell keeps profiling tools out
+of ordinary compiler/runtime development.
 
 `coverage.sh` writes:
 

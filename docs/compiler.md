@@ -8,6 +8,9 @@ the matching compiler wheel, or use `nix develop` for the complete toolchain:
 python -m pip install 'iree-base-compiler==3.13.0'
 ```
 
+Building `knok-build` also needs LLVM/MLIR 23 for Melior 0.28. The Nix shell
+provides these native dependencies and libclang.
+
 ## Lookup Order
 
 `knok-compile` resolves the compiler as follows:

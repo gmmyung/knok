@@ -31,6 +31,11 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Changed
 
+- Updated Melior to 0.28.2 with LLVM/MLIR 23, Syn to 3, and the benchmark
+  harness to Criterion 0.8.2 and ndarray 0.17.2. Refreshed both dependency
+  lockfiles and the Nix toolchain, and removed unused compiler dependencies.
+- Moved coverage tooling to `nix develop .#coverage`, using Rust-matched LLVM
+  readers and keeping profiling dependencies out of the default shell.
 - Compile graphs in-process through Eerie's automatically discovered compiler
   library, sharing initialization across graphs and eliminating compiler
   subprocesses and temporary MLIR files. `KNOK_IREE_COMPILER` selects a custom

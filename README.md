@@ -226,7 +226,7 @@ scripts/release-check.sh
 Generate coverage artifacts:
 
 ```sh
-scripts/coverage.sh
+nix develop .#coverage --command scripts/coverage.sh
 ```
 
 Run local Criterion runtime benchmarks:

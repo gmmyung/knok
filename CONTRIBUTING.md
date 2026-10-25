@@ -11,6 +11,9 @@ Use the Nix development shell. It provides Rust, LLVM/MLIR, `melior`
 dependencies, and the pinned IREE compiler library used by build scripts and
 tests.
 
+The pinned shell uses Rust 1.99 and LLVM/MLIR 23 for Melior 0.28. Runtime LTO and
+coverage tools follow the LLVM version used by Rust.
+
 ```sh
 nix develop
 ```
@@ -25,16 +28,19 @@ The main validation command is:
 scripts/release-check.sh
 ```
 
-Coverage reports use the same Nix-provisioned toolchain:
+Coverage reports use a separate shell with Rust-matched LLVM coverage tools:
 
 ```sh
-scripts/coverage.sh
+nix develop .#coverage --command scripts/coverage.sh
 ```
 
 The script writes an LCOV report to `target/coverage/lcov.info`, an HTML report
 to `target/coverage/html/index.html`, a badge SVG to
 `target/coverage/badge/coverage.svg`, prints a line coverage summary, and
 enforces `KNOK_COVERAGE_MIN_LINES` when that environment variable is non-empty.
+
+Coverage is validated on Linux. On macOS 27, the current Nix coverage package's
+own instrumented tests crash; use Linux for coverage reports.
 
 For faster iteration, run focused checks first:
 
@@ -45,7 +51,7 @@ cargo test -p knok
 cargo test -p knok-build-tracing-runtime
 cargo check -p knok --no-default-features
 cargo check -p knok-no-std-smoke
-scripts/coverage.sh
+nix develop .#coverage --command scripts/coverage.sh
 ```
 
 ## Pull Requests

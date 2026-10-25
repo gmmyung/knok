@@ -29,7 +29,8 @@
         { pkgs }:
         let
           lib = pkgs.lib;
-          llvm = pkgs.llvmPackages_22;
+          llvm = pkgs.llvmPackages_23;
+          rustLlvm = pkgs.rustc.llvmPackages;
           compilerVersion = "3.13.0";
           target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
           targetKey = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] target);
@@ -61,7 +62,7 @@
             ps.virtualenv
             ps.wheel
           ]);
-          darwinPackages = lib.optionals pkgs.stdenv.isDarwin [
+          darwinPackages = lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
             pkgs.libiconv
           ];
           macosLinker =
@@ -75,7 +76,6 @@
 
               packages = [
                 pkgs.cargo
-                pkgs.cargo-llvm-cov
                 pkgs.rustc
                 pkgs.rustfmt
                 pkgs.clippy
@@ -97,12 +97,13 @@
               ++ darwinPackages;
 
               LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
-              MLIR_SYS_220_PREFIX = "${mlirSysLlvmConfig}";
-              TABLEGEN_220_PREFIX = "${mlirSysLlvmConfig}";
+              MLIR_SYS_230_PREFIX = "${mlirSysLlvmConfig}";
+              TABLEGEN_230_PREFIX = "${mlirSysLlvmConfig}";
               "CARGO_TARGET_${targetKey}_LINKER" =
-                if pkgs.stdenv.isDarwin then "${macosLinker llvm.clang}" else "${llvm.clang}/bin/clang";
-              LLVM_COV = "${llvm.llvm}/bin/llvm-cov";
-              LLVM_PROFDATA = "${llvm.llvm}/bin/llvm-profdata";
+                if pkgs.stdenv.hostPlatform.isDarwin then
+                  "${macosLinker llvm.clang}"
+                else
+                  "${llvm.clang}/bin/clang";
               CC = "${llvm.clang}/bin/clang";
               CXX = "${llvm.clang}/bin/clang++";
               CMAKE_GENERATOR = "Ninja";
@@ -134,10 +135,18 @@
         in
         shells
         // {
+          coverage = shells.default.overrideAttrs (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [
+              pkgs.cargo-llvm-cov
+              rustLlvm.llvm
+            ];
+            LLVM_COV = "${rustLlvm.llvm}/bin/llvm-cov";
+            LLVM_PROFDATA = "${rustLlvm.llvm}/bin/llvm-profdata";
+          });
           cross-lang-lto = shells.default.overrideAttrs (
             old:
             let
-              ltoLlvm = pkgs.rustc.llvmPackages;
+              ltoLlvm = rustLlvm;
             in
             {
               nativeBuildInputs = old.nativeBuildInputs ++ [
@@ -153,7 +162,10 @@
               LIBCLANG_PATH = "${ltoLlvm.libclang.lib}/lib";
               CARGO_BUILD_TARGET = target;
               "CARGO_TARGET_${targetKey}_LINKER" =
-                if pkgs.stdenv.isDarwin then "${macosLinker ltoLlvm.clang}" else "${ltoLlvm.clang}/bin/clang";
+                if pkgs.stdenv.hostPlatform.isDarwin then
+                  "${macosLinker ltoLlvm.clang}"
+                else
+                  "${ltoLlvm.clang}/bin/clang";
               "CARGO_TARGET_${targetKey}_RUSTFLAGS" = "-Clinker-plugin-lto -Clink-arg=-fuse-ld=lld";
             }
           );

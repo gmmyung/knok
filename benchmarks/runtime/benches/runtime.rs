@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 use knok::{prelude::*, Engine};
 use ndarray::{Array1, Array2, Array3, Array4, Axis};
 
