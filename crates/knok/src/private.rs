@@ -19,6 +19,7 @@ pub trait RawGraphInputs {
 #[cfg(feature = "runtime")]
 pub trait RawGraphOutput: Sized {
     fn validate_raw_outputs(outputs: &raw::Outputs) -> crate::Result<()>;
+    // Read methods are only called after Model validates the entire output list.
     fn read_raw_outputs(outputs: raw::Outputs) -> crate::Result<Self>;
 
     fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()>;

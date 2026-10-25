@@ -185,15 +185,8 @@ impl RawGraphOutput for () {
     fn validate_raw_outputs(outputs: &raw::Outputs) -> crate::Result<()> {
         outputs.check_count(0)
     }
-    fn read_raw_outputs(outputs: raw::Outputs) -> crate::Result<Self> {
-        if outputs.is_empty() {
-            Ok(())
-        } else {
-            Err(crate::Error::OutputCountMismatch {
-                expected: 0,
-                actual: outputs.len(),
-            })
-        }
+    fn read_raw_outputs(_outputs: raw::Outputs) -> crate::Result<Self> {
+        Ok(())
     }
 
     fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()> {
@@ -241,12 +234,6 @@ where
     }
 
     fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()> {
-        if outputs.len() != 1 {
-            return Err(crate::Error::OutputCountMismatch {
-                expected: 1,
-                actual: outputs.len(),
-            });
-        }
         outputs.read_into::<T::Element>(0, self.as_mut_slice())
     }
 }
@@ -392,13 +379,6 @@ macro_rules! impl_graph_tuple {
             }
 
             fn read_raw_outputs_into(&mut self, outputs: raw::Outputs) -> crate::Result<()> {
-                let expected = [$(stringify!($name)),+].len();
-                if outputs.len() != expected {
-                    return Err(crate::Error::OutputCountMismatch {
-                        expected,
-                        actual: outputs.len(),
-                    });
-                }
                 $(outputs.read_into::<$name::Element>($index, self.$index.as_mut_slice())?;)+
                 Ok(())
             }

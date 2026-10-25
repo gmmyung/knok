@@ -222,18 +222,10 @@ pub(crate) mod raw {
     }
 
     impl Outputs {
-        pub fn len(&self) -> usize {
-            self.values.len()
-        }
-        pub fn is_empty(&self) -> bool {
-            self.values.is_empty()
-        }
         pub fn check_count(&self, expected: usize) -> crate::Result<()> {
-            if self.len() != expected {
-                return Err(crate::Error::OutputCountMismatch {
-                    expected,
-                    actual: self.len(),
-                });
+            let actual = self.values.len();
+            if actual != expected {
+                return Err(crate::Error::OutputCountMismatch { expected, actual });
             }
             Ok(())
         }

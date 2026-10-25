@@ -179,6 +179,22 @@ fn imported_output_shape_is_checked_even_when_element_counts_match() {
 }
 
 #[test]
+fn empty_output_metadata_cannot_disable_runtime_validation() {
+    let original = graphs::arange_step_i32::artifact();
+    let artifact =
+        knok::GraphArtifact::new(original.function_name(), &[], &[], original.variants());
+    let graph = knok::Graph::<(), ()>::new(artifact).unwrap();
+    let engine = Engine::for_artifact(artifact).unwrap();
+    assert!(matches!(
+        graph.load(&engine).unwrap().run(()),
+        Err(knok::Error::OutputCountMismatch {
+            expected: 0,
+            actual: 1
+        })
+    ));
+}
+
+#[test]
 fn later_output_mismatches_leave_all_host_outputs_untouched() {
     let engine = Engine::for_artifact(mlir_models::wrong_second_shape::artifact()).unwrap();
     let input = Tensor1::from_array([1.0; 4]);
