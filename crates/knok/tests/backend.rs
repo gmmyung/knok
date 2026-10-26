@@ -1,176 +1,134 @@
 use knok::{
     tensor::{FixedTensor, Tensor1, Tensor2},
-    Backend, DType, Driver, Engine, Error, Graph, GraphArtifact, GraphArtifactVariant,
-    RuntimeConfig, TensorDesc, SUPPORTED_BACKENDS,
+    Backend, DType, Driver, Error, Graph, GraphArtifact, GraphArtifactVariant, GraphSignatureError,
+    TensorDesc, SUPPORTED_BACKENDS,
 };
+#[cfg(feature = "runtime")]
+use knok::{Engine, RuntimeConfig};
 
 #[test]
 fn backend_capabilities_describe_supported_targets() {
-    let expected_backends = [
-        Backend::LlvmCpu,
-        #[cfg(any(target_os = "macos", doc))]
-        Backend::MetalSpirv,
-        #[cfg(feature = "vulkan")]
-        Backend::VulkanSpirv,
-        #[cfg(feature = "cuda")]
-        Backend::Cuda,
-    ];
-
-    assert_eq!(SUPPORTED_BACKENDS, &expected_backends);
-    assert_eq!(Backend::from_name("llvm-cpu"), Some(Backend::LlvmCpu));
-    #[cfg(any(target_os = "macos", doc))]
-    assert_eq!(Backend::from_name("metal-spirv"), Some(Backend::MetalSpirv));
-    #[cfg(not(any(target_os = "macos", doc)))]
-    assert_eq!(Backend::from_name("metal-spirv"), None);
-    #[cfg(feature = "vulkan")]
-    assert_eq!(
-        Backend::from_name("vulkan-spirv"),
-        Some(Backend::VulkanSpirv)
-    );
-    #[cfg(not(feature = "vulkan"))]
-    assert_eq!(Backend::from_name("vulkan-spirv"), None);
-    #[cfg(feature = "cuda")]
-    assert_eq!(Backend::from_name("cuda"), Some(Backend::Cuda));
-    #[cfg(not(feature = "cuda"))]
-    assert_eq!(Backend::from_name("cuda"), None);
-    assert_eq!(Backend::LlvmCpu.name(), "llvm-cpu");
-    assert_eq!(Backend::LlvmCpu.default_driver(), "local-task");
-    #[cfg(any(target_os = "macos", doc))]
-    {
-        assert!(Backend::MetalSpirv.supports_driver(Driver::Metal));
-        assert!(!Backend::MetalSpirv.supports_driver(Driver::LocalTask));
+    for &backend in SUPPORTED_BACKENDS {
+        assert_eq!(Backend::from_name(backend.name()), Some(backend));
+        assert!(backend.supports_driver(Driver::from_name(backend.default_driver()).unwrap()));
     }
-    #[cfg(feature = "vulkan")]
-    assert!(Backend::VulkanSpirv.supports_driver(Driver::Vulkan));
-    #[cfg(feature = "cuda")]
-    assert!(Backend::Cuda.supports_driver(Driver::Cuda));
-    #[cfg(any(target_os = "macos", doc))]
-    assert_eq!(Driver::from_name("metal"), Some(Driver::Metal));
-    #[cfg(not(any(target_os = "macos", doc)))]
-    assert_eq!(Driver::from_name("metal"), None);
-    #[cfg(feature = "vulkan")]
-    assert_eq!(Driver::from_name("vulkan"), Some(Driver::Vulkan));
-    #[cfg(not(feature = "vulkan"))]
-    assert_eq!(Driver::from_name("vulkan"), None);
-    #[cfg(feature = "cuda")]
-    assert_eq!(Driver::from_name("cuda"), Some(Driver::Cuda));
-    #[cfg(not(feature = "cuda"))]
-    assert_eq!(Driver::from_name("cuda"), None);
+    assert!(Backend::from_name("unknown").is_none());
+    assert!(Driver::from_name("unknown").is_none());
+    assert!(Backend::LlvmCpu.supports_driver(Driver::LocalSync));
+    assert!(Backend::LlvmCpu.supports_driver(Driver::LocalTask));
+    #[cfg(target_os = "macos")]
+    assert!(!Backend::LlvmCpu.supports_driver(Driver::Metal));
 }
 
-#[test]
-fn runtime_config_can_be_constructed_from_backend() {
-    let engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu)).unwrap();
-
-    assert_eq!(engine.driver_name(), "local-task");
-}
-
-#[test]
-fn engine_can_be_constructed_from_backend() {
-    let engine = Engine::for_backend(Backend::LlvmCpu).unwrap();
-
-    assert_eq!(engine.driver_name(), "local-task");
-}
+const INPUTS: &[TensorDesc] = &[TensorDesc::new(DType::F32, &[1, 2])];
+const OUTPUTS: &[TensorDesc] = &[TensorDesc::new(DType::I64, &[2])];
+const VARIANTS: &[GraphArtifactVariant] = &[GraphArtifactVariant::new(
+    &[0; 16],
+    Backend::LlvmCpu,
+    &["--iree-hal-target-backends=llvm-cpu"],
+)];
+const ARTIFACT: GraphArtifact = GraphArtifact::new("forward", INPUTS, OUTPUTS, VARIANTS);
+type Input = Tensor2<f32, 1, 2>;
+type Output = Tensor1<i64, 2>;
 
 #[test]
-fn graph_artifact_metadata_selects_variants() {
-    static VMFB: [u8; 16] = [0; 16];
-    static INPUTS: [TensorDesc; 1] = [TensorDesc::new(DType::F32, &[2, 2])];
-    static OUTPUTS: [TensorDesc; 1] = [TensorDesc::new(DType::F32, &[2, 2])];
-    static VARIANTS: [GraphArtifactVariant; 2] = [
-        GraphArtifactVariant {
-            vmfb: &VMFB,
-            backend: "llvm-cpu",
-            driver: "local-task",
-            compile_flags: &["--iree-hal-target-backends=llvm-cpu"],
-        },
-        GraphArtifactVariant {
-            vmfb: &VMFB,
-            backend: "metal-spirv",
-            driver: "metal",
-            compile_flags: &["--iree-hal-target-backends=metal-spirv"],
-        },
-    ];
-    let artifact = GraphArtifact {
-        function_name: "forward",
-        input_descs: &INPUTS,
-        output_descs: &OUTPUTS,
-        variants: &VARIANTS,
-    };
-
-    assert_eq!(artifact.first_variant().unwrap().driver, "local-task");
+fn artifact_metadata_selects_compatible_drivers() {
+    let variant = ARTIFACT.variant_for_driver(Driver::LocalSync).unwrap();
+    assert_eq!(variant.backend(), Backend::LlvmCpu);
+    assert_eq!(variant.vmfb(), &[0; 16]);
     assert_eq!(
-        artifact.variant_for_driver("metal").unwrap().backend,
-        "metal-spirv"
+        variant.compile_flags(),
+        &["--iree-hal-target-backends=llvm-cpu"]
     );
-    assert!(artifact.variant_for_driver("vulkan").is_none());
+    assert_eq!(ARTIFACT.variants().len(), 1);
+    assert!(ARTIFACT.first_variant().is_some());
 }
 
 #[test]
-fn typed_graph_handle_preserves_artifact_and_tensor_metadata() {
-    static VMFB: [u8; 16] = [0; 16];
-    static INPUTS: [TensorDesc; 1] = [TensorDesc::new(DType::F32, &[1, 2])];
-    static OUTPUTS: [TensorDesc; 1] = [TensorDesc::new(DType::I64, &[2])];
-    static VARIANTS: [GraphArtifactVariant; 1] = [GraphArtifactVariant {
-        vmfb: &VMFB,
-        backend: "llvm-cpu",
-        driver: "local-task",
-        compile_flags: &[],
-    }];
-    let artifact = GraphArtifact {
-        function_name: "forward",
-        input_descs: &INPUTS,
-        output_descs: &OUTPUTS,
-        variants: &VARIANTS,
+fn graph_checks_complete_static_signature() {
+    fn assert_copy<T: Copy>() {}
+    assert_copy::<Graph<Input, Output>>();
+    const GRAPH: Graph<Input, Output> = match Graph::new(ARTIFACT) {
+        Ok(graph) => graph,
+        Err(_) => panic!("invalid graph"),
     };
-    let graph: Graph<Tensor2<f32, 1, 2>, Tensor1<i64, 2>> = Graph::new(artifact);
-
-    assert_eq!(graph.artifact().function_name, "forward");
-    assert_eq!(graph.artifact().input_descs[0].elem, DType::F32);
-    assert_eq!(<Tensor2<f32, 1, 2> as FixedTensor<f32>>::SHAPE, &[1, 2]);
-    assert_eq!(<Tensor1<i64, 2> as FixedTensor<i64>>::SHAPE, &[2]);
+    assert_eq!(GRAPH.artifact().function_name(), "forward");
+    assert_eq!(GRAPH.artifact().input_descs(), INPUTS);
+    assert_eq!(GRAPH.artifact().output_descs(), OUTPUTS);
+    assert_eq!(<Input as FixedTensor<f32>>::SHAPE, &[1, 2]);
+    assert!(matches!(
+        Graph::<Tensor2<f32, 2, 1>, Output>::new(ARTIFACT),
+        Err(GraphSignatureError::Input)
+    ));
+    assert!(matches!(
+        Graph::<Input, Tensor1<f32, 2>>::new(ARTIFACT),
+        Err(GraphSignatureError::Output)
+    ));
+    assert!(matches!(
+        Graph::<Input, (Output, Output)>::new(ARTIFACT),
+        Err(GraphSignatureError::Output)
+    ));
+    assert!(matches!(
+        Graph::<(), ()>::new(ARTIFACT),
+        Err(GraphSignatureError::Input)
+    ));
+    let empty = GraphArtifact::new("empty", &[], &[], &[]);
+    assert!(Graph::<(), ()>::new(empty).is_ok());
+    assert!(Graph::<Input, ()>::new(empty).is_err());
+    assert!(Graph::<(), Output>::new(empty).is_err());
 }
 
 #[test]
 fn public_errors_have_actionable_display_text() {
-    let error = Error::InputDTypeMismatch {
-        index: 1,
-        expected: DType::F32,
-        actual: DType::I32,
-    };
     assert_eq!(
-        error.to_string(),
-        "runtime input 1 dtype mismatch: expected F32, got I32"
+        Error::from(GraphSignatureError::Output).to_string(),
+        "graph output signature does not match the typed handle"
     );
-
-    let shape = Error::Shape {
-        expected: &[2, 2],
-        actual: vec![3],
-    };
     assert_eq!(
-        shape.to_string(),
+        Error::OutputShapeMismatch {
+            index: 1,
+            expected: &[2, 2],
+            actual: vec![4]
+        }
+        .to_string(),
+        "runtime output 1 shape mismatch: expected [2, 2], got [4]"
+    );
+    assert_eq!(
+        Error::Shape {
+            expected: &[2, 2],
+            actual: vec![3]
+        }
+        .to_string(),
         "tensor shape mismatch: expected [2, 2], got [3]"
     );
 }
 
+#[cfg(feature = "runtime")]
 #[test]
-fn engine_for_artifact_rejects_empty_variants_before_runtime_setup() {
-    let artifact = GraphArtifact {
-        function_name: "forward",
-        input_descs: &[],
-        output_descs: &[],
-        variants: &[],
-    };
+fn cpu_device_selection_supports_ordinals_and_paths() {
+    let devices = Engine::available_devices(Driver::LocalSync).unwrap();
+    assert!(!devices.is_empty());
+    let engine = Engine::new(RuntimeConfig::driver(Driver::LocalSync).device_ordinal(0)).unwrap();
+    assert_eq!(engine.driver_name(), "local-sync");
+    let engine = Engine::new(
+        RuntimeConfig::driver(Driver::LocalSync)
+            .device_ordinal(usize::MAX)
+            .device_path(devices[0].path()),
+    )
+    .unwrap();
+    assert_eq!(engine.driver_name(), "local-sync");
+    let engine = Engine::new(RuntimeConfig::backend(Backend::LlvmCpu)).unwrap();
+    assert_eq!(engine.driver_name(), "local-task");
+}
 
-    let error = match Engine::for_artifact(artifact) {
-        Ok(_) => panic!("empty artifact unexpectedly constructed an engine"),
-        Err(error) => error,
-    };
-
+#[cfg(feature = "runtime")]
+#[test]
+fn engine_rejects_empty_artifacts_before_runtime_setup() {
+    let artifact = GraphArtifact::new("forward", &[], &[], &[]);
     assert!(matches!(
-        error,
-        Error::MissingDefaultArtifactVariant {
+        Engine::for_artifact(artifact),
+        Err(Error::MissingDefaultArtifactVariant {
             function_name: "forward"
-        }
+        })
     ));
 }

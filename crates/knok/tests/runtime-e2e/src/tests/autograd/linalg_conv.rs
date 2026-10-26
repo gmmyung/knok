@@ -6,7 +6,7 @@ fn value_and_grad_rank2_matmul_runs() {
     let rhs = Tensor2::from_array([[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]);
 
     let (loss, grad_lhs, grad_rhs) =
-        autograd_graphs::matmul_sum_loss_value_and_grad::call(lhs, rhs).unwrap();
+        autograd_graphs::matmul_sum_loss_value_and_grad::call(&lhs, &rhs).unwrap();
 
     assert_close(loss.as_slice(), &[415.0]);
     assert_close(grad_lhs.as_slice(), &[15.0, 19.0, 23.0, 15.0, 19.0, 23.0]);
@@ -18,7 +18,7 @@ fn value_and_grad_matmul_rank_variants_run() {
     let lhs = Tensor1::from_array([1.0, 2.0, 3.0]);
     let rhs = Tensor1::from_array([4.0, 5.0, 6.0]);
     let (loss, grad_lhs, grad_rhs) =
-        autograd_graphs::vecvec_matmul_loss_value_and_grad::call(lhs, rhs).unwrap();
+        autograd_graphs::vecvec_matmul_loss_value_and_grad::call(&lhs, &rhs).unwrap();
     assert_close(loss.as_slice(), &[32.0]);
     assert_close(grad_lhs.as_slice(), &[4.0, 5.0, 6.0]);
     assert_close(grad_rhs.as_slice(), &[1.0, 2.0, 3.0]);
@@ -26,7 +26,7 @@ fn value_and_grad_matmul_rank_variants_run() {
     let lhs = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
     let rhs = Tensor1::from_array([1.0, 2.0, 3.0]);
     let (loss, grad_lhs, grad_rhs) =
-        autograd_graphs::matvec_sum_loss_value_and_grad::call(lhs, rhs).unwrap();
+        autograd_graphs::matvec_sum_loss_value_and_grad::call(&lhs, &rhs).unwrap();
     assert_close(loss.as_slice(), &[46.0]);
     assert_close(grad_lhs.as_slice(), &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
     assert_close(grad_rhs.as_slice(), &[5.0, 7.0, 9.0]);
@@ -34,7 +34,7 @@ fn value_and_grad_matmul_rank_variants_run() {
     let lhs = Tensor1::from_array([1.0, 2.0, 3.0]);
     let rhs = Tensor2::from_array([[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]);
     let (loss, grad_lhs, grad_rhs) =
-        autograd_graphs::vecmat_sum_loss_value_and_grad::call(lhs, rhs).unwrap();
+        autograd_graphs::vecmat_sum_loss_value_and_grad::call(&lhs, &rhs).unwrap();
     assert_close(loss.as_slice(), &[122.0]);
     assert_close(grad_lhs.as_slice(), &[15.0, 19.0, 23.0]);
     assert_close(grad_rhs.as_slice(), &[1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);
@@ -52,7 +52,7 @@ fn value_and_grad_batched_matmul_broadcasts_gradients() {
     ]);
 
     let (loss, grad_lhs, grad_rhs) =
-        autograd_graphs::broadcast_matmul_sum_loss_value_and_grad::call(lhs, rhs).unwrap();
+        autograd_graphs::broadcast_matmul_sum_loss_value_and_grad::call(&lhs, &rhs).unwrap();
 
     assert_close(loss.as_slice(), &[726.0]);
     assert_close(
@@ -77,7 +77,7 @@ fn value_and_grad_linalg_ext_ops_run() {
     let n = Tensor2::from_array([[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]);
 
     let (loss, grad_v, grad_w, grad_m, grad_n) =
-        autograd_graphs::linalg_ext_loss_value_and_grad::call(v, w, m, n).unwrap();
+        autograd_graphs::linalg_ext_loss_value_and_grad::call(&v, &w, &m, &n).unwrap();
 
     assert_close(loss.as_slice(), &[746.0]);
     assert_close(grad_v.as_slice(), &[19.0, 20.0, 21.0]);
@@ -90,7 +90,7 @@ fn value_and_grad_linalg_ext_ops_run() {
 fn value_and_grad_trace_diagonal_runs() {
     let x = Tensor2::from_array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
 
-    let (loss, grad_x) = autograd_graphs::trace_diagonal_loss_value_and_grad::call(x).unwrap();
+    let (loss, grad_x) = autograd_graphs::trace_diagonal_loss_value_and_grad::call(&x).unwrap();
 
     assert_close(loss.as_slice(), &[30.0]);
     assert_close(
@@ -107,7 +107,7 @@ fn value_and_grad_pooling_runs() {
         [[1.0], [2.0], [3.0], [4.0]],
         [[5.0], [6.0], [7.0], [8.0]],
     ]]);
-    let (loss, grad_x) = autograd_graphs::max_pool_loss_value_and_grad::call(max_input).unwrap();
+    let (loss, grad_x) = autograd_graphs::max_pool_loss_value_and_grad::call(&max_input).unwrap();
     assert_close(loss.as_slice(), &[10.0]);
     assert_close(
         grad_x.as_slice(),
@@ -121,7 +121,7 @@ fn value_and_grad_pooling_runs() {
         [[4.0], [5.0], [6.0]],
         [[7.0], [8.0], [9.0]],
     ]]);
-    let (loss, grad_x) = autograd_graphs::avg_pool_loss_value_and_grad::call(avg_input).unwrap();
+    let (loss, grad_x) = autograd_graphs::avg_pool_loss_value_and_grad::call(&avg_input).unwrap();
     assert_close(loss.as_slice(), &[11.25]);
     assert_close(grad_x.as_slice(), &[0.25; 9]);
 }
@@ -136,7 +136,7 @@ fn value_and_grad_conv2d_runs() {
     let k = Tensor4::from_array([[[[1.0]], [[0.0]]], [[[0.0]], [[1.0]]]]);
 
     let (loss, grad_x, grad_k) =
-        autograd_graphs::conv2d_sum_loss_value_and_grad::call(x, k).unwrap();
+        autograd_graphs::conv2d_sum_loss_value_and_grad::call(&x, &k).unwrap();
 
     assert_close(loss.as_slice(), &[40.0]);
     assert_close(
@@ -152,7 +152,7 @@ fn value_and_grad_conv2d_runs() {
     ]]);
     let k = Tensor4::from_array([[[[1.0, 1.0]], [[0.0, 0.0]]], [[[0.0, 0.0]], [[1.0, 1.0]]]]);
     let (loss, grad_x, grad_k) =
-        autograd_graphs::grouped_conv2d_sum_loss_value_and_grad::call(x, k).unwrap();
+        autograd_graphs::grouped_conv2d_sum_loss_value_and_grad::call(&x, &k).unwrap();
     assert_close(loss.as_slice(), &[440.0]);
     assert_close(
         grad_x.as_slice(),
@@ -175,7 +175,8 @@ fn value_and_grad_conv2d_runs() {
     ]]);
     let k = Tensor4::from_array([[[[1.0]], [[2.0]]], [[[3.0]], [[4.0]]]]);
     let (loss, grad_x, grad_k) =
-        autograd_graphs::padded_stride_dilated_conv2d_sum_loss_value_and_grad::call(x, k).unwrap();
+        autograd_graphs::padded_stride_dilated_conv2d_sum_loss_value_and_grad::call(&x, &k)
+            .unwrap();
     assert_close(loss.as_slice(), &[520.0]);
     assert_close(
         grad_x.as_slice(),

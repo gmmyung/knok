@@ -11,9 +11,9 @@ pub fn multi_output_artifact() -> knok::GraphArtifact {
 }
 
 pub fn variant_count() -> usize {
-    artifact().variants.len()
+    artifact().variants().len()
 }
 
 pub fn multi_output_count() -> usize {
-    multi_output_artifact().output_descs.len()
+    multi_output_artifact().output_descs().len()
 }

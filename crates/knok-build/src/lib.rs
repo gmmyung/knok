@@ -35,7 +35,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use knok_compile::{compile_graph_with_registry, compile_mlir_source};
+use anyhow::Context;
+pub use knok_compile::CompileOptions;
+use knok_compile::{compile_graph_with_options, compile_mlir_source_with_options};
 use knok_core::{value_and_grad_graph_with_registry, Input, TensorType, TypedGraph};
 
 pub use knok_build_macros::{
@@ -96,9 +98,15 @@ impl Backend {
 pub struct BuildOptions {
     output_file: String,
     stub_artifacts: bool,
+    compiler: CompileOptions,
 }
 
 impl BuildOptions {
+    /// Sets IREE compiler tuning for every emitted graph, including gradients and imports.
+    pub fn compiler_options(mut self, options: CompileOptions) -> Self {
+        self.compiler = options;
+        self
+    }
     /// Creates placeholder VMFB files for check-only builds.
     ///
     /// Stub artifacts let no-std or cross-target fixture crates typecheck
@@ -126,6 +134,7 @@ impl Default for BuildOptions {
         Self {
             output_file: "knok_graphs.rs".into(),
             stub_artifacts: false,
+            compiler: CompileOptions::default(),
         }
     }
 }
@@ -219,6 +228,7 @@ pub fn emit_registered_graphs_with_options(
         env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
     }
     println!("cargo:rerun-if-changed=build.rs");
+    track_compiler_environment();
 
     let mut generated = String::new();
     let graphs = registry.graphs;
@@ -233,14 +243,15 @@ pub fn emit_registered_graphs_with_options(
         if options.stub_artifacts {
             fs::write(&vmfb_path, [0u8; 16])?;
         } else {
-            let compiled = compile_registered_graph(&registered.graph, &graph_registry)?;
+            let compiled =
+                compile_registered_graph(&registered.graph, &graph_registry, &options.compiler)?;
             fs::write(&vmfb_path, compiled.vmfb)?;
         }
         generated.push_str(&codegen::graph_module(
             &registered.graph,
             registered.backend,
             &vmfb_name,
-            &[],
+            &options.compiler.flags(registered.backend.name())?,
         )?);
         generated.push('\n');
     }
@@ -265,6 +276,7 @@ pub fn emit_registered_grad_graphs_with_options(
         env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
     }
     println!("cargo:rerun-if-changed=build.rs");
+    track_compiler_environment();
 
     let mut generated = String::new();
     let graphs = registry.graphs;
@@ -280,14 +292,14 @@ pub fn emit_registered_grad_graphs_with_options(
         if options.stub_artifacts {
             fs::write(&vmfb_path, [0u8; 16])?;
         } else {
-            let compiled = compile_registered_graph(&graph, &graph_registry)?;
+            let compiled = compile_registered_graph(&graph, &graph_registry, &options.compiler)?;
             fs::write(&vmfb_path, compiled.vmfb)?;
         }
         generated.push_str(&codegen::graph_module(
             &graph,
             registered.backend,
             &vmfb_name,
-            &[],
+            &options.compiler.flags(registered.backend.name())?,
         )?);
         generated.push('\n');
     }
@@ -309,6 +321,7 @@ pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptio
         env::set_var("KNOK_CACHE_DIR", out_dir.join("knok-cache"));
     }
     println!("cargo:rerun-if-changed=build.rs");
+    track_compiler_environment();
 
     let mut generated = String::new();
     for model in &models {
@@ -320,15 +333,32 @@ pub fn emit_mlir_models_with_options(models: Vec<MlirModel>, options: BuildOptio
             fs::write(&vmfb_path, [0u8; 16])?;
         } else {
             let source = fs::read_to_string(&source_path)?;
-            let vmfb = compile_mlir_source(model.backend.name(), &source)?;
+            let vmfb =
+                compile_mlir_source_with_options(model.backend.name(), &source, &options.compiler)?;
             fs::write(&vmfb_path, vmfb)?;
         }
-        generated.push_str(&codegen::mlir_model_module(model, &vmfb_name, &[])?);
+        generated.push_str(&codegen::mlir_model_module(
+            model,
+            &vmfb_name,
+            &options.compiler.flags(model.backend.name())?,
+        )?);
         generated.push('\n');
     }
 
     fs::write(out_dir.join(options.output_file), generated)?;
     Ok(())
+}
+
+fn track_compiler_environment() {
+    for variable in [
+        "EERIE_PYTHON",
+        "KNOK_IREE_COMPILER",
+        "KNOK_CACHE_DIR",
+        "PATH",
+        "PYTHONPATH",
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+    }
 }
 
 fn resolve_model_path(path: &Path) -> Result<PathBuf> {
@@ -349,8 +379,10 @@ fn mlir_model_vmfb_name(name: &str) -> String {
 fn compile_registered_graph(
     graph: &TypedGraph,
     graphs: &BTreeMap<String, TypedGraph>,
+    options: &CompileOptions,
 ) -> Result<knok_compile::CompiledGraph> {
-    compile_graph_with_registry(graph, graphs).map_err(Into::into)
+    compile_graph_with_options(graph, graphs, options)
+        .with_context(|| format!("failed to compile graph `{}`", graph.name))
 }
 
 #[cfg(test)]
@@ -405,9 +437,9 @@ pub mod prelude {
         sigmoid, sin, slice, softmax, softmax_axis, split, sqrt, square, squeeze, stack, std,
         std_axis, sum, sum_axis, swapaxes, take, take_along_axis, tan, tanh, tile, trace,
         trace_axes, transpose, transpose_axes, uniform, uniform_static, unsqueeze, var, var_axis,
-        vecdot, vecdot_axis, zeros_like, Backend, BuildOptions, Conv2dOptions, MlirModel,
-        Pool2dOptions, Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6, T0, T1, T2,
-        T3, T4, T5, T6,
+        vecdot, vecdot_axis, zeros_like, Backend, BuildOptions, CompileOptions, Conv2dOptions,
+        MlirModel, Pool2dOptions, Tensor0, Tensor1, Tensor2, Tensor3, Tensor4, Tensor5, Tensor6,
+        T0, T1, T2, T3, T4, T5, T6,
     };
     pub use half::{bf16, f16};
 }

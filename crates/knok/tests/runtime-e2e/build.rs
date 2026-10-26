@@ -180,7 +180,7 @@ fn main() {
     );
 
     knok_build::compile_mlir_models_with_options!(
-        BuildOptions::default().output_file("knok_mlir_models.rs");
+        BuildOptions::default().output_file("knok_mlir_models.rs").compiler_options(CompileOptions::default().target_cpu("generic"));
         imported_add4 {
             path: "../fixtures/add4.mlir",
             function: "imported.add4",
@@ -195,5 +195,46 @@ fn main() {
             inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
             outputs: [T1<f32, 4>, T1<f32, 4>],
         },
+        wrong_shape {
+            path: "../fixtures/add4.mlir",
+            function: "imported.add4",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T2<f32, 2, 2>],
+        },
+        wrong_count {
+            path: "../fixtures/add_sub4.mlir",
+            function: "imported.add_sub4",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T1<f32, 4>],
+        },
+        wrong_second_shape {
+            path: "../fixtures/add_sub4.mlir",
+            function: "imported.add_sub4",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T1<f32, 4>, T2<f32, 2, 2>],
+        },
+        wrong_second_dtype {
+            path: "../fixtures/add_sub4.mlir",
+            function: "imported.add_sub4",
+            backend: Backend::LlvmCpu,
+            inputs: [x: T1<f32, 4>, y: T1<f32, 4>],
+            outputs: [T1<f32, 4>, T1<i32, 4>],
+        },
+    );
+
+    knok_build::compile_graphs_with_options!(
+        BuildOptions::default().output_file("knok_tuned_graphs.rs").compiler_options(
+            CompileOptions::default().target_cpu("generic").cpu_features("").flag("--iree-opt-level=O1")
+        );
+        runtime_api::affine_relu
+    );
+    knok_build::grad_graphs_with_options!(
+        BuildOptions::default().output_file("knok_tuned_grad_graphs.rs").compiler_options(
+            CompileOptions::default().target_cpu("generic").flag("--iree-opt-level=O1")
+        );
+        autograd_basic::sum_square_loss
     );
 }

@@ -1,43 +1,120 @@
 # IREE Compiler Setup
 
 `knok-build` compiles traced graphs during the user's `build.rs`. The final
-VMFB step is delegated to the `iree-compile` command line tool.
+VMFB step runs in-process through Eerie's shared IREE compiler library. Install
+the matching compiler wheel, or use `nix develop` for the complete toolchain:
+
+```sh
+python -m pip install 'iree-base-compiler==3.13.0'
+```
+
+Building `knok-build` also needs LLVM/MLIR 23 for Melior 0.28. The Nix shell
+provides these native dependencies and libclang.
 
 ## Lookup Order
 
 `knok-compile` resolves the compiler as follows:
 
-1. `KNOK_IREE_COMPILE`, when set.
-2. `iree-compile` on `PATH`.
+1. `KNOK_IREE_COMPILER`, when set, selects a shared library file or directory.
+2. Otherwise Eerie discovers `iree-base-compiler==3.13.0` using Python on `PATH`.
+   `EERIE_PYTHON` can select a specific Python executable.
 
 Examples:
 
 ```sh
-export KNOK_IREE_COMPILE=/path/to/iree-compile
+export KNOK_IREE_COMPILER=/path/to/libIREECompiler.dylib
 cargo build
 ```
 
 ```sh
-PATH=/path/to/iree-dist/bin:$PATH cargo build
+EERIE_PYTHON=python3 cargo build
 ```
 
-`KNOK_CACHE_DIR` can override the VMFB cache directory. By default, artifacts
-are cached under `target/knok-cache` for the build-script crate.
+No IREE library paths or rpaths need to be added to Rust flags.
 
 ## Supported Sources
 
 The Nix development shell is the recommended contributor path. It provisions
-the pinned IREE compiler used by CI and local release checks.
+IREE 3.13.0, matching the Eerie 0.7 runtime used by CI and local release checks.
 
-Other usable sources are:
+Recompile VMFB artifacts produced by IREE 3.11 or earlier; they use an older HAL
+module ABI.
 
-- the IREE Python wheel, when it provides `iree-compile`
-- a source build of IREE at a compatible release revision
-- experimental IREE dist tarballs that include `bin/iree-compile`
+Custom IREE 3.13 libraries can be selected with `KNOK_IREE_COMPILER`.
 
-Standalone IREE compiler/library artifacts are not yet treated as a stable
-upstream distribution contract. Keep this documented as an external requirement
-until IREE publishes regular release assets for the compiler tools.
+## Compiler Options
+
+Set explicit IREE tuning in `build.rs`:
+
+```rust
+use knok_build::prelude::*;
+
+knok_build::compile_graphs_with_options!(
+    BuildOptions::default().compiler_options(
+        CompileOptions::default()
+            .target_cpu("host")
+            .cpu_features("host")
+            .flag("--iree-opt-level=O2")
+    );
+    forward
+);
+```
+
+Choose features supported by the deployment CPU. `host` CPU tuning makes
+artifacts specific to the build host. These options also apply to
+`grad_graphs_with_options!` and `compile_mlir_models_with_options!`; emitted
+artifact variants record the resolved flags. Compiler options participate in
+the cache key. Select the backend on the graph/model rather than overriding
+`--iree-hal-target-backends` in flags.
+
+Without overrides, CPU optimization and target triple follow Cargo's profile
+and target. Options do not copy Cargo Rust flags into native compiler flags.
+
+## Cache
+
+`KNOK_CACHE_DIR` overrides the VMFB cache directory. Build scripts default to
+`OUT_DIR/knok-cache`; direct `knok-compile` calls use `target/knok-cache` under
+the calling crate. Changes to the source, compiler, options, or target invalidate
+the cache. Build scripts track the library file and compiler selection
+environment so compiler changes rebuild the generated artifacts.
+
+## macOS Build Hosts
+
+Melior and IREE each carry LLVM/MLIR. Their symbols must stay separate. The Nix
+shell selects `scripts/macos-linker.py`, which hides executable exports while
+preserving shared-library and proc-macro exports. It also applies to Cargo's
+host build scripts when an explicit `--target` is used.
+
+Outside Nix, copy that executable script into your project and configure Cargo
+for your **host** triple:
+
+```toml
+# .cargo/config.toml; use x86_64-apple-darwin for an Intel build host.
+[target.aarch64-apple-darwin]
+linker = "scripts/macos-linker.py"
+```
+
+The script uses `clang` on `PATH`. Hiding executable exports is unsuitable for
+applications exposing a host API to plugins; those need a selective export
+policy. Knok reports a setup error if the build host still exports Melior's
+MLIR entry points. Emitting linker arguments from a consumer's `build.rs` only
+affects its targets, not that build script's own executable.
+
+## Cross-Language LTO
+
+Enable `knok`'s `cross-lang-lto` feature to compile the native runtime with
+Clang ThinLTO. Use the matching development shell for the Rust/Clang/LLVM linker
+configuration on Linux or macOS:
+
+```sh
+nix develop .#cross-lang-lto
+cargo test --release -p knok --features cross-lang-lto
+```
+
+This feature belongs on the target `knok` dependency; `knok-build` does not need
+it. It requires compatible Rust/LLVM tools and a linker configured for joint
+Rust/C LTO. The shell handles this, including macOS host export isolation.
+Cargo's optimization/debug profile still controls the native build profile.
 
 ## docs.rs and CI
 
@@ -50,18 +127,19 @@ and release checks see a pinned compiler.
 
 ## Troubleshooting
 
-`failed to run IREE compiler ...`
+`failed to load the IREE compiler ...`
 
-Set `KNOK_IREE_COMPILE` or put `iree-compile` on `PATH`.
+Install the matching wheel in the active Python environment. Use `EERIE_PYTHON`
+to select another interpreter or `KNOK_IREE_COMPILER` for a custom library.
 
 `unsupported IREE backend`
 
 `llvm-cpu` is always exposed. `metal-spirv` is exposed on macOS.
 `vulkan-spirv` and `cuda` are exposed when the corresponding `vulkan` or `cuda`
-crate feature is enabled and the selected `iree-compile` binary was built with
+crate feature is enabled and the selected compiler library was built with
 that target backend.
 
-`runtime driver mismatch`
+`no artifact variant ... runtime driver ...`
 
-Use an engine whose runtime driver matches the artifact variant. The typed
+Use an engine whose runtime driver supports the artifact backend. The typed
 backend helpers choose the default driver for each supported backend.

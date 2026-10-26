@@ -13,6 +13,16 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Added
 
+- Added prepared `Model` handles through generated `load(&engine)` helpers,
+  resolving functions once for repeated inference.
+- Added explicit `CompileOptions` for CPU/features and compiler flags across
+  traced graphs, gradients, and imported MLIR models.
+- Added runtime device discovery, ordinal/path selection, and `local-sync`
+  execution of LLVM CPU artifacts.
+- Added generated `run_into` wrappers and `Graph::run_into` for reusing host
+  output tensor storage, including mixed-dtype tuples.
+- Added opt-in `cross-lang-lto` for the native runtime, with a matching Linux
+  and macOS Nix shell.
 - Added experimental build-time value-and-gradient graph generation through
   `knok-build` `grad_graphs!` macros, including scalar-loss autograd coverage
   for arithmetic, math/reduction/layout operations, linalg contractions,
@@ -27,6 +37,33 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ### Changed
 
+- Graph execution borrows input tensors, including tuples, so repeated calls
+  no longer require cloning host data. Graph construction now checks complete
+  typed signatures; artifact metadata uses constructors and accessors.
+- Validate all output dtypes and full shapes before writing reused host storage.
+  Empty signatures now mean zero inputs/outputs rather than unchecked metadata.
+- Remove the inactive `embedded-runtime` feature and placeholder engine APIs.
+  Execution APIs are available only with `runtime`; `no_std + alloc` retains
+  tensors, graph types, and artifact metadata. Remove obsolete runtime errors
+  and cache mutex; cache static artifacts without copying VMFB keys.
+- Updated Melior to 0.28.2 with LLVM/MLIR 23, Syn to 3, and the benchmark
+  harness to Criterion 0.8.2 and ndarray 0.17.2. Refreshed both dependency
+  lockfiles and the Nix toolchain, and removed unused compiler dependencies.
+- Moved coverage tooling to `nix develop .#coverage`, using Rust-matched LLVM
+  readers and keeping profiling dependencies out of the default shell.
+- Compile graphs in-process through Eerie's automatically discovered compiler
+  library, sharing initialization across graphs and eliminating compiler
+  subprocesses and temporary MLIR files. `KNOK_IREE_COMPILER` selects a custom
+  library; the old `KNOK_IREE_COMPILE` executable override is removed.
+- Configure macOS build-host exports in the Nix shell so Melior and the stock
+  IREE wheel can coexist, including in Cargo build scripts. Remove native
+  library paths and rpaths from the shell's Rust flags.
+- Lower axis softmax with the same stable max-shifted reductions as global
+  softmax, avoiding an IREE 3.13 release-mode distribution error in its gradient.
+- Preserve compiler diagnostic chains and graph names in build-script errors.
+- Updated the runtime to Eerie 0.7.0 and aligned the development compiler with
+  IREE 3.13.0. Existing VMFBs from IREE 3.11 or earlier must be recompiled;
+  build-time graph caches are invalidated automatically by the compiler version.
 - Rejected reused `Expr::Node` ids with different expression payloads during
   `knok_core::type_check` instead of reusing cached node output types.
 

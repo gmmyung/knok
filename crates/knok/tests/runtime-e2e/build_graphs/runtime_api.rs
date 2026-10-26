@@ -1,8 +1,8 @@
 use knok_build::prelude::*;
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]
-pub(crate) fn affine_relu(x: T2<f32, 2, 2>) -> T2<f32, 2, 2> {
-    relu(matmul(x.clone(), x) + 1.0)
+pub(crate) fn affine_relu(outputs: T2<f32, 2, 2>) -> T2<f32, 2, 2> {
+    relu(matmul(outputs.clone(), outputs) + 1.0)
 }
 
 #[knok_build::graph(backend = Backend::LlvmCpu)]

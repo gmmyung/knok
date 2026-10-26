@@ -114,7 +114,7 @@ For repeated hosted inference, prefer an engine created from the artifact:
 
 ```rust
 let engine = knok::Engine::for_artifact(graphs::forward::artifact())?;
-let y = graphs::forward::run(&engine, x)?;
+let y = graphs::forward::run(&engine, &x)?;
 ```
 
 That keeps runtime driver selection aligned with the backend used by
@@ -150,7 +150,7 @@ file:
 ```rust
 knok::generated_graphs!(pub mod grad_graphs, "knok_grad_graphs.rs");
 
-let (loss, dx) = grad_graphs::loss_value_and_grad::call(x)?;
+let (loss, dx) = grad_graphs::loss_value_and_grad::call(&x)?;
 ```
 
 Use `grad_graphs!(loss)` when the build script only writes gradient wrappers to
@@ -187,7 +187,7 @@ Then import and call it from target code:
 ```rust
 knok::generated_graphs!(pub mod graphs);
 
-let z = graphs::imported_add::call(x, y)?;
+let z = graphs::imported_add::call(&x, &y)?;
 ```
 
 When traced graphs and external MLIR models are generated from the same

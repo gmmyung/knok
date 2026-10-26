@@ -75,50 +75,70 @@ fn generated_module(
     let input_params = inputs
         .iter()
         .zip(input_names.iter())
-        .map(|(input, name)| format!("{}: {}", name, rust_tensor_type(&input.ty)))
+        .map(|(input, name)| format!("{}: &{}", name, rust_tensor_type(&input.ty)))
         .collect::<Vec<_>>()
         .join(", ");
     let input_type = rust_input_type(inputs);
     let input_expr = rust_input_expr(&input_names);
     let output_type = rust_output_type(outputs);
-    let run_params = prefixed_params("engine: &::knok::Engine", &input_params);
+    let mut engine_name = "engine".to_string();
+    while input_names.contains(&engine_name) {
+        engine_name.push('_');
+    }
+    let run_params = prefixed_params(&format!("{engine_name}: &::knok::Engine"), &input_params);
+    let mut output_name = "outputs".to_string();
+    while input_names.contains(&output_name) {
+        output_name.push('_');
+    }
+    let run_into_params =
+        prefixed_params(&run_params, &format!("{output_name}: &mut {output_type}"));
     let call_params = input_params.clone();
 
     Ok(format!(
         r#"pub mod {module_name} {{
     static VMFB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/{vmfb_name}"));
     static COMPILE_FLAGS: &[&str] = &[{compile_flags}];
-    static VARIANTS: &[::knok::GraphArtifactVariant] = &[::knok::GraphArtifactVariant {{
-        vmfb: VMFB,
-        backend: "{backend}",
-        driver: "{driver}",
-        compile_flags: COMPILE_FLAGS,
-    }}];
+    static VARIANTS: &[::knok::GraphArtifactVariant] = &[::knok::GraphArtifactVariant::new(
+        VMFB, ::knok::Backend::{backend:?}, COMPILE_FLAGS,
+    )];
     static INPUT_DESCS: &[::knok::TensorDesc] = &[{input_descs}];
     static OUTPUT_DESCS: &[::knok::TensorDesc] = &[{output_descs}];
 
     pub const fn artifact() -> ::knok::GraphArtifact {{
-        ::knok::GraphArtifact {{
-            function_name: "{function_name}",
-            input_descs: INPUT_DESCS,
-            output_descs: OUTPUT_DESCS,
-            variants: VARIANTS,
-        }}
+        ::knok::GraphArtifact::new("{function_name}", INPUT_DESCS, OUTPUT_DESCS, VARIANTS)
     }}
 
-    pub static GRAPH: ::knok::Graph<{input_type}, {output_type}> = ::knok::Graph::new(artifact());
+    pub static GRAPH: ::knok::Graph<{input_type}, {output_type}> = match ::knok::Graph::new(artifact()) {{
+        Ok(graph) => graph,
+        Err(_) => panic!("generated graph signature mismatch"),
+    }};
 
+    ::knok::__runtime! {{
+    /// Prepared model for this graph.
+    pub type Model<'a> = ::knok::Model<'a, {input_type}, {output_type}>;
+
+    /// Loads the graph and resolves its function once for repeated calls.
+    pub fn load(engine: &::knok::Engine) -> ::knok::Result<Model<'_>> {{
+        GRAPH.load(engine)
+    }}
+
+    /// Runs with borrowed inputs and a reusable engine.
     pub fn run({run_params}) -> ::knok::Result<{output_type}> {{
-        GRAPH.run(engine, {input_expr})
+        GRAPH.run({engine_name}, {input_expr})
     }}
 
+    /// Runs with borrowed inputs and reuses host output storage.
+    pub fn run_into({run_into_params}) -> ::knok::Result<()> {{
+        GRAPH.run_into({engine_name}, {input_expr}, {output_name})
+    }}
+
+    /// Runs once with borrowed inputs, creating an engine for this invocation.
     pub fn call({call_params}) -> ::knok::Result<{output_type}> {{
         GRAPH.run_once({input_expr})
     }}
+    }}
 }}
 "#,
-        backend = backend.name(),
-        driver = backend.default_driver(),
     ))
 }
 
@@ -366,12 +386,12 @@ mod tests {
 
         assert!(module.contains("pub mod forward"));
         assert!(module.contains("include_bytes!(concat!(env!(\"OUT_DIR\"), \"/forward.vmfb\"))"));
-        assert!(module.contains("function_name: \"knok.forward\""));
-        assert!(module.contains("backend: \"llvm-cpu\""));
-        assert!(module.contains("driver: \"local-task\""));
+        assert!(module.contains("GraphArtifact::new(\"knok.forward\""));
+        assert!(module.contains("::knok::Backend::LlvmCpu"));
+        assert!(module.contains("GRAPH.load(engine)"));
         assert!(module.contains("static COMPILE_FLAGS: &[&str] = &[\"--some-flag\"]"));
         assert!(module.contains("::knok::TensorDesc::new(::knok::DType::F32, &[2, 3])"));
-        assert!(module.contains("x: ::knok::tensor::Tensor2<f32, 2, 3>"));
+        assert!(module.contains("x: &::knok::tensor::Tensor2<f32, 2, 3>"));
         assert!(module.contains(
             "pub static GRAPH: ::knok::Graph<::knok::tensor::Tensor2<f32, 2, 3>, ::knok::tensor::Tensor2<f32, 2, 3>>"
         ));
@@ -391,7 +411,7 @@ mod tests {
         let module = graph_module(&graph, Backend::LlvmCpu, "stats.vmfb", &[]).unwrap();
 
         assert!(module.contains(
-            "pub fn run(engine: &::knok::Engine, values: ::knok::tensor::Tensor2<f32, 2, 3>) -> ::knok::Result<(::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
+            "pub fn run(engine: &::knok::Engine, values: &::knok::tensor::Tensor2<f32, 2, 3>) -> ::knok::Result<(::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
         ));
         assert!(module.contains(
             "pub static GRAPH: ::knok::Graph<::knok::tensor::Tensor2<f32, 2, 3>, (::knok::tensor::Tensor1<f32, 2>, ::knok::tensor::Tensor1<i64, 2>)>"
@@ -421,9 +441,9 @@ mod tests {
         assert!(module.contains(
             "include_bytes!(concat!(env!(\"OUT_DIR\"), \"/mlir-model-imported_add.vmfb\"))"
         ));
-        assert!(module.contains("function_name: \"imported.add\""));
-        assert!(module.contains("x: ::knok::tensor::Tensor1<f32, 4>"));
-        assert!(module.contains("y: ::knok::tensor::Tensor1<f32, 4>"));
+        assert!(module.contains("GraphArtifact::new(\"imported.add\""));
+        assert!(module.contains("x: &::knok::tensor::Tensor1<f32, 4>"));
+        assert!(module.contains("y: &::knok::tensor::Tensor1<f32, 4>"));
         assert!(module.contains(
             "pub static GRAPH: ::knok::Graph<(::knok::tensor::Tensor1<f32, 4>, ::knok::tensor::Tensor1<f32, 4>,), ::knok::tensor::Tensor1<f32, 4>>"
         ));

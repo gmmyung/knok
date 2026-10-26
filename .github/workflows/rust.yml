@@ -8,57 +8,75 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
 
 jobs:
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
       - run: nix develop --command cargo fmt --all -- --check
 
   core:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command python -m unittest discover -s scripts -p 'test_*.py'
       - run: nix develop --command cargo test -p knok-core -p knok-compile -p knok-build -p knok-build-macros
 
   no-std:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
       - run: nix develop --command cargo check -p knok --no-default-features
+      - run: nix develop --command cargo test -p knok --no-default-features --features half,serde
       - run: nix develop --command cargo check -p knok-build-tracing-smoke
       - run: nix develop --command cargo check -p knok-no-std-smoke
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      RUSTDOCFLAGS: -D warnings -D missing_docs
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
       - run: nix develop --command cargo doc -p knok --no-deps
+      - run: nix develop --command cargo doc -p knok --no-default-features --no-deps
 
   runtime:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
@@ -66,3 +84,33 @@ jobs:
       - run: nix develop --command cargo test -p knok
       - run: nix develop --command cargo test -p knok-build-tracing-runtime
       - run: nix develop --command cargo test -p knok-runtime-e2e
+
+  compiler-macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop --command cargo test --locked -p knok-compile -p knok-runtime-e2e
+      - run: nix develop --command cargo test --locked --release -p knok-compile -p knok-runtime-e2e
+
+  cross-lang-lto:
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: ${{ runner.os == 'Linux' && '--no-daemon' || '' }}
+          extra_nix_config: sandbox = false
+      - uses: Swatinem/rust-cache@v2
+      - run: nix develop .#cross-lang-lto --command cargo test --locked --release -p knok-runtime-e2e --features knok/cross-lang-lto

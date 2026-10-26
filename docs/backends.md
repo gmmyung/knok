@@ -1,7 +1,7 @@
 # Backends
 
 `knok` separates compile-time IREE target backends from runtime drivers.
-Generated artifacts record both pieces of metadata.
+Generated artifacts record their backend; compatible drivers follow from it.
 
 ## Available Backends
 
@@ -17,31 +17,34 @@ types. Prefer typed backend and driver values over string names.
 
 ## Runtime Selection
 
-Generated artifacts record the backend used by `knok-build` and the default
-runtime driver for that backend. The most robust hosted runtime path is to let
+Generated artifacts record the backend used by `knok-build`. The default
+runtime path lets
 the artifact choose the engine driver:
 
 ```rust
 knok::generated_graphs!(pub mod graphs);
 
 let engine = knok::Engine::for_artifact(graphs::forward::artifact())?;
-let y = graphs::forward::run(&engine, x)?;
+let model = graphs::forward::load(&engine)?;
+let y = model.run(&x)?;
 ```
 
 The one-shot generated wrapper does the same thing internally:
 
 ```rust
-let y = graphs::forward::call(x)?;
+let y = graphs::forward::call(&x)?;
 ```
 
 `Engine::for_backend(Backend::LlvmCpu)` and
 `Engine::new(RuntimeConfig::backend(...))` are useful when the caller already
 knows which driver a group of graphs should share. If the engine driver does
-not match any variant embedded in the artifact, `run` returns a missing-variant
-or runtime-driver mismatch error instead of silently falling back.
+is incompatible with every embedded backend, loading returns a missing-variant
+error. LLVM CPU artifacts accept both `Driver::LocalTask` and `Driver::LocalSync`.
 
 When reusing one engine across multiple graphs, construct it from one artifact
-and only run graphs compiled for the same runtime driver.
+and run graphs compiled for compatible backends. Use
+`RuntimeConfig::driver(driver).device_ordinal(n)` or `.device_path(path)` to
+select a device, and `Engine::available_devices(driver)` to enumerate choices.
 
 GPU backends are intentionally constrained at compile time. `MetalSpirv` is
 only available when the build/target OS is macOS. `VulkanSpirv` and `Cuda` are
@@ -60,11 +63,11 @@ Use `cuda` instead of `vulkan` for CUDA artifacts.
 
 ## Compiler Requirement
 
-Build-time graph compilation invokes `iree-compile`. Put the binary on `PATH`,
-or set:
+Build-time graph compilation uses Eerie's IREE shared library. Install the
+matching wheel in your Python environment:
 
 ```sh
-export KNOK_IREE_COMPILE=/path/to/iree-compile
+python -m pip install 'iree-base-compiler==3.13.0'
 ```
 
 The Nix development shell installs the pinned compiler and adds it to `PATH`.
@@ -75,9 +78,8 @@ For installation options, cache knobs, and troubleshooting, see
 
 - Default features enable hosted runtime execution with `std`.
 - `default-features = false` builds the target crate as `no_std + alloc` and
-  keeps generated wrapper types available, but hosted execution returns
-  `HostedRuntimeDisabled`.
-- `embedded-runtime` enables the IREE runtime dependency without enabling `std`.
+  keeps tensor types and generated graph metadata available. Runtime engines
+  and generated execution helpers are absent.
 
 ## Platform Notes
 

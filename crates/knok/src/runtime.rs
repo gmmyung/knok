@@ -1,259 +1,55 @@
-extern crate alloc;
+//! Runtime device selection, engines, and prepared models.
 
-use alloc::string::String;
+use std::{cell::RefCell, collections::BTreeMap, marker::PhantomData};
 
-use crate::Backend;
+pub use eerie::runtime::DeviceInfo;
+use eerie::runtime::{DeviceSpec, Function, Program, Runtime, Value};
 
-pub(crate) mod raw {
-    extern crate alloc;
+use crate::{
+    graph::{GraphInputs, GraphOutput},
+    private::RawGraphInputs,
+    Backend, Driver, Graph, GraphArtifact, GraphArtifactVariant,
+};
 
-    #[cfg(feature = "runtime")]
-    use alloc::vec::Vec;
-
-    use crate::DType;
-
-    /// Borrowed host input buffer passed to a compiled graph invocation.
-    pub enum Input<'a> {
-        /// Boolean tensor buffer.
-        Bool(&'a [usize], &'a [bool]),
-        /// 32-bit float tensor buffer.
-        F32(&'a [usize], &'a [f32]),
-        /// 64-bit float tensor buffer.
-        F64(&'a [usize], &'a [f64]),
-        /// 32-bit signed integer tensor buffer.
-        I32(&'a [usize], &'a [i32]),
-        /// 64-bit signed integer tensor buffer.
-        I64(&'a [usize], &'a [i64]),
-        /// IEEE 16-bit float tensor buffer.
-        #[cfg(feature = "half")]
-        F16(&'a [usize], &'a [crate::half::f16]),
-        /// Brain float tensor buffer.
-        #[cfg(feature = "half")]
-        BF16(&'a [usize], &'a [crate::half::bf16]),
-    }
-
-    impl Input<'_> {
-        /// Returns the static shape supplied for this raw input buffer.
-        pub fn shape(&self) -> &[usize] {
-            match self {
-                Self::Bool(shape, _)
-                | Self::F32(shape, _)
-                | Self::F64(shape, _)
-                | Self::I32(shape, _)
-                | Self::I64(shape, _) => shape,
-                #[cfg(feature = "half")]
-                Self::F16(shape, _) | Self::BF16(shape, _) => shape,
-            }
-        }
-
-        /// Returns the element type supplied for this raw input buffer.
-        pub fn dtype(&self) -> DType {
-            match self {
-                Self::Bool(_, _) => DType::Bool,
-                Self::F32(_, _) => DType::F32,
-                Self::F64(_, _) => DType::F64,
-                Self::I32(_, _) => DType::I32,
-                Self::I64(_, _) => DType::I64,
-                #[cfg(feature = "half")]
-                Self::F16(_, _) => DType::F16,
-                #[cfg(feature = "half")]
-                Self::BF16(_, _) => DType::BF16,
-            }
-        }
-    }
-
-    /// Outputs returned by a raw hosted graph invocation.
-    #[cfg(feature = "runtime")]
-    pub struct Outputs {
-        pub(super) values: Vec<eerie::runtime::Value>,
-    }
-
-    #[cfg(feature = "runtime")]
-    impl core::fmt::Debug for Outputs {
-        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            formatter
-                .debug_struct("Outputs")
-                .field("len", &self.values.len())
-                .finish()
-        }
-    }
-
-    #[cfg(feature = "runtime")]
-    impl Outputs {
-        /// Returns the number of values produced by the invoked function.
-        pub fn len(&self) -> usize {
-            self.values.len()
-        }
-
-        /// Returns true when the invoked function produced no values.
-        pub fn is_empty(&self) -> bool {
-            self.values.is_empty()
-        }
-
-        /// Reads the only output as a host vector.
-        pub fn one<T: Element>(mut self) -> crate::Result<Vec<T>> {
-            let actual = self.values.len();
-            if actual != 1 {
-                return Err(crate::Error::OutputCountMismatch {
-                    expected: 1,
-                    actual,
-                });
-            }
-            let value = self.values.pop().expect("output count was checked");
-            let output = T::buffer_from_value(value)?;
-            Ok(output.read()?)
-        }
-
-        /// Reads one output by index as a host vector.
-        pub fn read<T: Element>(&self, index: usize) -> crate::Result<Vec<T>> {
-            let value = self
-                .values
-                .get(index)
-                .ok_or(crate::Error::OutputIndexOutOfBounds {
-                    index,
-                    len: self.values.len(),
-                })?;
-            let output = T::buffer_from_value(value.clone())?;
-            Ok(output.read()?)
-        }
-    }
-
-    #[cfg(not(feature = "runtime"))]
-    #[doc(hidden)]
-    pub struct Outputs;
-
-    #[cfg(not(feature = "runtime"))]
-    impl Outputs {
-        pub fn len(&self) -> usize {
-            0
-        }
-
-        pub fn is_empty(&self) -> bool {
-            true
-        }
-
-        pub fn one<T: Element>(self) -> crate::Result<alloc::vec::Vec<T>> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub fn read<T: Element>(&self, _index: usize) -> crate::Result<alloc::vec::Vec<T>> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-    }
-
-    /// Element types that can be passed through raw runtime buffer views.
-    #[cfg(feature = "runtime")]
-    #[doc(hidden)]
-    pub trait Element: eerie::runtime::BufferElement {
-        fn buffer_from_value(
-            value: eerie::runtime::Value,
-        ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError>;
-    }
-
-    #[cfg(feature = "runtime")]
-    macro_rules! impl_element {
-        ($type:ty) => {
-            impl Element for $type {
-                fn buffer_from_value(
-                    value: eerie::runtime::Value,
-                ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError> {
-                    value.try_into()
-                }
-            }
-        };
-    }
-
-    #[cfg(feature = "runtime")]
-    impl_element!(bool);
-    #[cfg(feature = "runtime")]
-    impl_element!(u8);
-    #[cfg(feature = "runtime")]
-    impl_element!(u16);
-    #[cfg(feature = "runtime")]
-    impl_element!(u32);
-    #[cfg(feature = "runtime")]
-    impl_element!(u64);
-    #[cfg(feature = "runtime")]
-    impl_element!(i8);
-    #[cfg(feature = "runtime")]
-    impl_element!(i16);
-    #[cfg(feature = "runtime")]
-    impl_element!(i32);
-    #[cfg(feature = "runtime")]
-    impl_element!(i64);
-    #[cfg(all(feature = "runtime", feature = "half"))]
-    impl_element!(half::f16);
-    #[cfg(feature = "runtime")]
-    impl_element!(f32);
-    #[cfg(feature = "runtime")]
-    impl_element!(f64);
-    #[cfg(all(feature = "runtime", feature = "half"))]
-    impl_element!(half::bf16);
-
-    /// Element types that can be named by generated runtime wrappers in no-std builds.
-    #[cfg(not(feature = "runtime"))]
-    #[doc(hidden)]
-    pub trait Element: Copy {}
-
-    #[cfg(not(feature = "runtime"))]
-    impl<T: Copy> Element for T {}
-}
-
-/// Hosted runtime driver selection for [`Engine`].
-///
-/// Generated graph wrappers normally construct a suitable engine through
-/// `Engine::for_artifact` or accept a reusable `Engine` from the caller.
+/// Runtime driver and device selection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeConfig {
-    driver: DriverSelection,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum DriverSelection {
-    Auto,
-    Explicit(String),
+    driver: Driver,
+    device: DeviceSpec,
 }
 
 impl RuntimeConfig {
-    /// Uses the default hosted driver.
-    ///
-    /// The current default is `local-task`, matching [`Backend::LlvmCpu`].
+    /// Selects the default CPU driver and device.
     pub fn auto() -> Self {
+        Self::driver(Driver::LocalTask)
+    }
+
+    /// Selects a driver and its default device.
+    pub fn driver(driver: Driver) -> Self {
         Self {
-            driver: DriverSelection::Auto,
+            driver,
+            device: DeviceSpec::custom(driver.name()),
         }
     }
 
-    /// Uses an explicit runtime driver.
-    pub fn driver(driver: crate::Driver) -> Self {
-        Self {
-            driver: DriverSelection::Explicit(driver.name().into()),
-        }
-    }
-
-    /// Uses the default runtime driver for a compile backend.
-    ///
-    /// Prefer [`Engine::for_artifact`] when running a generated graph and the
-    /// artifact is available.
+    /// Selects the default driver for a compilation backend.
     pub fn backend(backend: Backend) -> Self {
-        Self {
-            driver: DriverSelection::Explicit(backend.default_driver().into()),
-        }
+        Self::driver(
+            Driver::from_name(backend.default_driver()).expect("backend has a supported driver"),
+        )
     }
 
-    #[cfg(feature = "runtime")]
-    fn driver_name_literal(name: &'static str) -> Self {
-        Self {
-            driver: DriverSelection::Explicit(name.into()),
-        }
+    /// Selects a device by its zero-based driver ordinal.
+    /// Replaces a previous path selection.
+    pub fn device_ordinal(mut self, ordinal: usize) -> Self {
+        self.device = self.device.ordinal(ordinal);
+        self
     }
 
-    #[cfg(feature = "runtime")]
-    fn driver_name(&self) -> &str {
-        match &self.driver {
-            DriverSelection::Auto => "local-task",
-            DriverSelection::Explicit(name) => name,
-        }
+    /// Selects a driver-specific device path, replacing a previous ordinal.
+    pub fn device_path(mut self, path: impl Into<String>) -> Self {
+        self.device = self.device.path(path);
+        self
     }
 }
 
@@ -263,244 +59,214 @@ impl Default for RuntimeConfig {
     }
 }
 
-#[cfg(feature = "runtime")]
-mod hosted {
-    use alloc::{
-        collections::BTreeMap,
-        string::{String, ToString},
-        vec::Vec,
-    };
-    use std::sync::Mutex;
+/// Runtime instance with a cache of loaded static VMFB modules.
+///
+/// Use [`Graph::load`] to resolve a function once for repeated inference.
+/// An engine and its models stay on the thread where they were created.
+pub struct Engine {
+    driver: Driver,
+    runtime: Runtime,
+    modules: RefCell<BTreeMap<(usize, usize), Program>>,
+}
 
-    use eerie::runtime::{DeviceSpec, Function, Program, Runtime, Value};
-
-    use super::{raw, RuntimeConfig};
-    use crate::{GraphArtifact, GraphArtifactVariant};
-
-    /// Reusable hosted runtime engine for generated graph artifacts.
-    ///
-    /// An engine owns one IREE runtime instance for a selected driver and caches
-    /// loaded VMFB modules by artifact bytes. Reuse one engine for repeated
-    /// inference instead of calling generated one-shot `call(...)` wrappers in a
-    /// loop.
-    pub struct Engine {
-        driver_name: String,
-        runtime: Runtime,
-        modules: Mutex<BTreeMap<Vec<u8>, Program>>,
+impl Engine {
+    /// Creates an engine on the configured device.
+    pub fn new(config: RuntimeConfig) -> crate::Result<Self> {
+        Ok(Self {
+            driver: config.driver,
+            runtime: Runtime::new(config.device)?,
+            modules: RefCell::new(BTreeMap::new()),
+        })
     }
 
-    impl Engine {
-        /// Creates an engine from runtime configuration.
-        pub fn new(config: RuntimeConfig) -> crate::Result<Self> {
-            let driver_name = config.driver_name().to_string();
-            let runtime = Runtime::new(DeviceSpec::custom(driver_name.clone()))?;
-            Ok(Self {
-                driver_name,
-                runtime,
-                modules: Mutex::new(BTreeMap::new()),
-            })
-        }
+    /// Lists devices available to a driver, including their ordinals and paths.
+    pub fn available_devices(driver: Driver) -> crate::Result<Vec<DeviceInfo>> {
+        Ok(Runtime::available_devices(eerie::runtime::Driver::custom(
+            driver.name(),
+        ))?)
+    }
 
-        /// Creates an engine for a compile backend's default runtime driver.
-        ///
-        /// Prefer [`Engine::for_artifact`] when running generated graphs so the
-        /// engine follows the driver recorded in the artifact.
-        pub fn for_backend(backend: crate::Backend) -> crate::Result<Self> {
-            Self::new(RuntimeConfig::backend(backend))
-        }
+    /// Creates an engine for a backend's default driver.
+    pub fn for_backend(backend: Backend) -> crate::Result<Self> {
+        Self::new(RuntimeConfig::backend(backend))
+    }
 
-        /// Creates an engine for an artifact variant's recorded runtime driver.
-        pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
-            Self::new(RuntimeConfig::driver_name_literal(variant.driver))
-        }
+    /// Creates an engine for a compiled variant's default driver.
+    pub fn for_variant(variant: GraphArtifactVariant) -> crate::Result<Self> {
+        Self::for_backend(variant.backend())
+    }
 
-        /// Creates an engine for the first variant embedded in an artifact.
-        ///
-        /// This is the preferred reusable-engine constructor for generated
-        /// graphs because it keeps runtime driver selection aligned with the
-        /// build-time backend metadata.
-        pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
-            let variant =
-                artifact
-                    .first_variant()
-                    .ok_or(crate::Error::MissingDefaultArtifactVariant {
-                        function_name: artifact.function_name,
-                    })?;
-            Self::for_variant(variant)
-        }
+    /// Creates an engine for the first embedded variant.
+    pub fn for_artifact(artifact: GraphArtifact) -> crate::Result<Self> {
+        Self::for_variant(artifact.first_variant().ok_or(
+            crate::Error::MissingDefaultArtifactVariant {
+                function_name: artifact.function_name(),
+            },
+        )?)
+    }
 
-        /// Returns the IREE runtime driver name used by this engine.
-        pub fn driver_name(&self) -> &str {
-            &self.driver_name
-        }
+    /// Returns the selected driver name.
+    pub fn driver_name(&self) -> &'static str {
+        self.driver.name()
+    }
 
-        pub(crate) fn invoke(
-            &self,
-            artifact: GraphArtifact,
-            inputs: &[raw::Input<'_>],
-        ) -> crate::Result<raw::Outputs> {
-            if artifact.has_typed_signature() {
-                validate_inputs(artifact, inputs)?;
+    /// Loads a typed graph and resolves its function for repeated calls.
+    pub fn load<I: GraphInputs, O: GraphOutput>(
+        &self,
+        graph: &Graph<I, O>,
+    ) -> crate::Result<Model<'_, I, O>> {
+        let artifact = graph.artifact();
+        let variant = artifact.variant_for_driver(self.driver).ok_or_else(|| {
+            crate::Error::MissingArtifactVariant {
+                function_name: artifact.function_name(),
+                driver: self.driver.name().into(),
             }
-            let variant = artifact
-                .variant_for_driver(&self.driver_name)
-                .ok_or_else(|| crate::Error::MissingArtifactVariant {
-                    function_name: artifact.function_name,
-                    driver: self.driver_name.clone(),
-                })?;
-            if self.driver_name != variant.driver {
-                return Err(crate::Error::RuntimeDriverMismatch {
-                    backend: variant.backend,
-                    expected_driver: variant.driver,
-                    actual_driver: self.driver_name.clone(),
-                });
+        })?;
+        let vmfb = variant.vmfb();
+        // Artifacts are static. Their address and length identify the backing
+        // storage without copying or comparing entire VMFB archives on calls.
+        let key = (vmfb.as_ptr() as usize, vmfb.len());
+        let mut modules = self.modules.borrow_mut();
+        let program = match modules.entry(key) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(self.runtime.load_vmfb(vmfb)?)
             }
-            let function = self.resolve_function(variant.vmfb, artifact.function_name)?;
-            let outputs = self.invoke_typed_values(&function, inputs)?;
-            if artifact.has_typed_signature() && outputs.len() != artifact.output_descs.len() {
-                return Err(crate::Error::OutputCountMismatch {
-                    expected: artifact.output_descs.len(),
-                    actual: outputs.len(),
-                });
-            }
-            Ok(outputs)
-        }
+        };
+        let function = program.function(artifact.function_name())?;
+        Ok(Model {
+            engine: self,
+            function,
+            artifact,
+            types: PhantomData,
+        })
+    }
+}
 
-        fn resolve_function(
-            &self,
-            vmfb: &'static [u8],
-            function_name: &'static str,
-        ) -> crate::Result<Function> {
-            let mut modules = self
-                .modules
-                .lock()
-                .map_err(|_| crate::Error::EngineLockPoisoned)?;
-            if !modules.contains_key(vmfb) {
-                modules.insert(vmfb.to_vec(), self.runtime.load_vmfb(vmfb)?);
-            }
-            modules
-                .get(vmfb)
-                .expect("module was just inserted")
-                .function(function_name)
-                .map_err(crate::Error::from)
-        }
+/// Loaded graph with a resolved function and borrowed host inputs.
+///
+/// A model borrows its engine and keeps function lookup and cache access out of
+/// repeated calls. Host-to-device transfers may still copy and allocate.
+pub struct Model<'a, I, O> {
+    engine: &'a Engine,
+    function: Function,
+    artifact: GraphArtifact,
+    types: PhantomData<fn(I) -> O>,
+}
 
-        fn invoke_typed_values(
-            &self,
-            function: &Function,
-            inputs: &[raw::Input<'_>],
-        ) -> crate::Result<raw::Outputs> {
-            let input_values = inputs
+impl<I: GraphInputs, O: GraphOutput> Model<'_, I, O> {
+    /// Returns this model's static artifact metadata.
+    pub fn artifact(&self) -> GraphArtifact {
+        self.artifact
+    }
+
+    /// Executes using borrowed tensors and allocates host outputs.
+    pub fn run(&self, inputs: I::Borrowed<'_>) -> crate::Result<O> {
+        O::read_raw_outputs(self.invoke(inputs)?)
+    }
+
+    /// Executes and reuses existing host output storage.
+    /// All output shapes and dtypes are checked before any host output is written.
+    pub fn run_into(&self, inputs: I::Borrowed<'_>, outputs: &mut O) -> crate::Result<()> {
+        outputs.read_raw_outputs_into(self.invoke(inputs)?)
+    }
+
+    fn invoke(&self, inputs: I::Borrowed<'_>) -> crate::Result<raw::Outputs> {
+        inputs.with_raw_inputs(|inputs| {
+            let values = inputs
                 .iter()
-                .map(|input| self.input_value(input))
+                .map(|input| input.to_value(&self.engine.runtime))
                 .collect::<crate::Result<Vec<_>>>()?;
-            self.invoke_values(function, input_values)
-        }
+            let outputs = raw::Outputs {
+                values: self.function.invoke(values)?,
+            };
+            O::validate_raw_outputs(&outputs)?;
+            Ok(outputs)
+        })
+    }
+}
 
-        fn invoke_values(
-            &self,
-            function: &Function,
-            input_values: Vec<Value>,
-        ) -> crate::Result<raw::Outputs> {
-            Ok(raw::Outputs {
-                values: function.invoke(input_values)?,
+pub(crate) mod raw {
+    use super::*;
+
+    pub enum Input<'a> {
+        Bool(&'a [usize], &'a [bool]),
+        F32(&'a [usize], &'a [f32]),
+        F64(&'a [usize], &'a [f64]),
+        I32(&'a [usize], &'a [i32]),
+        I64(&'a [usize], &'a [i64]),
+        #[cfg(feature = "half")]
+        F16(&'a [usize], &'a [crate::half::f16]),
+        #[cfg(feature = "half")]
+        BF16(&'a [usize], &'a [crate::half::bf16]),
+    }
+
+    impl Input<'_> {
+        pub(super) fn to_value(&self, runtime: &Runtime) -> crate::Result<Value> {
+            Ok(match self {
+                Self::Bool(shape, data) => runtime.buffer_view(shape, data)?.into(),
+                Self::F32(shape, data) => runtime.buffer_view(shape, data)?.into(),
+                Self::F64(shape, data) => runtime.buffer_view(shape, data)?.into(),
+                Self::I32(shape, data) => runtime.buffer_view(shape, data)?.into(),
+                Self::I64(shape, data) => runtime.buffer_view(shape, data)?.into(),
+                #[cfg(feature = "half")]
+                Self::F16(shape, data) => runtime.buffer_view(shape, data)?.into(),
+                #[cfg(feature = "half")]
+                Self::BF16(shape, data) => runtime.buffer_view(shape, data)?.into(),
             })
         }
-
-        fn input_value(&self, input: &raw::Input<'_>) -> crate::Result<Value> {
-            match input {
-                raw::Input::Bool(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                raw::Input::F32(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                raw::Input::F64(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                raw::Input::I32(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                raw::Input::I64(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                #[cfg(feature = "half")]
-                raw::Input::F16(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-                #[cfg(feature = "half")]
-                raw::Input::BF16(shape, data) => {
-                    Ok(Value::from(self.runtime.buffer_view(shape, data)?))
-                }
-            }
-        }
     }
 
-    fn validate_inputs(artifact: GraphArtifact, inputs: &[raw::Input<'_>]) -> crate::Result<()> {
-        if inputs.len() != artifact.input_descs.len() {
-            return Err(crate::Error::InputCountMismatch {
-                expected: artifact.input_descs.len(),
-                actual: inputs.len(),
-            });
-        }
-        for (index, (input, expected)) in inputs.iter().zip(artifact.input_descs).enumerate() {
-            let actual_dtype = input.dtype();
-            if actual_dtype != expected.elem {
-                return Err(crate::Error::InputDTypeMismatch {
-                    index,
-                    expected: expected.elem,
-                    actual: actual_dtype,
-                });
-            }
-            let actual_shape = input.shape();
-            if actual_shape != expected.shape {
-                return Err(crate::Error::Shape {
-                    expected: expected.shape,
-                    actual: actual_shape.to_vec(),
-                });
-            }
-        }
-        Ok(())
+    pub struct Outputs {
+        pub(super) values: Vec<Value>,
     }
-}
 
-#[cfg(not(feature = "runtime"))]
-mod hosted {
-    use super::{raw, RuntimeConfig};
-    use crate::GraphArtifact;
-
-    /// Hosted runtime engine placeholder used when the `runtime` feature is disabled.
-    pub struct Engine;
-
-    impl Engine {
-        pub fn new(_config: RuntimeConfig) -> crate::Result<Self> {
-            Err(crate::Error::HostedRuntimeDisabled)
+    impl Outputs {
+        pub fn check_count(&self, expected: usize) -> crate::Result<()> {
+            let actual = self.values.len();
+            if actual != expected {
+                return Err(crate::Error::OutputCountMismatch { expected, actual });
+            }
+            Ok(())
         }
-
-        pub fn for_backend(_backend: crate::Backend) -> crate::Result<Self> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub fn for_variant(_variant: crate::GraphArtifactVariant) -> crate::Result<Self> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub fn for_artifact(_artifact: GraphArtifact) -> crate::Result<Self> {
-            Err(crate::Error::HostedRuntimeDisabled)
-        }
-
-        pub fn driver_name(&self) -> &str {
-            ""
-        }
-
-        pub(crate) fn invoke(
+        pub fn check_shape<T: Element>(
             &self,
-            _artifact: GraphArtifact,
-            _inputs: &[raw::Input<'_>],
-        ) -> crate::Result<raw::Outputs> {
-            Err(crate::Error::HostedRuntimeDisabled)
+            index: usize,
+            expected: &'static [usize],
+        ) -> crate::Result<()> {
+            let output = T::buffer_from_value(self.values[index].clone())?;
+            let actual = output.shape();
+            if actual != expected {
+                return Err(crate::Error::OutputShapeMismatch {
+                    index,
+                    expected,
+                    actual,
+                });
+            }
+            Ok(())
+        }
+        pub fn one<T: Element>(mut self) -> crate::Result<Vec<T>> {
+            Ok(T::buffer_from_value(self.values.pop().expect("outputs were validated"))?.read()?)
+        }
+        pub fn read<T: Element>(&self, index: usize) -> crate::Result<Vec<T>> {
+            Ok(T::buffer_from_value(self.values[index].clone())?.read()?)
+        }
+        pub fn read_into<T: Element>(&self, index: usize, target: &mut [T]) -> crate::Result<()> {
+            Ok(T::buffer_from_value(self.values[index].clone())?.read_into(target)?)
         }
     }
-}
 
-pub use hosted::Engine;
+    pub trait Element: eerie::runtime::BufferElement {
+        fn buffer_from_value(
+            value: Value,
+        ) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError>;
+    }
+    macro_rules! impl_element {
+        ($($ty:ty),+) => { $(impl Element for $ty {
+            fn buffer_from_value(value: Value) -> Result<eerie::runtime::BufferView<Self>, eerie::runtime::RuntimeError> { value.try_into() }
+        })+ };
+    }
+    impl_element!(bool, f32, f64, i32, i64);
+    #[cfg(feature = "half")]
+    impl_element!(crate::half::f16, crate::half::bf16);
+}

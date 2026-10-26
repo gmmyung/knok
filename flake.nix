@@ -3,10 +3,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, rust-overlay, ... }:
     let
       systems = [
         "aarch64-darwin"
@@ -20,7 +24,10 @@
         nixpkgs.lib.genAttrs systems (
           system:
           f {
-            pkgs = import nixpkgs { inherit system; };
+            pkgs = import nixpkgs {
+              inherit system;
+              overlays = [ rust-overlay.overlays.default ];
+            };
           }
         );
     in
@@ -29,14 +36,38 @@
         { pkgs }:
         let
           lib = pkgs.lib;
-          llvm = pkgs.llvmPackages_22;
+          llvm = pkgs.llvmPackages_23;
+          rustLlvm = pkgs.rustc.llvmPackages;
+          # Keep the compiler, profiling runtime, and readers from one distribution.
+          coverageRust = pkgs.rust-bin.stable.${pkgs.rustc.version}.minimal.override {
+            extensions = [ "llvm-tools" ];
+          };
+          coverageTool = pkgs.cargo-llvm-cov.override {
+            rustPlatform = pkgs.makeRustPlatform {
+              cargo = coverageRust;
+              rustc = coverageRust;
+            };
+            llvmPackages_22 = llvm;
+          };
+          compilerVersion = "3.13.0";
+          target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
+          targetKey = lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] target);
+          mlirToolchain = pkgs.symlinkJoin {
+            name = "knok-mlir-toolchain";
+            paths = [
+              llvm.llvm.dev
+              llvm.llvm.lib
+              llvm.mlir.dev
+              llvm.mlir
+            ];
+          };
           mlirSysLlvmConfig = pkgs.writeShellScriptBin "llvm-config" ''
             case " $* " in
               *" --includedir "*)
-                echo "${llvm.mlir.dev}/include"
+                echo "${mlirToolchain}/include"
                 ;;
               *" --libdir "*)
-                echo "${llvm.mlir}/lib"
+                echo "${mlirToolchain}/lib"
                 ;;
               *)
                 exec "${llvm.llvm.dev}/bin/llvm-config" "$@"
@@ -49,18 +80,20 @@
             ps.virtualenv
             ps.wheel
           ]);
-          darwinPackages = lib.optionals pkgs.stdenv.isDarwin [
+          darwinPackages = lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
             pkgs.libiconv
           ];
-        in
-        {
-          default = pkgs.mkShell {
-            hardeningDisable = [ "fortify" ];
+          macosLinker =
+            clang:
+            pkgs.writeShellScript "knok-macos-linker" ''
+              exec ${python}/bin/python ${./scripts/macos-linker.py} --clang ${clang}/bin/clang "$@"
+            '';
+          shells = {
+            default = pkgs.mkShell {
+              hardeningDisable = [ "fortify" ];
 
-            packages =
-              [
+              packages = [
                 pkgs.cargo
-                pkgs.cargo-llvm-cov
                 pkgs.rustc
                 pkgs.rustfmt
                 pkgs.clippy
@@ -81,53 +114,84 @@
               ]
               ++ darwinPackages;
 
-            LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
-            MLIR_SYS_220_PREFIX = "${mlirSysLlvmConfig}";
-            LLVM_COV = "${llvm.llvm}/bin/llvm-cov";
-            LLVM_PROFDATA = "${llvm.llvm}/bin/llvm-profdata";
-            CC = "${llvm.clang}/bin/clang";
-            CXX = "${llvm.clang}/bin/clang++";
-            CMAKE_GENERATOR = "Ninja";
-            SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              LIBCLANG_PATH = "${llvm.libclang.lib}/lib";
+              MLIR_SYS_230_PREFIX = "${mlirSysLlvmConfig}";
+              TABLEGEN_230_PREFIX = "${mlirSysLlvmConfig}";
+              "CARGO_TARGET_${targetKey}_LINKER" =
+                if pkgs.stdenv.hostPlatform.isDarwin then
+                  "${macosLinker llvm.clang}"
+                else
+                  "${llvm.clang}/bin/clang";
+              CC = "${llvm.clang}/bin/clang";
+              CXX = "${llvm.clang}/bin/clang++";
+              CMAKE_GENERATOR = "Ninja";
+              SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
 
-            shellHook = ''
-              export CC="${llvm.clang}/bin/clang"
-              export CXX="${llvm.clang}/bin/clang++"
+              shellHook = ''
+                export CC="${llvm.clang}/bin/clang"
+                export CXX="${llvm.clang}/bin/clang++"
 
-              if [ -z "''${LIB_IREE_COMPILER:-}" ]; then
-                : "''${XDG_CACHE_HOME:=$HOME/.cache}"
-                export EERIE_IREE_VENV="''${EERIE_IREE_VENV:-$XDG_CACHE_HOME/eerie/iree-compiler-venv}"
-                export EERIE_IREE_COMPILER_PACKAGE="''${EERIE_IREE_COMPILER_PACKAGE:-iree-base-compiler==3.11.0}"
-                export EERIE_IREE_COMPILER_DISTRIBUTION="''${EERIE_IREE_COMPILER_DISTRIBUTION:-iree-base-compiler}"
-                export EERIE_IREE_COMPILER_VERSION="''${EERIE_IREE_COMPILER_VERSION:-3.11.0}"
+                if [ -z "''${EERIE_PYTHON:-}" ] && [ -z "''${KNOK_IREE_COMPILER:-}" ]; then
+                  compiler_venv="''${XDG_CACHE_HOME:-$HOME/.cache}/eerie/iree-compiler-${compilerVersion}-venv"
 
-                if [ ! -x "$EERIE_IREE_VENV/bin/python" ]; then
-                  mkdir -p "$(dirname "$EERIE_IREE_VENV")"
-                  ${python}/bin/python -m virtualenv "$EERIE_IREE_VENV"
+                  if [ ! -x "$compiler_venv/bin/python" ]; then
+                    mkdir -p "$(dirname "$compiler_venv")"
+                    ${python}/bin/python -m virtualenv "$compiler_venv" || exit 1
+                  fi
+
+                  if ! "$compiler_venv/bin/python" -c 'import importlib.metadata as m; assert m.version("iree-base-compiler") == "${compilerVersion}"' >/dev/null 2>&1; then
+                    "$compiler_venv/bin/python" -m pip install --upgrade pip || exit 1
+                    "$compiler_venv/bin/pip" install "iree-base-compiler==${compilerVersion}" || exit 1
+                  fi
+
+                  export PATH="$compiler_venv/bin:$PATH"
                 fi
 
-                if ! "$EERIE_IREE_VENV/bin/python" -c 'import importlib.metadata as m, os; import iree.compiler; assert m.version(os.environ["EERIE_IREE_COMPILER_DISTRIBUTION"]) == os.environ["EERIE_IREE_COMPILER_VERSION"]' >/dev/null 2>&1; then
-                  "$EERIE_IREE_VENV/bin/pip" install "$EERIE_IREE_COMPILER_PACKAGE"
-                fi
-
-                export PATH="$EERIE_IREE_VENV/bin:$PATH"
-                export LIB_IREE_COMPILER="$("$EERIE_IREE_VENV/bin/python" -c 'import iree.compiler as _; print(f"{_.__path__[0]}/_mlir_libs/")')"
-              fi
-
-              case "$(uname -s)" in
-                Darwin)
-                  export RUSTFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath,$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath,${llvm.mlir}/lib ''${RUSTFLAGS:-}"
-                  export RUSTDOCFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath,$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath,${llvm.mlir}/lib ''${RUSTDOCFLAGS:-}"
-                  export DYLD_FALLBACK_LIBRARY_PATH="${llvm.mlir}/lib:$LIB_IREE_COMPILER''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
-                  ;;
-                Linux)
-                  export RUSTFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.stdenv.cc.cc.lib}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath=$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath=${llvm.mlir}/lib -C link-arg=-Wl,-rpath=${pkgs.stdenv.cc.cc.lib}/lib ''${RUSTFLAGS:-}"
-                  export RUSTDOCFLAGS="-L native=${llvm.llvm.lib}/lib -L native=${llvm.mlir}/lib -L native=${pkgs.stdenv.cc.cc.lib}/lib -L native=${pkgs.libxml2.out}/lib -L native=${pkgs.zlib.out}/lib -C link-arg=-Wl,-rpath=$LIB_IREE_COMPILER -C link-arg=-Wl,-rpath=${llvm.mlir}/lib -C link-arg=-Wl,-rpath=${pkgs.stdenv.cc.cc.lib}/lib ''${RUSTDOCFLAGS:-}"
-                  export LD_LIBRARY_PATH="${llvm.mlir}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LIB_IREE_COMPILER''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-                  ;;
-              esac
-            '';
+              '';
+            };
           };
+        in
+        shells
+        // {
+          coverage = shells.default.overrideAttrs (old: {
+            nativeBuildInputs =
+              lib.subtractLists [
+                pkgs.cargo
+                pkgs.rustc
+                pkgs.rustfmt
+                pkgs.clippy
+              ] old.nativeBuildInputs
+              ++ [
+                coverageRust
+                coverageTool
+              ];
+          });
+          cross-lang-lto = shells.default.overrideAttrs (
+            old:
+            let
+              ltoLlvm = rustLlvm;
+            in
+            {
+              nativeBuildInputs = old.nativeBuildInputs ++ [
+                ltoLlvm.clang
+                ltoLlvm.libclang
+                ltoLlvm.llvm
+                ltoLlvm.lld
+              ];
+              shellHook = old.shellHook + ''
+                export CC="${ltoLlvm.clang}/bin/clang"
+                export CXX="${ltoLlvm.clang}/bin/clang++"
+              '';
+              LIBCLANG_PATH = "${ltoLlvm.libclang.lib}/lib";
+              CARGO_BUILD_TARGET = target;
+              "CARGO_TARGET_${targetKey}_LINKER" =
+                if pkgs.stdenv.hostPlatform.isDarwin then
+                  "${macosLinker ltoLlvm.clang}"
+                else
+                  "${ltoLlvm.clang}/bin/clang";
+              "CARGO_TARGET_${targetKey}_RUSTFLAGS" = "-Clinker-plugin-lto -Clink-arg=-fuse-ld=lld";
+            }
+          );
         }
       );
     };

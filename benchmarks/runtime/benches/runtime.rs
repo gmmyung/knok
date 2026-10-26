@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, Criterion};
 use knok::{prelude::*, Engine};
 use ndarray::{Array1, Array2, Array3, Array4, Axis};
 
@@ -21,11 +23,12 @@ fn runtime_benches(c: &mut Criterion) {
 
 fn bench_overhead(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::tiny_relu::artifact()).unwrap();
+    let tiny_relu_model = graphs::tiny_relu::load(&engine).unwrap();
     let input = Tensor2::<f32, 2, 2>::from_array([[-1.0, 2.0], [3.0, -4.0]]);
 
     c.bench_function("knok/tiny_relu_2x2", |b| {
         b.iter(|| {
-            let output = graphs::tiny_relu::run(&engine, black_box(input.clone())).unwrap();
+            let output = tiny_relu_model.run(black_box(&input)).unwrap();
             black_box(checksum(output.as_slice()))
         })
     });
@@ -33,6 +36,7 @@ fn bench_overhead(c: &mut Criterion) {
 
 fn bench_matmul(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::matmul_128::artifact()).unwrap();
+    let matmul_128_model = graphs::matmul_128::load(&engine).unwrap();
     let x_data = filled_data(128 * 128, 0.001, 1.0);
     let y_data = filled_data(128 * 128, 0.002, -0.5);
     let x = Tensor2::<f32, 128, 128>::from_vec(x_data.clone()).unwrap();
@@ -43,7 +47,7 @@ fn bench_matmul(c: &mut Criterion) {
     c.bench_function("knok/matmul_128x128", |b| {
         b.iter(|| {
             let output =
-                graphs::matmul_128::run(&engine, black_box(x.clone()), black_box(y.clone()))
+                matmul_128_model.run((black_box(&x), black_box(&y)))
                     .unwrap();
             black_box(checksum(output.as_slice()))
         })
@@ -59,6 +63,7 @@ fn bench_matmul(c: &mut Criterion) {
 
 fn bench_batched_matmul(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::batched_matmul_16x128::artifact()).unwrap();
+    let batched_matmul_16x128_model = graphs::batched_matmul_16x128::load(&engine).unwrap();
     let len = 16 * 128 * 128;
     let x_data = filled_data(len, 0.0005, 0.25);
     let y_data = filled_data(len, 0.0007, -0.75);
@@ -69,11 +74,8 @@ fn bench_batched_matmul(c: &mut Criterion) {
 
     c.bench_function("knok/batched_matmul_16x128x128", |b| {
         b.iter(|| {
-            let output = graphs::batched_matmul_16x128::run(
-                &engine,
-                black_box(x.clone()),
-                black_box(y.clone()),
-            )
+            let output = batched_matmul_16x128_model.run((black_box(&x),
+                black_box(&y)))
             .unwrap();
             black_box(checksum(output.as_slice()))
         })
@@ -95,13 +97,14 @@ fn bench_batched_matmul(c: &mut Criterion) {
 
 fn bench_elementwise(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::elementwise_1024::artifact()).unwrap();
+    let elementwise_1024_model = graphs::elementwise_1024::load(&engine).unwrap();
     let data = filled_data(1024 * 1024, 0.0001, -0.25);
     let input = Tensor2::<f32, 1024, 1024>::from_vec(data.clone()).unwrap();
     let ndarray_input = Array2::from_shape_vec((1024, 1024), data).unwrap();
 
     c.bench_function("knok/elementwise_exp_tanh_relu_1024x1024", |b| {
         b.iter(|| {
-            let output = graphs::elementwise_1024::run(&engine, black_box(input.clone())).unwrap();
+            let output = elementwise_1024_model.run(black_box(&input)).unwrap();
             black_box(checksum(output.as_slice()))
         })
     });
@@ -119,13 +122,14 @@ fn bench_elementwise(c: &mut Criterion) {
 
 fn bench_reductions(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::sum_axis1_512::artifact()).unwrap();
+    let sum_axis1_512_model = graphs::sum_axis1_512::load(&engine).unwrap();
     let data = filled_data(512 * 512, 0.001, 1.0);
     let input = Tensor2::<f32, 512, 512>::from_vec(data.clone()).unwrap();
     let ndarray_input = Array2::from_shape_vec((512, 512), data).unwrap();
 
     c.bench_function("knok/sum_axis1_512x512", |b| {
         b.iter(|| {
-            let output = graphs::sum_axis1_512::run(&engine, black_box(input.clone())).unwrap();
+            let output = sum_axis1_512_model.run(black_box(&input)).unwrap();
             black_box(checksum(output.as_slice()))
         })
     });
@@ -140,6 +144,7 @@ fn bench_reductions(c: &mut Criterion) {
 
 fn bench_softmax(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::softmax_axis1_512x1024::artifact()).unwrap();
+    let softmax_axis1_512x1024_model = graphs::softmax_axis1_512x1024::load(&engine).unwrap();
     let data = filled_data(512 * 1024, 0.0001, -0.5);
     let input = Tensor2::<f32, 512, 1024>::from_vec(data.clone()).unwrap();
     let ndarray_input = Array2::from_shape_vec((512, 1024), data).unwrap();
@@ -147,7 +152,7 @@ fn bench_softmax(c: &mut Criterion) {
     c.bench_function("knok/softmax_axis1_512x1024", |b| {
         b.iter(|| {
             let output =
-                graphs::softmax_axis1_512x1024::run(&engine, black_box(input.clone())).unwrap();
+                softmax_axis1_512x1024_model.run(black_box(&input)).unwrap();
             black_box(checksum(output.as_slice()))
         })
     });
@@ -159,7 +164,9 @@ fn bench_softmax(c: &mut Criterion) {
 
 fn bench_layout(c: &mut Criterion) {
     let transpose_engine = Engine::for_artifact(graphs::transpose_512x256::artifact()).unwrap();
+    let transpose_512x256_model = graphs::transpose_512x256::load(&transpose_engine).unwrap();
     let broadcast_engine = Engine::for_artifact(graphs::broadcast_row_512::artifact()).unwrap();
+    let broadcast_row_512_model = graphs::broadcast_row_512::load(&broadcast_engine).unwrap();
     let matrix_data = filled_data(512 * 256, 0.001, 0.0);
     let row_data = filled_data(512, 0.01, 1.0);
     let matrix = Tensor2::<f32, 512, 256>::from_vec(matrix_data.clone()).unwrap();
@@ -170,7 +177,7 @@ fn bench_layout(c: &mut Criterion) {
     c.bench_function("knok/transpose_512x256", |b| {
         b.iter(|| {
             let output =
-                graphs::transpose_512x256::run(&transpose_engine, black_box(matrix.clone()))
+                transpose_512x256_model.run(black_box(&matrix))
                     .unwrap();
             black_box(checksum(output.as_slice()))
         })
@@ -186,7 +193,7 @@ fn bench_layout(c: &mut Criterion) {
     c.bench_function("knok/broadcast_row_512_to_512x512", |b| {
         b.iter(|| {
             let output =
-                graphs::broadcast_row_512::run(&broadcast_engine, black_box(row.clone())).unwrap();
+                broadcast_row_512_model.run(black_box(&row)).unwrap();
             black_box(checksum(output.as_slice()))
         })
     });
@@ -204,6 +211,7 @@ fn bench_layout(c: &mut Criterion) {
 
 fn bench_mlp(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::mlp_64x128x256x64::artifact()).unwrap();
+    let mlp_64x128x256x64_model = graphs::mlp_64x128x256x64::load(&engine).unwrap();
     let x_data = filled_data(64 * 128, 0.001, 0.5);
     let w1_data = filled_data(128 * 256, 0.0005, 0.01);
     let b1_data = filled_data(256, 0.001, 0.1);
@@ -219,13 +227,10 @@ fn bench_mlp(c: &mut Criterion) {
 
     c.bench_function("knok/mlp_64x128x256x64", |b| {
         b.iter(|| {
-            let output = graphs::mlp_64x128x256x64::run(
-                &engine,
-                black_box(x.clone()),
-                black_box(w1.clone()),
-                black_box(b1.clone()),
-                black_box(w2.clone()),
-            )
+            let output = mlp_64x128x256x64_model.run((black_box(&x),
+                black_box(&w1),
+                black_box(&b1),
+                black_box(&w2)))
             .unwrap();
             black_box(checksum(output.as_slice()))
         })
@@ -244,17 +249,15 @@ fn bench_mlp(c: &mut Criterion) {
 
 fn bench_conv2d(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::conv2d_nhwc_8x32x32x3::artifact()).unwrap();
+    let conv2d_nhwc_8x32x32x3_model = graphs::conv2d_nhwc_8x32x32x3::load(&engine).unwrap();
     let x =
         Tensor4::<f32, 8, 32, 32, 3>::from_vec(filled_data(8 * 32 * 32 * 3, 0.001, 0.0)).unwrap();
     let k = Tensor4::<f32, 3, 3, 3, 16>::from_vec(filled_data(3 * 3 * 3 * 16, 0.01, -0.2)).unwrap();
 
     c.bench_function("knok/conv2d_nhwc_8x32x32x3_hwcf_3x3x3x16", |b| {
         b.iter(|| {
-            let output = graphs::conv2d_nhwc_8x32x32x3::run(
-                &engine,
-                black_box(x.clone()),
-                black_box(k.clone()),
-            )
+            let output = conv2d_nhwc_8x32x32x3_model.run((black_box(&x),
+                black_box(&k)))
             .unwrap();
             black_box(checksum(output.as_slice()))
         })
@@ -263,6 +266,7 @@ fn bench_conv2d(c: &mut Criterion) {
 
 fn bench_pooling(c: &mut Criterion) {
     let engine = Engine::for_artifact(graphs::max_pool2d_nhwc_16x64x64x16::artifact()).unwrap();
+    let max_pool2d_nhwc_16x64x64x16_model = graphs::max_pool2d_nhwc_16x64x64x16::load(&engine).unwrap();
     let len = 16 * 64 * 64 * 16;
     let data = filled_data(len, 0.001, -0.5);
     let input = Tensor4::<f32, 16, 64, 64, 16>::from_vec(data.clone()).unwrap();
@@ -271,7 +275,7 @@ fn bench_pooling(c: &mut Criterion) {
     c.bench_function("knok/max_pool2d_nhwc_16x64x64x16", |b| {
         b.iter(|| {
             let output =
-                graphs::max_pool2d_nhwc_16x64x64x16::run(&engine, black_box(input.clone()))
+                max_pool2d_nhwc_16x64x64x16_model.run(black_box(&input))
                     .unwrap();
             black_box(checksum(output.as_slice()))
         })

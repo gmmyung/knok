@@ -4,7 +4,7 @@ use super::*;
 fn value_and_grad_reduction_extrema_ops_run() {
     let x = Tensor2::from_array([[1.0, 2.0, 4.0], [3.0, 5.0, 7.0]]);
 
-    let (loss, grad_x) = autograd_graphs::reduction_extrema_loss_value_and_grad::call(x).unwrap();
+    let (loss, grad_x) = autograd_graphs::reduction_extrema_loss_value_and_grad::call(&x).unwrap();
 
     assert_close(loss.as_slice(), &[128.0]);
     assert_close(grad_x.as_slice(), &[9.0, 4.0, 3.0, 36.0, 21.0, 16.0]);
@@ -15,7 +15,7 @@ fn value_and_grad_softmax_runs() {
     let values = [[1.0_f32, 2.0, 3.0], [0.5, 1.5, -0.5]];
     let x = Tensor2::from_array(values);
 
-    let (loss, grad_x) = autograd_graphs::softmax_square_loss_value_and_grad::call(x).unwrap();
+    let (loss, grad_x) = autograd_graphs::softmax_square_loss_value_and_grad::call(&x).unwrap();
 
     let mut expected_loss = 0.0;
     let mut expected_grad = Vec::new();
@@ -48,7 +48,7 @@ fn value_and_grad_variance_std_ptp_runs() {
     let values = [[1.0_f32, 2.0, 4.0], [3.0, 5.0, 7.0]];
     let x = Tensor2::from_array(values);
 
-    let (loss, grad_x) = autograd_graphs::variance_std_ptp_loss_value_and_grad::call(x).unwrap();
+    let (loss, grad_x) = autograd_graphs::variance_std_ptp_loss_value_and_grad::call(&x).unwrap();
 
     let mut expected_loss = 0.0;
     let mut expected_grad = Vec::new();

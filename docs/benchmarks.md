@@ -13,7 +13,7 @@ nix develop --command scripts/benchmark.sh
 ```
 
 The script runs `cargo bench --bench runtime` in `benchmarks/runtime`. It uses
-the pinned `iree-compile` from the Nix shell.
+the pinned IREE compiler library from the Nix shell.
 
 Pass Criterion options after `--`:
 
@@ -51,9 +51,9 @@ The harness currently reports:
 | `knok max_pool2d` | `16x64x64x16 -> 16x32x32x16` | NHWC max pooling through IREE. |
 | `ndarray max_pool2d` | `16x64x64x16 -> 16x32x32x16` | Matching ndarray loop baseline. |
 
-The `ndarray` baselines reuse prebuilt arrays in the timed loop. `knok` cases
-reuse an `Engine` and clone input tensors per iteration because `run` consumes
-typed tensor inputs.
+Both implementations borrow prebuilt inputs in the timed loop. Knok cases
+prepare models before timing, excluding engine construction, module loading,
+and function lookup. Host/device transfers and output reads remain included.
 
 ## Engine Reuse
 
@@ -61,7 +61,8 @@ Benchmarks use reusable engines:
 
 ```rust
 let engine = knok::Engine::for_artifact(graphs::matmul_128::artifact())?;
-let y = graphs::matmul_128::run(&engine, x, w)?;
+let model = graphs::matmul_128::load(&engine)?;
+let y = model.run((&x, &w))?;
 ```
 
 This excludes one-shot engine construction from the timed loop and matches the

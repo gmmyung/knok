@@ -7,5 +7,5 @@ pub fn artifact() -> knok::GraphArtifact {
 }
 
 pub fn variant_count() -> usize {
-    artifact().variants.len()
+    artifact().variants().len()
 }

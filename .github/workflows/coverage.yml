@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
   KNOK_COVERAGE_MIN_LINES: "70"
 
 permissions:
@@ -15,31 +18,33 @@ permissions:
 
 jobs:
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          install_options: --no-daemon
+          extra_nix_config: sandbox = false
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: false
           save-if: false
-      - run: nix develop --command scripts/coverage.sh
+      - run: nix develop .#coverage --command scripts/coverage.sh
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-lcov
           path: target/coverage/lcov.info
           if-no-files-found: error
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-html
           path: target/coverage/html
           if-no-files-found: error
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-badge
           path: target/coverage/badge/coverage.json

@@ -7,12 +7,12 @@ Use this checklist before cutting the next minor release.
 - Confirm README examples compile against the current public API.
 - Confirm crate-level docs explain build-time tracing and hosted runtime use.
 - Confirm feature modes are documented: default runtime, no-default-features,
-  `half`, and `embedded-runtime`.
+  `half`, and no-default-features builds.
 - Confirm known limitations are documented rather than hidden.
 
 ## Compiler and Runtime
 
-- Confirm `docs/compiler.md` matches the current `iree-compile` lookup logic.
+- Confirm `docs/compiler.md` matches compiler library discovery and host setup.
 - Confirm `docs/backends.md` matches supported compile backends and runtime
   drivers.
 - Confirm runtime E2E tests cover creation, elementwise, linalg, reductions,

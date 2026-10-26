@@ -19,9 +19,11 @@ automation-specific rules.
 included by `build.rs`. The macro records signature/backend metadata and emits
 registration glue; `compile_graphs!` executes the function with traced tensor
 inputs on the build host, typechecks the resulting graph, builds MLIR through
-melior operation builders, validates it, invokes `iree-compile`, and generates target
-wrapper modules. `KNOK_IREE_COMPILE` can point at a specific compiler binary;
-otherwise `knok-compile` expects `iree-compile` on `PATH`.
+melior operation builders, validates it, compiles it in-process with Eerie,
+and generates target wrapper modules. Eerie discovers the stock compiler wheel
+through Python; `KNOK_IREE_COMPILER` can select a custom shared library. Compiler
+initialization is shared across graphs, with per-compilation options and MLIR
+contexts. MLIR text crosses the Melior/IREE boundary; raw handles do not.
 
 Multi-output graph ops such as `split` are represented as tuple projection
 expressions with a per-call `tuple_id`. Lowering caches projections by
@@ -59,13 +61,17 @@ for generated value-and-gradient wrappers.
 
 ## Runtime Flow
 
-The hosted path uses `Engine` for repeated inference. Generated
-`graphs::<name>::run` wrappers reuse the engine's IREE instance, driver, device,
-loaded module, and compiled artifact. Convenience wrappers are useful for
-examples and small one-off calls but include runtime setup cost.
+The hosted path uses `Engine` to own the IREE instance and device and cache
+loaded modules by static VMFB address/length. Prepared `Model` handles borrow
+the engine and retain resolved functions, avoiding cache access and lookup in
+loops. Inputs borrow host tensors; output counts, dtypes, and full shapes are
+validated before host copies. Generated `run` helpers resolve a function per
+call, while `call` also creates an engine.
 
-No-default-features builds expose compile-time artifacts but do not provide the
-hosted runtime convenience path.
+No-default-features builds expose tensors and checked graph/artifact metadata.
+Execution traits and helpers are gated by the dependency's `runtime` feature;
+generated code uses `knok::__runtime!` so this does not depend on the consuming
+crate's feature names. There are no placeholder engines.
 
 ## Release Flow
 
@@ -107,10 +113,16 @@ for all published crates.
 
 ## Platform Notes
 
-The Nix shell pins LLVM/MLIR and provisions the IREE compiler from the Python
-wheel when `LIB_IREE_COMPILER` is not already set. docs.rs builds the default
-`knok` feature set, including the hosted runtime API, so public docs should
-describe the normal inference path first.
+The Nix shell pins LLVM/MLIR and provisions IREE 3.13.0 from the Python
+wheel unless `EERIE_PYTHON` or `KNOK_IREE_COMPILER` selects a custom installation.
+The Eerie runtime is built from source and needs no compiler library search
+paths. docs.rs builds the default `knok` feature set, including the hosted
+runtime API, so public docs should describe the normal inference path first.
+
+On macOS the shell selects an executable linker that hides host LLVM/MLIR
+exports, including Cargo build scripts. Shared-library and proc-macro exports
+are preserved. The same adapter handles rustc's LTO options in the optional
+`cross-lang-lto` shell, which uses Rust's LLVM toolchain for native runtime code.
 
 See also:
 

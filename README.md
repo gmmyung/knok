@@ -24,14 +24,14 @@ knok = "0.3"
 knok-build = "0.3"
 ```
 
-Build-time compilation needs `iree-compile` on `PATH`. You can also point to it
-explicitly:
+Build-time compilation uses the IREE compiler from your Python environment:
 
 ```sh
-export KNOK_IREE_COMPILE=/path/to/iree-compile
+python -m pip install 'iree-base-compiler==3.13.0'
 ```
 
-The Nix development shell in this repository provides the pinned compiler:
+The Nix development shell provides the compiler, LLVM/MLIR, and macOS build-host
+configuration:
 
 ```sh
 nix develop
@@ -65,7 +65,7 @@ use knok::prelude::*;
 
 knok::generated_graphs!(pub mod graphs);
 
-fn run_once(x: Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
+fn run_once(x: &Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
     graphs::forward::call(x)
 }
 ```
@@ -73,8 +73,7 @@ fn run_once(x: Tensor2<f32, 2, 2>) -> knok::Result<Tensor2<f32, 2, 2>> {
 Each generated module also exposes a typed `GRAPH` handle for code that wants
 the lower-level `knok::Graph<I, O>` value.
 
-For repeated inference, create an engine from the generated artifact once and
-use `run`:
+For repeated inference, create an engine and load the model once:
 
 ```rust
 use knok::Engine;
@@ -84,9 +83,10 @@ knok::generated_graphs!(pub mod graphs);
 
 fn run_many(xs: impl IntoIterator<Item = Tensor2<f32, 2, 2>>) -> knok::Result<()> {
     let engine = Engine::for_artifact(graphs::forward::artifact())?;
+    let model = graphs::forward::load(&engine)?;
 
     for x in xs {
-        let y = graphs::forward::run(&engine, x)?;
+        let y = model.run(&x)?;
         // use y
     }
 
@@ -94,8 +94,12 @@ fn run_many(xs: impl IntoIterator<Item = Tensor2<f32, 2, 2>>) -> knok::Result<()
 }
 ```
 
-`Engine::for_artifact` uses the runtime driver recorded by `knok-build`, so the
-engine matches the backend used to compile the graph.
+`Engine::for_artifact` selects the compiled backend's default driver. Inputs
+are borrowed, so tensors can be reused across calls without cloning.
+
+Use `model.run_into(&x, &mut output)` to reuse an existing
+output tensor's host storage. Multiple outputs use a mutable tuple of tensors.
+Device buffers and invocation metadata may still allocate.
 
 Existing `.mlir` files can also be compiled from `build.rs` with
 `knok_build::compile_mlir_models!` and imported through the same
@@ -144,7 +148,7 @@ Most users should start with `Backend::LlvmCpu`.
 
 | Backend | Runtime driver | Availability |
 | --- | --- | --- |
-| `Backend::LlvmCpu` | `local-task` | Always |
+| `Backend::LlvmCpu` | `local-task`, `local-sync` | Always |
 | `Backend::MetalSpirv` | `metal` | macOS |
 | `Backend::VulkanSpirv` | `vulkan` | `vulkan` feature |
 | `Backend::Cuda` | `cuda` | `cuda` feature |
@@ -162,6 +166,10 @@ knok-build = { version = "0.3", features = ["vulkan"] }
 Use `cuda` instead of `vulkan` for CUDA. Metal is exposed only on macOS targets.
 See [docs/backends.md](docs/backends.md) for platform notes.
 
+Use `CompileOptions` in build scripts for CPU tuning and IREE flags, and
+`RuntimeConfig` for device ordinals or paths. See [compiler options](docs/compiler.md#compiler-options)
+and [runtime devices](docs/runtime.md#devices).
+
 ## Feature Flags
 
 | Feature | Effect |
@@ -172,10 +180,10 @@ See [docs/backends.md](docs/backends.md) for platform notes.
 | `serde` | Implements Serde `Serialize` and `Deserialize` for fixed-rank tensors. |
 | `vulkan` | Exposes the Vulkan SPIR-V backend and runtime driver. |
 | `cuda` | Exposes the CUDA backend and runtime driver. |
-| `embedded-runtime` | Enables the IREE runtime dependency without enabling `std`. |
+| `cross-lang-lto` | Enables native runtime ThinLTO; requires the [matching toolchain](docs/compiler.md#cross-language-lto). |
 
-With `default-features = false`, generated wrapper types can still typecheck in
-`no_std + alloc` targets, but hosted runtime execution is disabled.
+With `default-features = false`, tensor types and generated graph metadata are
+available on `no_std + alloc` targets. Execution APIs require `runtime`.
 
 Enable `serde` when tensors need to cross a serialization boundary:
 
@@ -199,7 +207,9 @@ the recorded shape against the tensor's static shape.
   notes.
 - [Runtime workflow](docs/runtime.md): generated wrappers, `Graph`, and
   reusable engines.
-- [Compiler setup](docs/compiler.md): `iree-compile` installation and cache
+- [Migration guide](docs/migration.md): borrowed inputs, prepared models, and
+  changes to artifact metadata and runtime features.
+- [Compiler setup](docs/compiler.md): compiler installation and cache
   behavior.
 - [Benchmarks](docs/benchmarks.md): local runtime benchmark harness and shapes.
 
@@ -221,7 +231,7 @@ scripts/release-check.sh
 Generate coverage artifacts:
 
 ```sh
-scripts/coverage.sh
+nix develop .#coverage --command scripts/coverage.sh
 ```
 
 Run local Criterion runtime benchmarks:

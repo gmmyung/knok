@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cargo fmt --all -- --check
+python -m unittest discover -s scripts -p 'test_*.py'
 cargo test -p knok-core -p knok-compile -p knok-build -p knok-build-macros
 cargo check -p knok --no-default-features
 cargo check -p knok-build-tracing-smoke
