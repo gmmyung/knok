@@ -11,6 +11,8 @@ section such as `## 0.1.1 - 2026-06-26`. Release tags use the matching
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-26
+
 ### Added
 
 - Added prepared `Model` handles through generated `load(&engine)` helpers,
