@@ -18,10 +18,10 @@ Add `knok` to your target crate and `knok-build` to build dependencies:
 
 ```toml
 [dependencies]
-knok = "0.3"
+knok = "0.4"
 
 [build-dependencies]
-knok-build = "0.3"
+knok-build = "0.4"
 ```
 
 Build-time compilation uses the IREE compiler from your Python environment:
@@ -157,10 +157,10 @@ Enable feature-gated backends on both sides when you compile graphs and run them
 
 ```toml
 [dependencies]
-knok = { version = "0.3", features = ["vulkan"] }
+knok = { version = "0.4", features = ["vulkan"] }
 
 [build-dependencies]
-knok-build = { version = "0.3", features = ["vulkan"] }
+knok-build = { version = "0.4", features = ["vulkan"] }
 ```
 
 Use `cuda` instead of `vulkan` for CUDA. Metal is exposed only on macOS targets.
@@ -189,7 +189,7 @@ Enable `serde` when tensors need to cross a serialization boundary:
 
 ```toml
 [dependencies]
-knok = { version = "0.3", features = ["serde"] }
+knok = { version = "0.4", features = ["serde"] }
 ```
 
 Tensor serialization uses a format-neutral `{ shape, data }` representation.
